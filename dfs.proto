@@ -1,0 +1,104 @@
+syntax = "proto3";
+
+package dfspb;
+
+option go_package = "dfs-project/dfspb";
+
+message CreateFileRequest {
+  string filename = 1;
+  int64 total_size = 2;
+  int64 client_id = 3;
+}
+
+message CreateFileResponse {
+  bool success = 1;
+  int64 client_id = 2;
+  map<int32, StripeMetadata> stripes = 3;
+}
+
+message AllocateChunkRequest {
+  string filename = 1;
+  int64 file_size = 2;
+}
+
+message ChunkList {
+  repeated string chunk_ids = 1;
+}
+
+message StripeMetadata {
+  int32 stripe_num = 1;
+  repeated string chunk_ids = 2;  // [data1, data2, parity]
+  repeated string servers = 3;    // [server1, server2, server3]
+}
+
+message AllocateChunkResponse {
+  map<int32, StripeMetadata> stripes = 1;
+}
+
+message GetFileMetadataRequest {
+  string filename = 1;
+  int64 client_id = 2;
+}
+
+message GetFileMetadataResponse {
+  map<int32, StripeMetadata> stripes = 1;
+  int64 file_size = 2;
+}
+
+message WriteChunkRequest {
+  string chunk_id = 1;
+  bytes data = 2;
+  string checksum = 3;
+  int64 client_id = 4;
+}
+
+message WriteChunkResponse {
+  bool success = 1;
+}
+
+message ReadChunkRequest {
+  string chunk_id = 1;
+  int64 client_id = 2;
+}
+
+message ReadChunkResponse {
+  bytes data = 1;
+  string checksum = 2;
+}
+
+message ForwardChunkRequest {
+  string chunk_id = 1;
+  bytes data = 2;
+  repeated string next_locations = 3;
+}
+
+message HeartbeatRequest {
+  string address = 1;
+}
+
+message HeartbeatResponse {
+  bool success = 1;
+}
+
+message ConfirmWriteRequest {
+  string filename = 1;
+  repeated string chunk_ids = 2;
+}
+
+message ConfirmWriteResponse {
+  bool success = 1;
+}
+
+service MasterServer {
+  rpc CreateFile(CreateFileRequest) returns (CreateFileResponse);
+  rpc AllocateChunk(AllocateChunkRequest) returns (AllocateChunkResponse);
+  rpc GetFileMetadata(GetFileMetadataRequest) returns (GetFileMetadataResponse);
+  rpc SendHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc ConfirmWrite(ConfirmWriteRequest) returns (ConfirmWriteResponse);
+}
+
+service ChunkServer {
+  rpc WriteChunk(WriteChunkRequest) returns (WriteChunkResponse);
+  rpc ReadChunk(ReadChunkRequest) returns (ReadChunkResponse);
+  rpc ForwardChunk(ForwardChunkRequest) returns (WriteChunkResponse);
+}

@@ -1,0 +1,38 @@
+# Binaries
+bin/
+*.exe
+
+# Storage directories
+chunk_server1/
+chunk_server2/
+chunk_server3/
+chunks/
+chunks1/
+chunks2/
+chunks3/
+
+# Log files
+*.log
+
+# WAL files
+*.wal
+
+# Client ID file
+.client_id
+
+# Test PDF files
+*.pdf
+
+# Go build artifacts
+*.out
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
