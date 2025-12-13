@@ -44,6 +44,10 @@ upload: build
 download: build
 	@./bin/client download $(FILE)
 
+# Delete a file (usage: make delete FILE=myfile.pdf)
+delete: build
+	@./bin/client delete $(FILE)
+
 # Generate protobuf code (if you modify dfs.proto)
 proto:
 	@echo "Generating protobuf code..."
@@ -65,6 +69,7 @@ help:
 	@echo "  make run-chunk_server3    - Run chunk server 3 (port 9003)"
 	@echo "  make upload FILE=<file>   - Upload a file"
 	@echo "  make download FILE=<file> - Download a file"
+	@echo "  make delete FILE=<file>   - Delete a file"
 	@echo "  make proto         - Regenerate protobuf code"
 	@echo ""
 	@echo "Example workflow:"

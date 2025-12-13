@@ -70,6 +70,8 @@ func (m *MasterServer) replayOperation(entry *WALEntry) error {
 		return m.replayAllocateChunk(entry.Data)
 	case OpConfirmWrite:
 		return m.replayConfirmWrite(entry.Data)
+	case OpDeleteFile:
+		return m.replayDeleteFile(entry.Data)
 	default:
 		return fmt.Errorf("unknown operation: %s", entry.Operation)
 	}
@@ -134,6 +136,54 @@ func (m *MasterServer) replayConfirmWrite(data json.RawMessage) error {
 
 	m.logger.Printf("Recovered CONFIRM_WRITE: file=%s, chunks=%d, status=%s",
 		confirmData.Filename, len(confirmData.ChunkIDs), confirmData.Status)
+
+	return nil
+}
+
+// replayDeleteFile removes file metadata during WAL recovery
+func (m *MasterServer) replayDeleteFile(data json.RawMessage) error {
+	var deleteData DeleteFileData
+	if err := json.Unmarshal(data, &deleteData); err != nil {
+		return fmt.Errorf("failed to unmarshal DeleteFile data: %v", err)
+	}
+
+	filename := deleteData.Filename
+	clientID := deleteData.ClientID
+
+	// Collect all chunk IDs before deletion
+	allChunkIDs := []string{}
+	if stripes, exists := m.fileInfo[filename]; exists {
+		for _, stripe := range stripes {
+			allChunkIDs = append(allChunkIDs, stripe.ChunkIds...)
+		}
+	}
+
+	// Remove file metadata
+	delete(m.fileInfo, filename)
+	delete(m.fileSizes, filename)
+
+	// Remove from clientIDs
+	if ownedFiles, exists := m.clientIDs[clientID]; exists {
+		updatedFiles := []string{}
+		for _, f := range ownedFiles {
+			if f != filename {
+				updatedFiles = append(updatedFiles, f)
+			}
+		}
+		if len(updatedFiles) > 0 {
+			m.clientIDs[clientID] = updatedFiles
+		} else {
+			delete(m.clientIDs, clientID)
+		}
+	}
+
+	// Remove chunk statuses
+	for _, chunkID := range allChunkIDs {
+		delete(m.chunkStatus, chunkID)
+	}
+
+	m.logger.Printf("Recovered DELETE_FILE: client=%d, file=%s, chunks_removed=%d",
+		clientID, filename, len(allChunkIDs))
 
 	return nil
 }

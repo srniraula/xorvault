@@ -99,6 +99,46 @@ func (c *ChunkServer) ReadChunk(ctx context.Context, req *dfspb.ReadChunkRequest
 	return &dfspb.ReadChunkResponse{Data: data, Checksum: checksum}, nil
 }
 
+// DeleteChunks removes multiple chunks and their checksums from disk
+// Batched deletion for efficiency
+func (c *ChunkServer) DeleteChunks(ctx context.Context, req *dfspb.DeleteChunksRequest) (*dfspb.DeleteChunksResponse, error) {
+	deletedCount := int32(0)
+
+	// Delete each chunk in the batch
+	for _, chunkID := range req.ChunkIds {
+		// Construct path: storagePath/client_id/chunk_id
+		clientDir := filepath.Join(c.storagePath, fmt.Sprintf("%d", req.ClientId))
+		chunkPath := filepath.Join(clientDir, chunkID)
+		checksumPath := chunkPath + ".checksum"
+
+		// Delete chunk file
+		err := os.Remove(chunkPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				c.logger.Printf("Chunk %s not found (already deleted)", chunkID)
+			} else {
+				c.logger.Printf("Failed to delete chunk %s: %v", chunkID, err)
+				continue
+			}
+		} else {
+			c.logger.Printf("Deleted chunk: %s", chunkID)
+			deletedCount++
+		}
+
+		// Delete checksum file (ignore if doesn't exist)
+		err = os.Remove(checksumPath)
+		if err != nil && !os.IsNotExist(err) {
+			c.logger.Printf("Warning: Failed to delete checksum for %s: %v", chunkID, err)
+		}
+	}
+
+	c.logger.Printf("Deleted %d/%d chunks for client %d", deletedCount, len(req.ChunkIds), req.ClientId)
+	return &dfspb.DeleteChunksResponse{
+		Success:      true,
+		DeletedCount: deletedCount,
+	}, nil
+}
+
 func SendHeartbeats(port string, logger *log.Logger) {
 	// returns a ticker object with a channel (ticker.C)
 	// Every 5 seconds, the ticker sends the current time to its channel

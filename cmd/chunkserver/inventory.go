@@ -16,8 +16,10 @@ import (
 
 // scanInventory walks the storage directory and collects all chunk IDs
 // Returns a list of chunk IDs that this server currently has on disk
+// Verifies data integrity by checking checksums - corrupted chunks are deleted
 func (c *ChunkServer) scanInventory() []string {
 	var chunkIDs []string
+	corruptedCount := 0
 
 	// Recursively visits every file and directory inside storagePath e.g. chunk_server1
 	err := filepath.Walk(c.storagePath, func(path string, info os.FileInfo, err error) error {
@@ -45,6 +47,53 @@ func (c *ChunkServer) scanInventory() []string {
 
 		// Get the filename (chunk ID)
 		chunkID := filepath.Base(relPath) // just chunk_id
+
+		// Verify data integrity by checking checksum
+		chunkData, err := os.ReadFile(path)
+		if err != nil {
+			c.logger.Printf("Failed to read chunk %s: %v", chunkID, err)
+			return nil
+		}
+
+		// Calculate checksum
+		calculatedChecksum := calculateChecksum(chunkData)
+
+		// Read stored checksum
+		checksumPath := path + ".checksum"
+		storedChecksumBytes, err := os.ReadFile(checksumPath)
+		if err != nil {
+			// No checksum file - discard chunk
+			c.logger.Printf("No checksum found for %s - deleting unverifiable chunk", chunkID)
+
+			if err := os.Remove(path); err != nil {
+				c.logger.Printf("Failed to delete chunk without checksum %s: %v", chunkID, err)
+			}
+
+			corruptedCount++
+			return nil
+		}
+
+		storedChecksum := string(storedChecksumBytes)
+
+		// Verify checksum
+		if calculatedChecksum != storedChecksum {
+			// Checksum mismatch - chunk is corrupted, delete it
+			c.logger.Printf("CORRUPTION DETECTED: %s (expected: %s, got: %s) - deleting",
+				chunkID, storedChecksum, calculatedChecksum)
+
+			// Delete corrupted chunk
+			if err := os.Remove(path); err != nil {
+				c.logger.Printf("Failed to delete corrupted chunk %s: %v", chunkID, err)
+			}
+
+			// Delete checksum file
+			os.Remove(checksumPath)
+
+			corruptedCount++
+			return nil
+		}
+
+		// Checksum matches - chunk is valid
 		chunkIDs = append(chunkIDs, chunkID)
 
 		return nil
@@ -55,7 +104,8 @@ func (c *ChunkServer) scanInventory() []string {
 		return chunkIDs
 	}
 
-	c.logger.Printf("Inventory scan complete: found %d chunks", len(chunkIDs))
+	c.logger.Printf("Inventory scan complete: found %d valid chunks, deleted %d corrupted chunks",
+		len(chunkIDs), corruptedCount)
 	return chunkIDs
 }
 

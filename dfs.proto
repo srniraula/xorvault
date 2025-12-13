@@ -108,6 +108,26 @@ message ConfirmWriteResponse {
   bool success = 1;
 }
 
+message DeleteFileRequest {
+  string filename = 1;
+  int64 client_id = 2;
+}
+
+message DeleteFileResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message DeleteChunksRequest {
+  repeated string chunk_ids = 1;  // All chunks to delete on this server
+  int64 client_id = 2;
+}
+
+message DeleteChunksResponse {
+  bool success = 1;
+  int32 deleted_count = 2;  // How many chunks were successfully deleted
+}
+
 service MasterServer {
   rpc CreateFile(CreateFileRequest) returns (CreateFileResponse);
   rpc AllocateChunk(AllocateChunkRequest) returns (AllocateChunkResponse);
@@ -115,10 +135,12 @@ service MasterServer {
   rpc ReceiveHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc ReportInventory(InventoryRequest) returns (InventoryResponse);
   rpc ConfirmWrite(ConfirmWriteRequest) returns (ConfirmWriteResponse);
+  rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
 }
 
 service ChunkServer {
   rpc WriteChunk(WriteChunkRequest) returns (WriteChunkResponse);
   rpc ReadChunk(ReadChunkRequest) returns (ReadChunkResponse);
   rpc ForwardChunk(ForwardChunkRequest) returns (WriteChunkResponse);
+  rpc DeleteChunks(DeleteChunksRequest) returns (DeleteChunksResponse);
 }

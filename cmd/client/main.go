@@ -20,8 +20,8 @@ const CHUNK_SIZE = 1 * 1024 * 1024
 //	go run cmd/client/main.go download myfile.pdf
 func main() {
 	// Check if user provided correct number of arguments
-	if len(os.Args) != 3 {
-		log.Fatal("Usage: go run cmd/client/main.go <upload|download> <filename>")
+	if len(os.Args) < 3 {
+		log.Fatal("Usage: go run cmd/client/main.go <upload|download|delete> <filename>")
 	}
 
 	// Load client ID from .client_id file (0 if new client)
@@ -32,13 +32,17 @@ func main() {
 		log.Printf("Using existing client ID: %d", myID)
 	}
 
-	cmd := os.Args[1]  // "upload" or "download"
-	file := os.Args[2] // filename to upload/download
+	cmd := os.Args[1]  // "upload", "download", or "delete"
+	file := os.Args[2] // filename to upload/download/delete
 
 	if cmd == "upload" {
 		upload(file, myID)
 	} else if cmd == "download" {
 		download(file, myID)
+	} else if cmd == "delete" {
+		deleteFile(file, myID)
+	} else {
+		log.Fatalf("Unknown command: %s. Use upload, download, or delete", cmd)
 	}
 }
 
@@ -258,4 +262,42 @@ func download(filename string, myID int64) {
 	}
 
 	log.Printf("Download complete: %s (%d stripes, %d bytes)", outputFile, successfulStripes, bytesWritten)
+}
+
+// deleteFile removes a file from the DFS
+// Process:
+//  1. Connect to master server
+//  2. Send DeleteFile RPC with filename and client ID
+//  3. Master verifies ownership and deletes all chunks from chunk servers
+func deleteFile(filename string, myID int64) {
+	if myID == 0 {
+		log.Fatal("Cannot delete file: no client ID. Please upload a file first.")
+	}
+
+	log.Printf("Deleting file: %s (client ID: %d)", filename, myID)
+
+	// Connect to master server
+	conn, err := grpc.NewClient("127.0.0.1:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatal("Failed to connect to master:", err)
+	}
+	defer conn.Close()
+
+	masterClient := dfspb.NewMasterServerClient(conn)
+
+	// Send delete request
+	resp, err := masterClient.DeleteFile(context.Background(), &dfspb.DeleteFileRequest{
+		Filename: filename,
+		ClientId: myID,
+	})
+
+	if err != nil {
+		log.Fatalf("Delete failed: %v", err)
+	}
+
+	if !resp.Success {
+		log.Fatalf("Delete failed: %s", resp.Message)
+	}
+
+	log.Printf("Successfully deleted %s: %s", filename, resp.Message)
 }

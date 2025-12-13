@@ -9,6 +9,9 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // CHUNK_SIZE defines how large each chunk should be (1 MB = 1024 * 1024 bytes)
@@ -291,3 +294,141 @@ func (m *MasterServer) ConfirmWrite(ctx context.Context, req *dfspb.ConfirmWrite
 	return &dfspb.ConfirmWriteResponse{Success: true}, nil
 }
 
+// DeleteFile removes a file and all its chunks from the system
+// Verifies client ownership before deletion
+func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequest) (*dfspb.DeleteFileResponse, error) {
+	m.mu.Lock()
+	// Note: manually unlocking before checkpoint, no defer
+
+	filename := req.Filename
+	clientID := req.ClientId
+
+	// Check if file exists
+	stripes, fileExists := m.fileInfo[filename]
+	if !fileExists {
+		return &dfspb.DeleteFileResponse{
+			Success: false,
+			Message: "file not found",
+		}, nil
+	}
+
+	// Verify client ownership
+	ownedFiles, clientExists := m.clientIDs[clientID]
+	if !clientExists {
+		return &dfspb.DeleteFileResponse{
+			Success: false,
+			Message: "file not found",
+		}, nil
+	}
+
+	fileOwned := false
+	for _, ownedFile := range ownedFiles {
+		if ownedFile == filename {
+			fileOwned = true
+			break
+		}
+	}
+
+	if !fileOwned {
+		return &dfspb.DeleteFileResponse{
+			Success: false,
+			Message: "file not found",
+		}, nil
+	}
+
+	// Group chunks by server address
+	serverChunks := make(map[string][]string) // server_addr -> [chunk_ids]
+	allChunkIDs := []string{}
+
+	for _, stripe := range stripes {
+		for i, chunkID := range stripe.ChunkIds {
+			serverAddr := stripe.Servers[i]
+			serverChunks[serverAddr] = append(serverChunks[serverAddr], chunkID)
+			allChunkIDs = append(allChunkIDs, chunkID)
+		}
+	}
+
+	m.logger.Printf("Deleting %s for client %d: %d chunks across %d servers",
+		filename, clientID, len(allChunkIDs), len(serverChunks))
+
+	// Send DeleteChunks RPC to each chunk server
+	totalDeleted := int32(0)
+	for serverAddr, chunkIDs := range serverChunks {
+		deleted, err := m.deleteChunksFromServer(serverAddr, chunkIDs, clientID)
+		if err != nil {
+			m.logger.Printf("Failed to delete chunks from %s: %v", serverAddr, err)
+			// Continue with other servers even if one fails
+		} else {
+			totalDeleted += deleted
+			m.logger.Printf("Deleted %d chunks from %s", deleted, serverAddr)
+		}
+	}
+
+	// Update metadata - remove file info
+	delete(m.fileInfo, filename)
+	delete(m.fileSizes, filename)
+
+	// Remove filename from clientIDs (but keep the client ID entry)
+	updatedFiles := []string{}
+	for _, f := range ownedFiles {
+		if f != filename {
+			updatedFiles = append(updatedFiles, f)
+		}
+	}
+	m.clientIDs[clientID] = updatedFiles
+
+	// Remove chunk statuses
+	for _, chunkID := range allChunkIDs {
+		delete(m.chunkStatus, chunkID)
+	}
+
+	// Log to WAL
+	walData := DeleteFileData{
+		Filename: filename,
+		ClientID: clientID,
+	}
+
+	if err := m.AppendWAL(OpDeleteFile, walData); err != nil {
+		m.logger.Printf("WAL append failed for DeleteFile: %v", err)
+		// Metadata already updated, just log the error
+	}
+
+	m.logger.Printf("Successfully deleted %s: %d/%d chunks removed", filename, totalDeleted, len(allChunkIDs))
+
+	// Unlock before checkpoint to avoid deadlock (checkpoint also locks)
+	m.mu.Unlock()
+
+	// Trigger checkpoint
+	if err := m.CreateCheckpoint("master.checkpoint"); err != nil {
+		m.logger.Printf("Checkpoint creation failed after delete: %v", err)
+	}
+
+	return &dfspb.DeleteFileResponse{
+		Success: true,
+		Message: fmt.Sprintf("deleted %d chunks", totalDeleted),
+	}, nil
+}
+
+// deleteChunksFromServer sends DeleteChunks RPC to a specific chunk server
+func (m *MasterServer) deleteChunksFromServer(serverAddr string, chunkIDs []string, clientID int64) (int32, error) {
+	// Connect to chunk server
+	conn, err := grpc.NewClient(serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return 0, fmt.Errorf("failed to connect to %s: %v", serverAddr, err)
+	}
+	defer conn.Close()
+
+	chunkClient := dfspb.NewChunkServerClient(conn)
+
+	// Send delete request
+	resp, err := chunkClient.DeleteChunks(context.Background(), &dfspb.DeleteChunksRequest{
+		ChunkIds: chunkIDs,
+		ClientId: clientID,
+	})
+
+	if err != nil {
+		return 0, err
+	}
+
+	return resp.DeletedCount, nil
+}

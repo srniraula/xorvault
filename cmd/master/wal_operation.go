@@ -12,6 +12,7 @@ const (
 	OpCreateFile    = "CREATE_FILE"
 	OpAllocateChunk = "ALLOCATE_CHUNK"
 	OpConfirmWrite  = "CONFIRM_WRITE"
+	OpDeleteFile    = "DELETE_FILE"
 )
 
 // WALEntry represents a single entry in the Write-Ahead Log
@@ -40,6 +41,12 @@ type ConfirmWriteData struct {
 	Filename string   `json:"filename"`
 	ChunkIDs []string `json:"chunk_ids"`
 	Status   string   `json:"status"` // "SUCCESS"
+}
+
+// DeleteFileData stores the data for DeleteFile operation
+type DeleteFileData struct {
+	Filename string `json:"filename"`
+	ClientID int64  `json:"client_id"`
 }
 
 // appendWAL writes an entry to the Write-Ahead Log with durability guarantees

@@ -25,6 +25,7 @@ const (
 	MasterServer_ReceiveHeartbeat_FullMethodName = "/dfspb.MasterServer/ReceiveHeartbeat"
 	MasterServer_ReportInventory_FullMethodName  = "/dfspb.MasterServer/ReportInventory"
 	MasterServer_ConfirmWrite_FullMethodName     = "/dfspb.MasterServer/ConfirmWrite"
+	MasterServer_DeleteFile_FullMethodName       = "/dfspb.MasterServer/DeleteFile"
 )
 
 // MasterServerClient is the client API for MasterServer service.
@@ -37,6 +38,7 @@ type MasterServerClient interface {
 	ReceiveHeartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
 	ReportInventory(ctx context.Context, in *InventoryRequest, opts ...grpc.CallOption) (*InventoryResponse, error)
 	ConfirmWrite(ctx context.Context, in *ConfirmWriteRequest, opts ...grpc.CallOption) (*ConfirmWriteResponse, error)
+	DeleteFile(ctx context.Context, in *DeleteFileRequest, opts ...grpc.CallOption) (*DeleteFileResponse, error)
 }
 
 type masterServerClient struct {
@@ -107,6 +109,16 @@ func (c *masterServerClient) ConfirmWrite(ctx context.Context, in *ConfirmWriteR
 	return out, nil
 }
 
+func (c *masterServerClient) DeleteFile(ctx context.Context, in *DeleteFileRequest, opts ...grpc.CallOption) (*DeleteFileResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteFileResponse)
+	err := c.cc.Invoke(ctx, MasterServer_DeleteFile_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MasterServerServer is the server API for MasterServer service.
 // All implementations must embed UnimplementedMasterServerServer
 // for forward compatibility.
@@ -117,6 +129,7 @@ type MasterServerServer interface {
 	ReceiveHeartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
 	ReportInventory(context.Context, *InventoryRequest) (*InventoryResponse, error)
 	ConfirmWrite(context.Context, *ConfirmWriteRequest) (*ConfirmWriteResponse, error)
+	DeleteFile(context.Context, *DeleteFileRequest) (*DeleteFileResponse, error)
 	mustEmbedUnimplementedMasterServerServer()
 }
 
@@ -144,6 +157,9 @@ func (UnimplementedMasterServerServer) ReportInventory(context.Context, *Invento
 }
 func (UnimplementedMasterServerServer) ConfirmWrite(context.Context, *ConfirmWriteRequest) (*ConfirmWriteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ConfirmWrite not implemented")
+}
+func (UnimplementedMasterServerServer) DeleteFile(context.Context, *DeleteFileRequest) (*DeleteFileResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteFile not implemented")
 }
 func (UnimplementedMasterServerServer) mustEmbedUnimplementedMasterServerServer() {}
 func (UnimplementedMasterServerServer) testEmbeddedByValue()                      {}
@@ -274,6 +290,24 @@ func _MasterServer_ConfirmWrite_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MasterServer_DeleteFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteFileRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MasterServerServer).DeleteFile(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MasterServer_DeleteFile_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MasterServerServer).DeleteFile(ctx, req.(*DeleteFileRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MasterServer_ServiceDesc is the grpc.ServiceDesc for MasterServer service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -305,6 +339,10 @@ var MasterServer_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "ConfirmWrite",
 			Handler:    _MasterServer_ConfirmWrite_Handler,
 		},
+		{
+			MethodName: "DeleteFile",
+			Handler:    _MasterServer_DeleteFile_Handler,
+		},
 	},
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "dfs.proto",
@@ -314,6 +352,7 @@ const (
 	ChunkServer_WriteChunk_FullMethodName   = "/dfspb.ChunkServer/WriteChunk"
 	ChunkServer_ReadChunk_FullMethodName    = "/dfspb.ChunkServer/ReadChunk"
 	ChunkServer_ForwardChunk_FullMethodName = "/dfspb.ChunkServer/ForwardChunk"
+	ChunkServer_DeleteChunks_FullMethodName = "/dfspb.ChunkServer/DeleteChunks"
 )
 
 // ChunkServerClient is the client API for ChunkServer service.
@@ -323,6 +362,7 @@ type ChunkServerClient interface {
 	WriteChunk(ctx context.Context, in *WriteChunkRequest, opts ...grpc.CallOption) (*WriteChunkResponse, error)
 	ReadChunk(ctx context.Context, in *ReadChunkRequest, opts ...grpc.CallOption) (*ReadChunkResponse, error)
 	ForwardChunk(ctx context.Context, in *ForwardChunkRequest, opts ...grpc.CallOption) (*WriteChunkResponse, error)
+	DeleteChunks(ctx context.Context, in *DeleteChunksRequest, opts ...grpc.CallOption) (*DeleteChunksResponse, error)
 }
 
 type chunkServerClient struct {
@@ -363,6 +403,16 @@ func (c *chunkServerClient) ForwardChunk(ctx context.Context, in *ForwardChunkRe
 	return out, nil
 }
 
+func (c *chunkServerClient) DeleteChunks(ctx context.Context, in *DeleteChunksRequest, opts ...grpc.CallOption) (*DeleteChunksResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteChunksResponse)
+	err := c.cc.Invoke(ctx, ChunkServer_DeleteChunks_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ChunkServerServer is the server API for ChunkServer service.
 // All implementations must embed UnimplementedChunkServerServer
 // for forward compatibility.
@@ -370,6 +420,7 @@ type ChunkServerServer interface {
 	WriteChunk(context.Context, *WriteChunkRequest) (*WriteChunkResponse, error)
 	ReadChunk(context.Context, *ReadChunkRequest) (*ReadChunkResponse, error)
 	ForwardChunk(context.Context, *ForwardChunkRequest) (*WriteChunkResponse, error)
+	DeleteChunks(context.Context, *DeleteChunksRequest) (*DeleteChunksResponse, error)
 	mustEmbedUnimplementedChunkServerServer()
 }
 
@@ -388,6 +439,9 @@ func (UnimplementedChunkServerServer) ReadChunk(context.Context, *ReadChunkReque
 }
 func (UnimplementedChunkServerServer) ForwardChunk(context.Context, *ForwardChunkRequest) (*WriteChunkResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ForwardChunk not implemented")
+}
+func (UnimplementedChunkServerServer) DeleteChunks(context.Context, *DeleteChunksRequest) (*DeleteChunksResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteChunks not implemented")
 }
 func (UnimplementedChunkServerServer) mustEmbedUnimplementedChunkServerServer() {}
 func (UnimplementedChunkServerServer) testEmbeddedByValue()                     {}
@@ -464,6 +518,24 @@ func _ChunkServer_ForwardChunk_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ChunkServer_DeleteChunks_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteChunksRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChunkServerServer).DeleteChunks(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChunkServer_DeleteChunks_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChunkServerServer).DeleteChunks(ctx, req.(*DeleteChunksRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ChunkServer_ServiceDesc is the grpc.ServiceDesc for ChunkServer service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -482,6 +554,10 @@ var ChunkServer_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ForwardChunk",
 			Handler:    _ChunkServer_ForwardChunk_Handler,
+		},
+		{
+			MethodName: "DeleteChunks",
+			Handler:    _ChunkServer_DeleteChunks_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
