@@ -90,9 +90,9 @@ Downloaded file saved as `downloaded_myfile.pdf`
 make build          # Build all binaries
 make proto          # Regenerate protobuf files
 make run-master     # Start master server
-make run-chunk1     # Start chunk server 1 (port 9001)
-make run-chunk2     # Start chunk server 2 (port 9002)
-make run-chunk3     # Start chunk server 3 (port 9003)
+make run-chunk_server1     # Start chunk server 1 (port 9001)
+make run-chunk_server2     # Start chunk server 2 (port 9002)
+make run-chunk_server3     # Start chunk server 3 (port 9003)
 make upload FILE=<filename>    # Upload file
 make download FILE=<filename>  # Download file
 make clean          # Remove binaries

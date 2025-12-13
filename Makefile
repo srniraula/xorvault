@@ -15,7 +15,7 @@ build:
 clean:
 	@echo "Cleaning..."
 	@rm -rf bin/
-	@rm -rf chunks1/ chunks2/ chunks3/
+	@rm -rf chunk_server1/ chunk_server2/ chunk_server3/
 	@rm -f *.log
 	@rm -f downloaded_*
 	@echo "Clean complete"
@@ -69,7 +69,7 @@ help:
 	@echo ""
 	@echo "Example workflow:"
 	@echo "  Terminal 1: make run-master"
-	@echo "  Terminal 2: make run-chunk1"
-	@echo "  Terminal 3: make run-chunk2"
-	@echo "  Terminal 4: make run-chunk3"
+	@echo "  Terminal 2: make run-chunk_server1"
+	@echo "  Terminal 3: make run-chunk_server2"
+	@echo "  Terminal 4: make run-chunk_server3"
 	@echo "  Terminal 5: make upload FILE=test.pdf"
