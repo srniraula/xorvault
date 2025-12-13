@@ -432,3 +432,20 @@ func (m *MasterServer) deleteChunksFromServer(serverAddr string, chunkIDs []stri
 
 	return resp.DeletedCount, nil
 }
+
+// ListFiles returns all files uploaded by the given client
+func (m *MasterServer) ListFiles(ctx context.Context, req *dfspb.ListFilesRequest) (*dfspb.ListFilesResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	files, exists := m.clientIDs[req.ClientId]
+	if !exists {
+		return &dfspb.ListFilesResponse{
+			Filenames: []string{},
+		}, nil
+	}
+
+	return &dfspb.ListFilesResponse{
+		Filenames: files,
+	}, nil
+}

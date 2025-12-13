@@ -48,6 +48,10 @@ download: build
 delete: build
 	@./bin/client delete $(FILE)
 
+# List all files uploaded by this client
+ls: build
+	@./bin/client ls
+
 # Generate protobuf code (if you modify dfs.proto)
 proto:
 	@echo "Generating protobuf code..."
@@ -70,6 +74,7 @@ help:
 	@echo "  make upload FILE=<file>   - Upload a file"
 	@echo "  make download FILE=<file> - Download a file"
 	@echo "  make delete FILE=<file>   - Delete a file"
+	@echo "  make ls            - List all files uploaded by this client"
 	@echo "  make proto         - Regenerate protobuf code"
 	@echo ""
 	@echo "Example workflow:"

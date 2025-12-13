@@ -26,6 +26,7 @@ const (
 	MasterServer_ReportInventory_FullMethodName  = "/dfspb.MasterServer/ReportInventory"
 	MasterServer_ConfirmWrite_FullMethodName     = "/dfspb.MasterServer/ConfirmWrite"
 	MasterServer_DeleteFile_FullMethodName       = "/dfspb.MasterServer/DeleteFile"
+	MasterServer_ListFiles_FullMethodName        = "/dfspb.MasterServer/ListFiles"
 )
 
 // MasterServerClient is the client API for MasterServer service.
@@ -39,6 +40,7 @@ type MasterServerClient interface {
 	ReportInventory(ctx context.Context, in *InventoryRequest, opts ...grpc.CallOption) (*InventoryResponse, error)
 	ConfirmWrite(ctx context.Context, in *ConfirmWriteRequest, opts ...grpc.CallOption) (*ConfirmWriteResponse, error)
 	DeleteFile(ctx context.Context, in *DeleteFileRequest, opts ...grpc.CallOption) (*DeleteFileResponse, error)
+	ListFiles(ctx context.Context, in *ListFilesRequest, opts ...grpc.CallOption) (*ListFilesResponse, error)
 }
 
 type masterServerClient struct {
@@ -119,6 +121,16 @@ func (c *masterServerClient) DeleteFile(ctx context.Context, in *DeleteFileReque
 	return out, nil
 }
 
+func (c *masterServerClient) ListFiles(ctx context.Context, in *ListFilesRequest, opts ...grpc.CallOption) (*ListFilesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFilesResponse)
+	err := c.cc.Invoke(ctx, MasterServer_ListFiles_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MasterServerServer is the server API for MasterServer service.
 // All implementations must embed UnimplementedMasterServerServer
 // for forward compatibility.
@@ -130,6 +142,7 @@ type MasterServerServer interface {
 	ReportInventory(context.Context, *InventoryRequest) (*InventoryResponse, error)
 	ConfirmWrite(context.Context, *ConfirmWriteRequest) (*ConfirmWriteResponse, error)
 	DeleteFile(context.Context, *DeleteFileRequest) (*DeleteFileResponse, error)
+	ListFiles(context.Context, *ListFilesRequest) (*ListFilesResponse, error)
 	mustEmbedUnimplementedMasterServerServer()
 }
 
@@ -160,6 +173,9 @@ func (UnimplementedMasterServerServer) ConfirmWrite(context.Context, *ConfirmWri
 }
 func (UnimplementedMasterServerServer) DeleteFile(context.Context, *DeleteFileRequest) (*DeleteFileResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteFile not implemented")
+}
+func (UnimplementedMasterServerServer) ListFiles(context.Context, *ListFilesRequest) (*ListFilesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListFiles not implemented")
 }
 func (UnimplementedMasterServerServer) mustEmbedUnimplementedMasterServerServer() {}
 func (UnimplementedMasterServerServer) testEmbeddedByValue()                      {}
@@ -308,6 +324,24 @@ func _MasterServer_DeleteFile_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MasterServer_ListFiles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFilesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MasterServerServer).ListFiles(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MasterServer_ListFiles_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MasterServerServer).ListFiles(ctx, req.(*ListFilesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MasterServer_ServiceDesc is the grpc.ServiceDesc for MasterServer service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -342,6 +376,10 @@ var MasterServer_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteFile",
 			Handler:    _MasterServer_DeleteFile_Handler,
+		},
+		{
+			MethodName: "ListFiles",
+			Handler:    _MasterServer_ListFiles_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

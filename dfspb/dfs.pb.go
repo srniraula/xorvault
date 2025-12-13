@@ -1301,6 +1301,94 @@ func (x *DeleteChunksResponse) GetDeletedCount() int32 {
 	return 0
 }
 
+type ListFilesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ClientId      int64                  `protobuf:"varint,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListFilesRequest) Reset() {
+	*x = ListFilesRequest{}
+	mi := &file_dfs_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListFilesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListFilesRequest) ProtoMessage() {}
+
+func (x *ListFilesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_dfs_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListFilesRequest.ProtoReflect.Descriptor instead.
+func (*ListFilesRequest) Descriptor() ([]byte, []int) {
+	return file_dfs_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *ListFilesRequest) GetClientId() int64 {
+	if x != nil {
+		return x.ClientId
+	}
+	return 0
+}
+
+type ListFilesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Filenames     []string               `protobuf:"bytes,1,rep,name=filenames,proto3" json:"filenames,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListFilesResponse) Reset() {
+	*x = ListFilesResponse{}
+	mi := &file_dfs_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListFilesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListFilesResponse) ProtoMessage() {}
+
+func (x *ListFilesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_dfs_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListFilesResponse.ProtoReflect.Descriptor instead.
+func (*ListFilesResponse) Descriptor() ([]byte, []int) {
+	return file_dfs_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *ListFilesResponse) GetFilenames() []string {
+	if x != nil {
+		return x.Filenames
+	}
+	return nil
+}
+
 var File_dfs_proto protoreflect.FileDescriptor
 
 const file_dfs_proto_rawDesc = "" +
@@ -1393,7 +1481,11 @@ const file_dfs_proto_rawDesc = "" +
 	"\tclient_id\x18\x02 \x01(\x03R\bclientId\"U\n" +
 	"\x14DeleteChunksResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
-	"\rdeleted_count\x18\x02 \x01(\x05R\fdeletedCount2\x88\x04\n" +
+	"\rdeleted_count\x18\x02 \x01(\x05R\fdeletedCount\"/\n" +
+	"\x10ListFilesRequest\x12\x1b\n" +
+	"\tclient_id\x18\x01 \x01(\x03R\bclientId\"1\n" +
+	"\x11ListFilesResponse\x12\x1c\n" +
+	"\tfilenames\x18\x01 \x03(\tR\tfilenames2\xc8\x04\n" +
 	"\fMasterServer\x12A\n" +
 	"\n" +
 	"CreateFile\x12\x18.dfspb.CreateFileRequest\x1a\x19.dfspb.CreateFileResponse\x12J\n" +
@@ -1403,7 +1495,8 @@ const file_dfs_proto_rawDesc = "" +
 	"\x0fReportInventory\x12\x17.dfspb.InventoryRequest\x1a\x18.dfspb.InventoryResponse\x12G\n" +
 	"\fConfirmWrite\x12\x1a.dfspb.ConfirmWriteRequest\x1a\x1b.dfspb.ConfirmWriteResponse\x12A\n" +
 	"\n" +
-	"DeleteFile\x12\x18.dfspb.DeleteFileRequest\x1a\x19.dfspb.DeleteFileResponse2\xa0\x02\n" +
+	"DeleteFile\x12\x18.dfspb.DeleteFileRequest\x1a\x19.dfspb.DeleteFileResponse\x12>\n" +
+	"\tListFiles\x12\x17.dfspb.ListFilesRequest\x1a\x18.dfspb.ListFilesResponse2\xa0\x02\n" +
 	"\vChunkServer\x12A\n" +
 	"\n" +
 	"WriteChunk\x12\x18.dfspb.WriteChunkRequest\x1a\x19.dfspb.WriteChunkResponse\x12>\n" +
@@ -1423,7 +1516,7 @@ func file_dfs_proto_rawDescGZIP() []byte {
 	return file_dfs_proto_rawDescData
 }
 
-var file_dfs_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_dfs_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_dfs_proto_goTypes = []any{
 	(*CreateFileRequest)(nil),       // 0: dfspb.CreateFileRequest
 	(*CreateFileResponse)(nil),      // 1: dfspb.CreateFileResponse
@@ -1449,14 +1542,16 @@ var file_dfs_proto_goTypes = []any{
 	(*DeleteFileResponse)(nil),      // 21: dfspb.DeleteFileResponse
 	(*DeleteChunksRequest)(nil),     // 22: dfspb.DeleteChunksRequest
 	(*DeleteChunksResponse)(nil),    // 23: dfspb.DeleteChunksResponse
-	nil,                             // 24: dfspb.CreateFileResponse.StripesEntry
-	nil,                             // 25: dfspb.AllocateChunkResponse.StripesEntry
-	nil,                             // 26: dfspb.GetFileMetadataResponse.StripesEntry
+	(*ListFilesRequest)(nil),        // 24: dfspb.ListFilesRequest
+	(*ListFilesResponse)(nil),       // 25: dfspb.ListFilesResponse
+	nil,                             // 26: dfspb.CreateFileResponse.StripesEntry
+	nil,                             // 27: dfspb.AllocateChunkResponse.StripesEntry
+	nil,                             // 28: dfspb.GetFileMetadataResponse.StripesEntry
 }
 var file_dfs_proto_depIdxs = []int32{
-	24, // 0: dfspb.CreateFileResponse.stripes:type_name -> dfspb.CreateFileResponse.StripesEntry
-	25, // 1: dfspb.AllocateChunkResponse.stripes:type_name -> dfspb.AllocateChunkResponse.StripesEntry
-	26, // 2: dfspb.GetFileMetadataResponse.stripes:type_name -> dfspb.GetFileMetadataResponse.StripesEntry
+	26, // 0: dfspb.CreateFileResponse.stripes:type_name -> dfspb.CreateFileResponse.StripesEntry
+	27, // 1: dfspb.AllocateChunkResponse.stripes:type_name -> dfspb.AllocateChunkResponse.StripesEntry
+	28, // 2: dfspb.GetFileMetadataResponse.stripes:type_name -> dfspb.GetFileMetadataResponse.StripesEntry
 	16, // 3: dfspb.InventoryResponse.reconstruction_tasks:type_name -> dfspb.ReconstructionTask
 	4,  // 4: dfspb.CreateFileResponse.StripesEntry.value:type_name -> dfspb.StripeMetadata
 	4,  // 5: dfspb.AllocateChunkResponse.StripesEntry.value:type_name -> dfspb.StripeMetadata
@@ -1468,23 +1563,25 @@ var file_dfs_proto_depIdxs = []int32{
 	15, // 11: dfspb.MasterServer.ReportInventory:input_type -> dfspb.InventoryRequest
 	18, // 12: dfspb.MasterServer.ConfirmWrite:input_type -> dfspb.ConfirmWriteRequest
 	20, // 13: dfspb.MasterServer.DeleteFile:input_type -> dfspb.DeleteFileRequest
-	8,  // 14: dfspb.ChunkServer.WriteChunk:input_type -> dfspb.WriteChunkRequest
-	10, // 15: dfspb.ChunkServer.ReadChunk:input_type -> dfspb.ReadChunkRequest
-	12, // 16: dfspb.ChunkServer.ForwardChunk:input_type -> dfspb.ForwardChunkRequest
-	22, // 17: dfspb.ChunkServer.DeleteChunks:input_type -> dfspb.DeleteChunksRequest
-	1,  // 18: dfspb.MasterServer.CreateFile:output_type -> dfspb.CreateFileResponse
-	5,  // 19: dfspb.MasterServer.AllocateChunk:output_type -> dfspb.AllocateChunkResponse
-	7,  // 20: dfspb.MasterServer.GetFileMetadata:output_type -> dfspb.GetFileMetadataResponse
-	14, // 21: dfspb.MasterServer.ReceiveHeartbeat:output_type -> dfspb.HeartbeatResponse
-	17, // 22: dfspb.MasterServer.ReportInventory:output_type -> dfspb.InventoryResponse
-	19, // 23: dfspb.MasterServer.ConfirmWrite:output_type -> dfspb.ConfirmWriteResponse
-	21, // 24: dfspb.MasterServer.DeleteFile:output_type -> dfspb.DeleteFileResponse
-	9,  // 25: dfspb.ChunkServer.WriteChunk:output_type -> dfspb.WriteChunkResponse
-	11, // 26: dfspb.ChunkServer.ReadChunk:output_type -> dfspb.ReadChunkResponse
-	9,  // 27: dfspb.ChunkServer.ForwardChunk:output_type -> dfspb.WriteChunkResponse
-	23, // 28: dfspb.ChunkServer.DeleteChunks:output_type -> dfspb.DeleteChunksResponse
-	18, // [18:29] is the sub-list for method output_type
-	7,  // [7:18] is the sub-list for method input_type
+	24, // 14: dfspb.MasterServer.ListFiles:input_type -> dfspb.ListFilesRequest
+	8,  // 15: dfspb.ChunkServer.WriteChunk:input_type -> dfspb.WriteChunkRequest
+	10, // 16: dfspb.ChunkServer.ReadChunk:input_type -> dfspb.ReadChunkRequest
+	12, // 17: dfspb.ChunkServer.ForwardChunk:input_type -> dfspb.ForwardChunkRequest
+	22, // 18: dfspb.ChunkServer.DeleteChunks:input_type -> dfspb.DeleteChunksRequest
+	1,  // 19: dfspb.MasterServer.CreateFile:output_type -> dfspb.CreateFileResponse
+	5,  // 20: dfspb.MasterServer.AllocateChunk:output_type -> dfspb.AllocateChunkResponse
+	7,  // 21: dfspb.MasterServer.GetFileMetadata:output_type -> dfspb.GetFileMetadataResponse
+	14, // 22: dfspb.MasterServer.ReceiveHeartbeat:output_type -> dfspb.HeartbeatResponse
+	17, // 23: dfspb.MasterServer.ReportInventory:output_type -> dfspb.InventoryResponse
+	19, // 24: dfspb.MasterServer.ConfirmWrite:output_type -> dfspb.ConfirmWriteResponse
+	21, // 25: dfspb.MasterServer.DeleteFile:output_type -> dfspb.DeleteFileResponse
+	25, // 26: dfspb.MasterServer.ListFiles:output_type -> dfspb.ListFilesResponse
+	9,  // 27: dfspb.ChunkServer.WriteChunk:output_type -> dfspb.WriteChunkResponse
+	11, // 28: dfspb.ChunkServer.ReadChunk:output_type -> dfspb.ReadChunkResponse
+	9,  // 29: dfspb.ChunkServer.ForwardChunk:output_type -> dfspb.WriteChunkResponse
+	23, // 30: dfspb.ChunkServer.DeleteChunks:output_type -> dfspb.DeleteChunksResponse
+	19, // [19:31] is the sub-list for method output_type
+	7,  // [7:19] is the sub-list for method input_type
 	7,  // [7:7] is the sub-list for extension type_name
 	7,  // [7:7] is the sub-list for extension extendee
 	0,  // [0:7] is the sub-list for field type_name
@@ -1501,7 +1598,7 @@ func file_dfs_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_dfs_proto_rawDesc), len(file_dfs_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   27,
+			NumMessages:   29,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

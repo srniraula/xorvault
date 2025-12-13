@@ -128,6 +128,14 @@ message DeleteChunksResponse {
   int32 deleted_count = 2;  // How many chunks were successfully deleted
 }
 
+message ListFilesRequest {
+  int64 client_id = 1;
+}
+
+message ListFilesResponse {
+  repeated string filenames = 1;
+}
+
 service MasterServer {
   rpc CreateFile(CreateFileRequest) returns (CreateFileResponse);
   rpc AllocateChunk(AllocateChunkRequest) returns (AllocateChunkResponse);
@@ -136,6 +144,7 @@ service MasterServer {
   rpc ReportInventory(InventoryRequest) returns (InventoryResponse);
   rpc ConfirmWrite(ConfirmWriteRequest) returns (ConfirmWriteResponse);
   rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
+  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
 }
 
 service ChunkServer {

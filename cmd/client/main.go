@@ -20,8 +20,8 @@ const CHUNK_SIZE = 1 * 1024 * 1024
 //	go run cmd/client/main.go download myfile.pdf
 func main() {
 	// Check if user provided correct number of arguments
-	if len(os.Args) < 3 {
-		log.Fatal("Usage: go run cmd/client/main.go <upload|download|delete> <filename>")
+	if len(os.Args) < 2 {
+		log.Fatal("Usage: go run cmd/client/main.go <upload|download|delete|ls> <filename>")
 	}
 
 	// Load client ID from .client_id file (0 if new client)
@@ -32,17 +32,24 @@ func main() {
 		log.Printf("Using existing client ID: %d", myID)
 	}
 
-	cmd := os.Args[1]  // "upload", "download", or "delete"
-	file := os.Args[2] // filename to upload/download/delete
+	cmd := os.Args[1] // "upload", "download", "delete", or "ls"
 
-	if cmd == "upload" {
-		upload(file, myID)
-	} else if cmd == "download" {
-		download(file, myID)
-	} else if cmd == "delete" {
-		deleteFile(file, myID)
+	if cmd == "ls" {
+		listFiles(myID)
+	} else if len(os.Args) < 3 {
+		log.Fatal("Usage: go run cmd/client/main.go <upload|download|delete> <filename>")
 	} else {
-		log.Fatalf("Unknown command: %s. Use upload, download, or delete", cmd)
+		file := os.Args[2] // filename to upload/download/delete
+
+		if cmd == "upload" {
+			upload(file, myID)
+		} else if cmd == "download" {
+			download(file, myID)
+		} else if cmd == "delete" {
+			deleteFile(file, myID)
+		} else {
+			log.Fatalf("Unknown command: %s. Use upload, download, delete, or ls", cmd)
+		}
 	}
 }
 
@@ -300,4 +307,40 @@ func deleteFile(filename string, myID int64) {
 	}
 
 	log.Printf("Successfully deleted %s: %s", filename, resp.Message)
+}
+
+// listFiles displays all files uploaded by this client
+func listFiles(myID int64) {
+	if myID == 0 {
+		log.Println("No files uploaded yet (new client)")
+		return
+	}
+
+	// Connect to master server
+	conn, err := grpc.NewClient("127.0.0.1:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatal("Failed to connect to master:", err)
+	}
+	defer conn.Close()
+
+	masterClient := dfspb.NewMasterServerClient(conn)
+
+	// Request file list
+	resp, err := masterClient.ListFiles(context.Background(), &dfspb.ListFilesRequest{
+		ClientId: myID,
+	})
+
+	if err != nil {
+		log.Fatalf("ListFiles failed: %v", err)
+	}
+
+	if len(resp.Filenames) == 0 {
+		log.Println("No files uploaded")
+		return
+	}
+
+	log.Printf("Files uploaded by client %d:", myID)
+	for i, filename := range resp.Filenames {
+		log.Printf("  %d. %s", i+1, filename)
+	}
 }
