@@ -19,11 +19,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	MasterServer_CreateFile_FullMethodName      = "/dfspb.MasterServer/CreateFile"
-	MasterServer_AllocateChunk_FullMethodName   = "/dfspb.MasterServer/AllocateChunk"
-	MasterServer_GetFileMetadata_FullMethodName = "/dfspb.MasterServer/GetFileMetadata"
-	MasterServer_SendHeartbeat_FullMethodName   = "/dfspb.MasterServer/SendHeartbeat"
-	MasterServer_ConfirmWrite_FullMethodName    = "/dfspb.MasterServer/ConfirmWrite"
+	MasterServer_CreateFile_FullMethodName       = "/dfspb.MasterServer/CreateFile"
+	MasterServer_AllocateChunk_FullMethodName    = "/dfspb.MasterServer/AllocateChunk"
+	MasterServer_GetFileMetadata_FullMethodName  = "/dfspb.MasterServer/GetFileMetadata"
+	MasterServer_ReceiveHeartbeat_FullMethodName = "/dfspb.MasterServer/ReceiveHeartbeat"
+	MasterServer_ReportInventory_FullMethodName  = "/dfspb.MasterServer/ReportInventory"
+	MasterServer_ConfirmWrite_FullMethodName     = "/dfspb.MasterServer/ConfirmWrite"
 )
 
 // MasterServerClient is the client API for MasterServer service.
@@ -33,7 +34,8 @@ type MasterServerClient interface {
 	CreateFile(ctx context.Context, in *CreateFileRequest, opts ...grpc.CallOption) (*CreateFileResponse, error)
 	AllocateChunk(ctx context.Context, in *AllocateChunkRequest, opts ...grpc.CallOption) (*AllocateChunkResponse, error)
 	GetFileMetadata(ctx context.Context, in *GetFileMetadataRequest, opts ...grpc.CallOption) (*GetFileMetadataResponse, error)
-	SendHeartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
+	ReceiveHeartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
+	ReportInventory(ctx context.Context, in *InventoryRequest, opts ...grpc.CallOption) (*InventoryResponse, error)
 	ConfirmWrite(ctx context.Context, in *ConfirmWriteRequest, opts ...grpc.CallOption) (*ConfirmWriteResponse, error)
 }
 
@@ -75,10 +77,20 @@ func (c *masterServerClient) GetFileMetadata(ctx context.Context, in *GetFileMet
 	return out, nil
 }
 
-func (c *masterServerClient) SendHeartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error) {
+func (c *masterServerClient) ReceiveHeartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(HeartbeatResponse)
-	err := c.cc.Invoke(ctx, MasterServer_SendHeartbeat_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, MasterServer_ReceiveHeartbeat_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *masterServerClient) ReportInventory(ctx context.Context, in *InventoryRequest, opts ...grpc.CallOption) (*InventoryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InventoryResponse)
+	err := c.cc.Invoke(ctx, MasterServer_ReportInventory_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +114,8 @@ type MasterServerServer interface {
 	CreateFile(context.Context, *CreateFileRequest) (*CreateFileResponse, error)
 	AllocateChunk(context.Context, *AllocateChunkRequest) (*AllocateChunkResponse, error)
 	GetFileMetadata(context.Context, *GetFileMetadataRequest) (*GetFileMetadataResponse, error)
-	SendHeartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
+	ReceiveHeartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
+	ReportInventory(context.Context, *InventoryRequest) (*InventoryResponse, error)
 	ConfirmWrite(context.Context, *ConfirmWriteRequest) (*ConfirmWriteResponse, error)
 	mustEmbedUnimplementedMasterServerServer()
 }
@@ -123,8 +136,11 @@ func (UnimplementedMasterServerServer) AllocateChunk(context.Context, *AllocateC
 func (UnimplementedMasterServerServer) GetFileMetadata(context.Context, *GetFileMetadataRequest) (*GetFileMetadataResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetFileMetadata not implemented")
 }
-func (UnimplementedMasterServerServer) SendHeartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method SendHeartbeat not implemented")
+func (UnimplementedMasterServerServer) ReceiveHeartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReceiveHeartbeat not implemented")
+}
+func (UnimplementedMasterServerServer) ReportInventory(context.Context, *InventoryRequest) (*InventoryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReportInventory not implemented")
 }
 func (UnimplementedMasterServerServer) ConfirmWrite(context.Context, *ConfirmWriteRequest) (*ConfirmWriteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ConfirmWrite not implemented")
@@ -204,20 +220,38 @@ func _MasterServer_GetFileMetadata_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MasterServer_SendHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MasterServer_ReceiveHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(HeartbeatRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MasterServerServer).SendHeartbeat(ctx, in)
+		return srv.(MasterServerServer).ReceiveHeartbeat(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: MasterServer_SendHeartbeat_FullMethodName,
+		FullMethod: MasterServer_ReceiveHeartbeat_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MasterServerServer).SendHeartbeat(ctx, req.(*HeartbeatRequest))
+		return srv.(MasterServerServer).ReceiveHeartbeat(ctx, req.(*HeartbeatRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MasterServer_ReportInventory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InventoryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MasterServerServer).ReportInventory(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MasterServer_ReportInventory_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MasterServerServer).ReportInventory(ctx, req.(*InventoryRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -260,8 +294,12 @@ var MasterServer_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _MasterServer_GetFileMetadata_Handler,
 		},
 		{
-			MethodName: "SendHeartbeat",
-			Handler:    _MasterServer_SendHeartbeat_Handler,
+			MethodName: "ReceiveHeartbeat",
+			Handler:    _MasterServer_ReceiveHeartbeat_Handler,
+		},
+		{
+			MethodName: "ReportInventory",
+			Handler:    _MasterServer_ReportInventory_Handler,
 		},
 		{
 			MethodName: "ConfirmWrite",

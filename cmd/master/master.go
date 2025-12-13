@@ -238,7 +238,7 @@ func (m *MasterServer) GetFileMetadata(ctx context.Context, req *dfspb.GetFileMe
 // SendHeartbeat receives periodic "I'm alive" messages from chunk servers
 // This is how the master knows which chunk servers are still running
 // Chunk servers send heartbeats every 5 seconds
-func (m *MasterServer) SendHeartbeat(ctx context.Context, req *dfspb.HeartbeatRequest) (*dfspb.HeartbeatResponse, error) {
+func (m *MasterServer) ReceiveHeartbeat(ctx context.Context, req *dfspb.HeartbeatRequest) (*dfspb.HeartbeatResponse, error) {
 	addr := req.Address
 
 	m.serversMu.Lock() // Write lock - only one goroutine can modify at a time
@@ -290,5 +290,4 @@ func (m *MasterServer) ConfirmWrite(ctx context.Context, req *dfspb.ConfirmWrite
 
 	return &dfspb.ConfirmWriteResponse{Success: true}, nil
 }
-
 

@@ -809,6 +809,194 @@ func (x *HeartbeatResponse) GetSuccess() bool {
 	return false
 }
 
+type InventoryRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Address       string                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
+	ChunkIds      []string               `protobuf:"bytes,2,rep,name=chunk_ids,json=chunkIds,proto3" json:"chunk_ids,omitempty"` // Chunks this server currently has
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InventoryRequest) Reset() {
+	*x = InventoryRequest{}
+	mi := &file_dfs_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InventoryRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InventoryRequest) ProtoMessage() {}
+
+func (x *InventoryRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_dfs_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InventoryRequest.ProtoReflect.Descriptor instead.
+func (*InventoryRequest) Descriptor() ([]byte, []int) {
+	return file_dfs_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *InventoryRequest) GetAddress() string {
+	if x != nil {
+		return x.Address
+	}
+	return ""
+}
+
+func (x *InventoryRequest) GetChunkIds() []string {
+	if x != nil {
+		return x.ChunkIds
+	}
+	return nil
+}
+
+type ReconstructionTask struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ChunkId       string                 `protobuf:"bytes,1,opt,name=chunk_id,json=chunkId,proto3" json:"chunk_id,omitempty"`                     // The missing chunk to reconstruct
+	StripeNum     int32                  `protobuf:"varint,2,opt,name=stripe_num,json=stripeNum,proto3" json:"stripe_num,omitempty"`              // Stripe number
+	OtherChunkIds []string               `protobuf:"bytes,3,rep,name=other_chunk_ids,json=otherChunkIds,proto3" json:"other_chunk_ids,omitempty"` // [chunk1, chunk2] - the 2 available chunks
+	OtherServers  []string               `protobuf:"bytes,4,rep,name=other_servers,json=otherServers,proto3" json:"other_servers,omitempty"`      // [server1, server2] - where to get them
+	ClientId      int64                  `protobuf:"varint,5,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`                 // Client ID for physical isolation
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReconstructionTask) Reset() {
+	*x = ReconstructionTask{}
+	mi := &file_dfs_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReconstructionTask) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReconstructionTask) ProtoMessage() {}
+
+func (x *ReconstructionTask) ProtoReflect() protoreflect.Message {
+	mi := &file_dfs_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReconstructionTask.ProtoReflect.Descriptor instead.
+func (*ReconstructionTask) Descriptor() ([]byte, []int) {
+	return file_dfs_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ReconstructionTask) GetChunkId() string {
+	if x != nil {
+		return x.ChunkId
+	}
+	return ""
+}
+
+func (x *ReconstructionTask) GetStripeNum() int32 {
+	if x != nil {
+		return x.StripeNum
+	}
+	return 0
+}
+
+func (x *ReconstructionTask) GetOtherChunkIds() []string {
+	if x != nil {
+		return x.OtherChunkIds
+	}
+	return nil
+}
+
+func (x *ReconstructionTask) GetOtherServers() []string {
+	if x != nil {
+		return x.OtherServers
+	}
+	return nil
+}
+
+func (x *ReconstructionTask) GetClientId() int64 {
+	if x != nil {
+		return x.ClientId
+	}
+	return 0
+}
+
+type InventoryResponse struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	MissingChunks       []string               `protobuf:"bytes,1,rep,name=missing_chunks,json=missingChunks,proto3" json:"missing_chunks,omitempty"`                   // Chunks to reconstruct
+	ExtraChunks         []string               `protobuf:"bytes,2,rep,name=extra_chunks,json=extraChunks,proto3" json:"extra_chunks,omitempty"`                         // Chunks to delete (orphaned)
+	ReconstructionTasks []*ReconstructionTask  `protobuf:"bytes,3,rep,name=reconstruction_tasks,json=reconstructionTasks,proto3" json:"reconstruction_tasks,omitempty"` // How to reconstruct missing chunks
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *InventoryResponse) Reset() {
+	*x = InventoryResponse{}
+	mi := &file_dfs_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InventoryResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InventoryResponse) ProtoMessage() {}
+
+func (x *InventoryResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_dfs_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InventoryResponse.ProtoReflect.Descriptor instead.
+func (*InventoryResponse) Descriptor() ([]byte, []int) {
+	return file_dfs_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *InventoryResponse) GetMissingChunks() []string {
+	if x != nil {
+		return x.MissingChunks
+	}
+	return nil
+}
+
+func (x *InventoryResponse) GetExtraChunks() []string {
+	if x != nil {
+		return x.ExtraChunks
+	}
+	return nil
+}
+
+func (x *InventoryResponse) GetReconstructionTasks() []*ReconstructionTask {
+	if x != nil {
+		return x.ReconstructionTasks
+	}
+	return nil
+}
+
 type ConfirmWriteRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Filename      string                 `protobuf:"bytes,1,opt,name=filename,proto3" json:"filename,omitempty"`
@@ -819,7 +1007,7 @@ type ConfirmWriteRequest struct {
 
 func (x *ConfirmWriteRequest) Reset() {
 	*x = ConfirmWriteRequest{}
-	mi := &file_dfs_proto_msgTypes[15]
+	mi := &file_dfs_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -831,7 +1019,7 @@ func (x *ConfirmWriteRequest) String() string {
 func (*ConfirmWriteRequest) ProtoMessage() {}
 
 func (x *ConfirmWriteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dfs_proto_msgTypes[15]
+	mi := &file_dfs_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -844,7 +1032,7 @@ func (x *ConfirmWriteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfirmWriteRequest.ProtoReflect.Descriptor instead.
 func (*ConfirmWriteRequest) Descriptor() ([]byte, []int) {
-	return file_dfs_proto_rawDescGZIP(), []int{15}
+	return file_dfs_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ConfirmWriteRequest) GetFilename() string {
@@ -870,7 +1058,7 @@ type ConfirmWriteResponse struct {
 
 func (x *ConfirmWriteResponse) Reset() {
 	*x = ConfirmWriteResponse{}
-	mi := &file_dfs_proto_msgTypes[16]
+	mi := &file_dfs_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -882,7 +1070,7 @@ func (x *ConfirmWriteResponse) String() string {
 func (*ConfirmWriteResponse) ProtoMessage() {}
 
 func (x *ConfirmWriteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dfs_proto_msgTypes[16]
+	mi := &file_dfs_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -895,7 +1083,7 @@ func (x *ConfirmWriteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfirmWriteResponse.ProtoReflect.Descriptor instead.
 func (*ConfirmWriteResponse) Descriptor() ([]byte, []int) {
-	return file_dfs_proto_rawDescGZIP(), []int{16}
+	return file_dfs_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ConfirmWriteResponse) GetSuccess() bool {
@@ -966,18 +1154,33 @@ const file_dfs_proto_rawDesc = "" +
 	"\x10HeartbeatRequest\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\"-\n" +
 	"\x11HeartbeatResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess\"N\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\"I\n" +
+	"\x10InventoryRequest\x12\x18\n" +
+	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x1b\n" +
+	"\tchunk_ids\x18\x02 \x03(\tR\bchunkIds\"\xb8\x01\n" +
+	"\x12ReconstructionTask\x12\x19\n" +
+	"\bchunk_id\x18\x01 \x01(\tR\achunkId\x12\x1d\n" +
+	"\n" +
+	"stripe_num\x18\x02 \x01(\x05R\tstripeNum\x12&\n" +
+	"\x0fother_chunk_ids\x18\x03 \x03(\tR\rotherChunkIds\x12#\n" +
+	"\rother_servers\x18\x04 \x03(\tR\fotherServers\x12\x1b\n" +
+	"\tclient_id\x18\x05 \x01(\x03R\bclientId\"\xab\x01\n" +
+	"\x11InventoryResponse\x12%\n" +
+	"\x0emissing_chunks\x18\x01 \x03(\tR\rmissingChunks\x12!\n" +
+	"\fextra_chunks\x18\x02 \x03(\tR\vextraChunks\x12L\n" +
+	"\x14reconstruction_tasks\x18\x03 \x03(\v2\x19.dfspb.ReconstructionTaskR\x13reconstructionTasks\"N\n" +
 	"\x13ConfirmWriteRequest\x12\x1a\n" +
 	"\bfilename\x18\x01 \x01(\tR\bfilename\x12\x1b\n" +
 	"\tchunk_ids\x18\x02 \x03(\tR\bchunkIds\"0\n" +
 	"\x14ConfirmWriteResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess2\xfc\x02\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess2\xc5\x03\n" +
 	"\fMasterServer\x12A\n" +
 	"\n" +
 	"CreateFile\x12\x18.dfspb.CreateFileRequest\x1a\x19.dfspb.CreateFileResponse\x12J\n" +
 	"\rAllocateChunk\x12\x1b.dfspb.AllocateChunkRequest\x1a\x1c.dfspb.AllocateChunkResponse\x12P\n" +
-	"\x0fGetFileMetadata\x12\x1d.dfspb.GetFileMetadataRequest\x1a\x1e.dfspb.GetFileMetadataResponse\x12B\n" +
-	"\rSendHeartbeat\x12\x17.dfspb.HeartbeatRequest\x1a\x18.dfspb.HeartbeatResponse\x12G\n" +
+	"\x0fGetFileMetadata\x12\x1d.dfspb.GetFileMetadataRequest\x1a\x1e.dfspb.GetFileMetadataResponse\x12E\n" +
+	"\x10ReceiveHeartbeat\x12\x17.dfspb.HeartbeatRequest\x1a\x18.dfspb.HeartbeatResponse\x12D\n" +
+	"\x0fReportInventory\x12\x17.dfspb.InventoryRequest\x1a\x18.dfspb.InventoryResponse\x12G\n" +
 	"\fConfirmWrite\x12\x1a.dfspb.ConfirmWriteRequest\x1a\x1b.dfspb.ConfirmWriteResponse2\xd7\x01\n" +
 	"\vChunkServer\x12A\n" +
 	"\n" +
@@ -997,7 +1200,7 @@ func file_dfs_proto_rawDescGZIP() []byte {
 	return file_dfs_proto_rawDescData
 }
 
-var file_dfs_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_dfs_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_dfs_proto_goTypes = []any{
 	(*CreateFileRequest)(nil),       // 0: dfspb.CreateFileRequest
 	(*CreateFileResponse)(nil),      // 1: dfspb.CreateFileResponse
@@ -1014,40 +1217,46 @@ var file_dfs_proto_goTypes = []any{
 	(*ForwardChunkRequest)(nil),     // 12: dfspb.ForwardChunkRequest
 	(*HeartbeatRequest)(nil),        // 13: dfspb.HeartbeatRequest
 	(*HeartbeatResponse)(nil),       // 14: dfspb.HeartbeatResponse
-	(*ConfirmWriteRequest)(nil),     // 15: dfspb.ConfirmWriteRequest
-	(*ConfirmWriteResponse)(nil),    // 16: dfspb.ConfirmWriteResponse
-	nil,                             // 17: dfspb.CreateFileResponse.StripesEntry
-	nil,                             // 18: dfspb.AllocateChunkResponse.StripesEntry
-	nil,                             // 19: dfspb.GetFileMetadataResponse.StripesEntry
+	(*InventoryRequest)(nil),        // 15: dfspb.InventoryRequest
+	(*ReconstructionTask)(nil),      // 16: dfspb.ReconstructionTask
+	(*InventoryResponse)(nil),       // 17: dfspb.InventoryResponse
+	(*ConfirmWriteRequest)(nil),     // 18: dfspb.ConfirmWriteRequest
+	(*ConfirmWriteResponse)(nil),    // 19: dfspb.ConfirmWriteResponse
+	nil,                             // 20: dfspb.CreateFileResponse.StripesEntry
+	nil,                             // 21: dfspb.AllocateChunkResponse.StripesEntry
+	nil,                             // 22: dfspb.GetFileMetadataResponse.StripesEntry
 }
 var file_dfs_proto_depIdxs = []int32{
-	17, // 0: dfspb.CreateFileResponse.stripes:type_name -> dfspb.CreateFileResponse.StripesEntry
-	18, // 1: dfspb.AllocateChunkResponse.stripes:type_name -> dfspb.AllocateChunkResponse.StripesEntry
-	19, // 2: dfspb.GetFileMetadataResponse.stripes:type_name -> dfspb.GetFileMetadataResponse.StripesEntry
-	4,  // 3: dfspb.CreateFileResponse.StripesEntry.value:type_name -> dfspb.StripeMetadata
-	4,  // 4: dfspb.AllocateChunkResponse.StripesEntry.value:type_name -> dfspb.StripeMetadata
-	4,  // 5: dfspb.GetFileMetadataResponse.StripesEntry.value:type_name -> dfspb.StripeMetadata
-	0,  // 6: dfspb.MasterServer.CreateFile:input_type -> dfspb.CreateFileRequest
-	2,  // 7: dfspb.MasterServer.AllocateChunk:input_type -> dfspb.AllocateChunkRequest
-	6,  // 8: dfspb.MasterServer.GetFileMetadata:input_type -> dfspb.GetFileMetadataRequest
-	13, // 9: dfspb.MasterServer.SendHeartbeat:input_type -> dfspb.HeartbeatRequest
-	15, // 10: dfspb.MasterServer.ConfirmWrite:input_type -> dfspb.ConfirmWriteRequest
-	8,  // 11: dfspb.ChunkServer.WriteChunk:input_type -> dfspb.WriteChunkRequest
-	10, // 12: dfspb.ChunkServer.ReadChunk:input_type -> dfspb.ReadChunkRequest
-	12, // 13: dfspb.ChunkServer.ForwardChunk:input_type -> dfspb.ForwardChunkRequest
-	1,  // 14: dfspb.MasterServer.CreateFile:output_type -> dfspb.CreateFileResponse
-	5,  // 15: dfspb.MasterServer.AllocateChunk:output_type -> dfspb.AllocateChunkResponse
-	7,  // 16: dfspb.MasterServer.GetFileMetadata:output_type -> dfspb.GetFileMetadataResponse
-	14, // 17: dfspb.MasterServer.SendHeartbeat:output_type -> dfspb.HeartbeatResponse
-	16, // 18: dfspb.MasterServer.ConfirmWrite:output_type -> dfspb.ConfirmWriteResponse
-	9,  // 19: dfspb.ChunkServer.WriteChunk:output_type -> dfspb.WriteChunkResponse
-	11, // 20: dfspb.ChunkServer.ReadChunk:output_type -> dfspb.ReadChunkResponse
-	9,  // 21: dfspb.ChunkServer.ForwardChunk:output_type -> dfspb.WriteChunkResponse
-	14, // [14:22] is the sub-list for method output_type
-	6,  // [6:14] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	20, // 0: dfspb.CreateFileResponse.stripes:type_name -> dfspb.CreateFileResponse.StripesEntry
+	21, // 1: dfspb.AllocateChunkResponse.stripes:type_name -> dfspb.AllocateChunkResponse.StripesEntry
+	22, // 2: dfspb.GetFileMetadataResponse.stripes:type_name -> dfspb.GetFileMetadataResponse.StripesEntry
+	16, // 3: dfspb.InventoryResponse.reconstruction_tasks:type_name -> dfspb.ReconstructionTask
+	4,  // 4: dfspb.CreateFileResponse.StripesEntry.value:type_name -> dfspb.StripeMetadata
+	4,  // 5: dfspb.AllocateChunkResponse.StripesEntry.value:type_name -> dfspb.StripeMetadata
+	4,  // 6: dfspb.GetFileMetadataResponse.StripesEntry.value:type_name -> dfspb.StripeMetadata
+	0,  // 7: dfspb.MasterServer.CreateFile:input_type -> dfspb.CreateFileRequest
+	2,  // 8: dfspb.MasterServer.AllocateChunk:input_type -> dfspb.AllocateChunkRequest
+	6,  // 9: dfspb.MasterServer.GetFileMetadata:input_type -> dfspb.GetFileMetadataRequest
+	13, // 10: dfspb.MasterServer.ReceiveHeartbeat:input_type -> dfspb.HeartbeatRequest
+	15, // 11: dfspb.MasterServer.ReportInventory:input_type -> dfspb.InventoryRequest
+	18, // 12: dfspb.MasterServer.ConfirmWrite:input_type -> dfspb.ConfirmWriteRequest
+	8,  // 13: dfspb.ChunkServer.WriteChunk:input_type -> dfspb.WriteChunkRequest
+	10, // 14: dfspb.ChunkServer.ReadChunk:input_type -> dfspb.ReadChunkRequest
+	12, // 15: dfspb.ChunkServer.ForwardChunk:input_type -> dfspb.ForwardChunkRequest
+	1,  // 16: dfspb.MasterServer.CreateFile:output_type -> dfspb.CreateFileResponse
+	5,  // 17: dfspb.MasterServer.AllocateChunk:output_type -> dfspb.AllocateChunkResponse
+	7,  // 18: dfspb.MasterServer.GetFileMetadata:output_type -> dfspb.GetFileMetadataResponse
+	14, // 19: dfspb.MasterServer.ReceiveHeartbeat:output_type -> dfspb.HeartbeatResponse
+	17, // 20: dfspb.MasterServer.ReportInventory:output_type -> dfspb.InventoryResponse
+	19, // 21: dfspb.MasterServer.ConfirmWrite:output_type -> dfspb.ConfirmWriteResponse
+	9,  // 22: dfspb.ChunkServer.WriteChunk:output_type -> dfspb.WriteChunkResponse
+	11, // 23: dfspb.ChunkServer.ReadChunk:output_type -> dfspb.ReadChunkResponse
+	9,  // 24: dfspb.ChunkServer.ForwardChunk:output_type -> dfspb.WriteChunkResponse
+	16, // [16:25] is the sub-list for method output_type
+	7,  // [7:16] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_dfs_proto_init() }
@@ -1061,7 +1270,7 @@ func file_dfs_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_dfs_proto_rawDesc), len(file_dfs_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   20,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

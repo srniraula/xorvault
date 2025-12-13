@@ -80,6 +80,25 @@ message HeartbeatResponse {
   bool success = 1;
 }
 
+message InventoryRequest {
+  string address = 1;
+  repeated string chunk_ids = 2;  // Chunks this server currently has
+}
+
+message ReconstructionTask {
+  string chunk_id = 1;              // The missing chunk to reconstruct
+  int32 stripe_num = 2;             // Stripe number
+  repeated string other_chunk_ids = 3;  // [chunk1, chunk2] - the 2 available chunks
+  repeated string other_servers = 4;    // [server1, server2] - where to get them
+  int64 client_id = 5;              // Client ID for physical isolation
+}
+
+message InventoryResponse {
+  repeated string missing_chunks = 1;  // Chunks to reconstruct
+  repeated string extra_chunks = 2;    // Chunks to delete (orphaned)
+  repeated ReconstructionTask reconstruction_tasks = 3;  // How to reconstruct missing chunks
+}
+
 message ConfirmWriteRequest {
   string filename = 1;
   repeated string chunk_ids = 2;
@@ -93,7 +112,8 @@ service MasterServer {
   rpc CreateFile(CreateFileRequest) returns (CreateFileResponse);
   rpc AllocateChunk(AllocateChunkRequest) returns (AllocateChunkResponse);
   rpc GetFileMetadata(GetFileMetadataRequest) returns (GetFileMetadataResponse);
-  rpc SendHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc ReceiveHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc ReportInventory(InventoryRequest) returns (InventoryResponse);
   rpc ConfirmWrite(ConfirmWriteRequest) returns (ConfirmWriteResponse);
 }
 
