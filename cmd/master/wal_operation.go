@@ -1,10 +1,10 @@
 package main
 
 import (
+	"dfs-project/dfspb"
 	"encoding/json"
 	"fmt"
 	"time"
-
 )
 
 // WAL operation types
@@ -31,7 +31,7 @@ type CreateFileData struct {
 // AllocateChunkData stores the data for AllocateChunk operation with status tracking
 type AllocateChunkData struct {
 	Filename string              `json:"filename"`
-	ChunkMap map[string][]string `json:"chunk_map"` // server -> chunk_ids
+	Stripes map[int32]*dfspb.StripeMetadata `json:"stripes"` //store full stripe info
 	Status   string              `json:"status"`    // "PENDING" or "SUCCESS"
 }
 

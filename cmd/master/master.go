@@ -172,18 +172,10 @@ func (m *MasterServer) allocateChunksInternal(totalSize int, fileName string) (*
 	}
 
 	// Log chunk allocation to WAL with PENDING status
-	// Convert stripe metadata to old format for WAL compatibility
-	chunkMap := make(map[string][]string)
-	for _, stripe := range m.fileInfo[filename] {
-		for i, chunkID := range stripe.ChunkIds {
-			server := stripe.Servers[i]
-			chunkMap[server] = append(chunkMap[server], chunkID)
-		}
-	}
-
+	// Store full stripe metadata for recovery
 	walData := AllocateChunkData{
 		Filename: filename,
-		ChunkMap: chunkMap,
+		Stripes:  m.fileInfo[filename],
 		Status:   "PENDING",
 	}
 
@@ -253,6 +245,7 @@ func (m *MasterServer) SendHeartbeat(ctx context.Context, req *dfspb.HeartbeatRe
 	// If this is a new chunk server we haven't seen before, register it
 	if _, exists := m.servers[addr]; !exists {
 		m.servers[addr] = &ServerInfo{}
+		m.chunkServers = append(m.chunkServers, addr)
 		m.logger.Printf("New chunkserver registered: %s", addr)
 	}
 	// Update the heartbeat timestamp and mark server as alive
@@ -297,3 +290,5 @@ func (m *MasterServer) ConfirmWrite(ctx context.Context, req *dfspb.ConfirmWrite
 
 	return &dfspb.ConfirmWriteResponse{Success: true}, nil
 }
+
+

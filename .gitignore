@@ -16,6 +16,10 @@ chunks3/
 
 # WAL files
 *.wal
+*.wal.old
+
+# Checkpoint files
+*.checkpoint
 
 # Client ID file
 .client_id

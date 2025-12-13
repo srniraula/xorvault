@@ -98,7 +98,9 @@ func (c *ChunkServer) ReadChunk(ctx context.Context, req *dfspb.ReadChunkRequest
 }
 
 func sendHeartbeats(port string, logger *log.Logger) {
-	ticker := time.NewTicker(5 * time.Second)
+	// returns a ticker object with a channel (ticker.C)
+	// Every 5 seconds, the ticker sends the current time to its channel
+	ticker := time.NewTicker(5 * time.Second)  
 	defer ticker.Stop()
 
 	conn, err := grpc.NewClient("127.0.0.1:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))

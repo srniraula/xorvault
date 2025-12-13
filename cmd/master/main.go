@@ -52,11 +52,23 @@ func main() {
 		servers:      make(map[string]*ServerInfo),                                   // Empty server health map
 		logger:       masterLogger,                                                   // Custom logger for file output
 		walFile:      walFile,                                                        // WAL file handle
-		walWriter:    bufio.NewWriter(walFile),    //                                  // Buffered WAL writer
+		walWriter:    bufio.NewWriter(walFile),                                       // Buffered WAL writer
 	}
 
+	// Restore from checkpoint first (if exists)
+	if err := server.LoadCheckpoint("master.checkpoint"); err != nil {
+		log.Fatalf("Checkpoint loading failed: %v", err)
+	}
+
+	// Then replay WAL entries after checkpoint
+	if err := server.RecoverFromWAL("master.wal"); err != nil {
+		log.Fatalf("WAL recovery failed: %v", err)
+	}
 	// Register our MasterServer to handle gRPC requests
 	dfspb.RegisterMasterServerServer(s, server)
+
+	// Start background goroutine for periodic checkpointing (every 5 minutes)
+	go server.PeriodicCheckpoint(5, "master.checkpoint", "master.wal")
 
 	// Start background goroutine for dead server detection
 	// This runs continuously in the background checking for dead servers
