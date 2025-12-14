@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-// streamFileInStripes reads a file and streams RAID-5 stripes via a channel
+// streamFileInStripes reads a file and streams RAID-4 stripes via a channel
 // Each stripe contains 2 data chunks and calculates parity
 // Stripes are sent to channel as they're read - producer pattern for memory efficiency
 // Caller must read from returned channel until closed

@@ -63,12 +63,15 @@ func uploadStripesStreaming(stripeChan <-chan Stripe, ackQueue *AckQueue, client
 	}()
 
 	// Consume stripes from channel and spawn upload goroutines
+	// this loop is blocking
 	stripeCount := 0
 	for stripe := range stripeChan {
 		stripeCount++
-
 		// Add all chunk IDs to ACK queue for this stripe
 		for _, chunkID := range stripe.ChunkIDs {
+			if len(chunkID) == 0 {
+				continue
+			}
 			ackQueue.Add(chunkID)
 		}
 
@@ -98,7 +101,12 @@ func uploadStripesStreaming(stripeChan <-chan Stripe, ackQueue *AckQueue, client
 		}
 
 		// Spawn 3 upload goroutines for this stripe
+		// for odd number of chunks of a file, we skip uploadchunk 
+		// because chunk is empty
 		for _, task := range tasks {
+			if len(task.ChunkID) == 0 {
+				continue
+			}
 			wg.Add(1)
 			go uploadChunk(task, &wg, resultChan, ackQueue)
 		}
@@ -143,7 +151,6 @@ func uploadChunk(task UploadTask, wg *sync.WaitGroup, resultChan chan<- UploadRe
 		return
 	}
 	defer conn.Close()
-
 	client := dfspb.NewChunkServerClient(conn)
 
 	// TODO 6.5: Inside goroutine: send chunk via WriteChunk RPC

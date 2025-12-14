@@ -78,6 +78,7 @@ func (m *MasterServer) CreateFile(ctx context.Context, req *dfspb.CreateFileRequ
 
 	// Allocate chunks and get the chunk-to-server mapping
 	allocResp, err := m.allocateChunksInternal(int(req.TotalSize), req.Filename)
+
 	if err != nil {
 		log.Printf("failed to allocate chunks: %v", err)
 		return nil, err

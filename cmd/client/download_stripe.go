@@ -24,11 +24,11 @@ type DownloadedChunk struct {
 
 // StripeDownload holds downloaded chunks for a single stripe
 type StripeDownload struct {
-	StripeNum    int
-	DataChunk1   []byte // nil if needs reconstruction
-	DataChunk2   []byte // nil if needs reconstruction
-	ParityChunk  []byte // nil if not downloaded
-	ChunksOK     int    // Count of successfully downloaded chunks (0-3)
+	StripeNum   int
+	DataChunk1  []byte // nil if needs reconstruction
+	DataChunk2  []byte // nil if needs reconstruction
+	ParityChunk []byte // nil if not downloaded
+	ChunksOK    int    // Count of successfully downloaded chunks (0-3)
 }
 
 // DownloadStripeInfo maps stripe metadata from master's chunk allocation
@@ -178,7 +178,7 @@ func reconstructMissingChunk(stripe *StripeDownload) error {
 	}
 
 	// Case B: Exactly 2 chunks - reconstruct the missing one using XOR
-	
+
 	// Missing data chunk 1: data1 = data2 XOR parity
 	if stripe.DataChunk1 == nil && stripe.DataChunk2 != nil && stripe.ParityChunk != nil {
 		stripe.DataChunk1 = calculateParity(stripe.DataChunk2, stripe.ParityChunk)
