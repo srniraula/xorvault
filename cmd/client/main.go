@@ -429,6 +429,7 @@ func readMasterConfig() string {
 	// Trim whitespace and newlines
 	addr := string(data)
 	addr = strings.TrimSpace(addr)
+	log.Printf("DEBUG: Read from config: '%s' (length: %d)", addr, len(addr))
 	return addr
 }
 
