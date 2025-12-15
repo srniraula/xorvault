@@ -93,6 +93,7 @@ make run-master     # Start master server
 make run-chunk_server1     # Start chunk server 1 (port 9001)
 make run-chunk_server2     # Start chunk server 2 (port 9002)
 make run-chunk_server3     # Start chunk server 3 (port 9003)
+make setup-master MASTER_IP= < IP at which master is running. eg:192.168.1.65 >
 make upload FILE=<filename>    # Upload file
 make download FILE=<filename>  # Download file
 make clean          # Remove binaries
