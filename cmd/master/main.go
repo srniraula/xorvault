@@ -47,12 +47,12 @@ func main() {
 		fileInfo:     make(map[string]map[int32]*dfspb.StripeMetadata),
 		clientIDs:    make(map[int64][]string),
 		fileSizes:    make(map[string]int64),
-		chunkStatus:  make(map[string]string),                                        // Empty chunk status map
-		chunkServers: []string{"127.0.0.1:9001", "127.0.0.1:9002", "127.0.0.1:9003"}, // 3 chunk servers
-		servers:      make(map[string]*ServerInfo),                                   // Empty server health map
-		logger:       masterLogger,                                                   // Custom logger for file output
-		walFile:      walFile,                                                        // WAL file handle
-		walWriter:    bufio.NewWriter(walFile),                                       // Buffered WAL writer
+		chunkStatus:  make(map[string]string),                                                 // Empty chunk status map
+		chunkServers: []string{"192.168.1.65:9001", "192.168.1.65:9002", "192.168.1.65:9003"}, // 3 chunk servers
+		servers:      make(map[string]*ServerInfo),                                            // Empty server health map
+		logger:       masterLogger,                                                            // Custom logger for file output
+		walFile:      walFile,                                                                 // WAL file handle
+		walWriter:    bufio.NewWriter(walFile),                                                // Buffered WAL writer
 	}
 
 	// Restore from checkpoint first (if exists)
