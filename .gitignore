@@ -24,8 +24,10 @@ chunks3/
 # Client ID file
 .client_id
 
-# Test PDF files
-*.pdf
+# Test files and workspaces
+files/*
+!files/README.md       # Keep the README inside the files directory
+clients/
 
 # Go build artifacts
 *.out

@@ -70,9 +70,9 @@ func main() {
 	// Initialize the MasterServer with empty maps
 	// Chunk servers will register themselves via heartbeats
 	server := &MasterServer{
-		fileInfo:     make(map[string]map[int32]*dfspb.StripeMetadata),
+		fileInfo:     make(map[int64]map[string]map[int32]*dfspb.StripeMetadata),
 		clientIDs:    make(map[int64][]string),
-		fileSizes:    make(map[string]int64),
+		fileSizes:    make(map[int64]map[string]int64),
 		chunkStatus:  make(map[string]string),
 		chunkServers: []string{}, // Empty - will be populated by heartbeats
 		servers:      make(map[string]*ServerInfo),

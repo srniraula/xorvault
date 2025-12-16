@@ -21,12 +21,24 @@ func (m *MasterServer) ReportInventory(ctx context.Context, req *dfspb.Inventory
 
 	// Build expected chunks for this server from fileInfo
 	expectedChunks := make(map[string]bool)
-	for _, stripes := range m.fileInfo {
-		for _, stripe := range stripes {
-			for i, server := range stripe.Servers {
-				if server == addr {
-					chunkID := stripe.ChunkIds[i]
-					expectedChunks[chunkID] = true
+	// for _, stripes := range m.fileInfo {
+	// 	for _, stripe := range stripes {
+	// 		for i, server := range stripe.Servers {
+	// 			if server == addr {
+	// 				chunkID := stripe.ChunkIds[i]
+	// 				expectedChunks[chunkID] = true
+	// 			}
+	// 		}
+	// 	}
+	// }
+	for _, cliendIDtoFiles := range m.fileInfo {
+		for _, stripes := range cliendIDtoFiles {
+			for _,stripe := range stripes{
+				for i, server := range stripe.Servers {
+					if server == addr {
+						chunkID := stripe.ChunkIds[i]
+						expectedChunks[chunkID] = true
+					}
 				}
 			}
 		}
@@ -87,7 +99,8 @@ func (m *MasterServer) buildReconstructionTasks(missingChunks []string, recoveri
 // Finds the stripe, identifies the 2 available chunks, and returns metadata
 func (m *MasterServer) buildTaskForChunk(missingChunkID string, recoveringServer string) *dfspb.ReconstructionTask {
 	// Find which file and stripe this chunk belongs to
-	for filename, stripes := range m.fileInfo {
+	for _,ClientIDtoFilenames:= range m.fileInfo {
+	for filename, stripes := range ClientIDtoFilenames {
 		for stripeNum, stripe := range stripes {
 			// Check if this chunk is in this stripe
 			var missingIndex int = -1
@@ -135,6 +148,7 @@ func (m *MasterServer) buildTaskForChunk(missingChunkID string, recoveringServer
 			}
 		}
 	}
+}
 
 	m.logger.Printf("WARNING: Could not find stripe for missing chunk %s", missingChunkID)
 	return nil

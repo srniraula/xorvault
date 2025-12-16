@@ -12,9 +12,9 @@ import (
 // Checkpoint represents a snapshot of master state at a point in time
 type Checkpoint struct {
 	Timestamp   int64                                       `json:"timestamp"`
-	FileInfo    map[string]map[int32]*StripeMetadataJSON    `json:"file_info"`
+	FileInfo    map[int64]map[string]map[int32]*StripeMetadataJSON    `json:"file_info"`
 	ClientIDs   map[int64][]string                          `json:"client_ids"`
-	FileSizes   map[string]int64                            `json:"file_sizes"`
+	FileSizes   map[int64]map[string]int64                            `json:"file_sizes"`
 	ChunkStatus map[string]string                           `json:"chunk_status"`
 }
 
@@ -34,14 +34,21 @@ func (m *MasterServer) CreateCheckpoint(checkpointPath string) error {
 	m.logger.Printf("Creating checkpoint at %s", checkpointPath)
 
 	// Convert protobuf StripeMetadata to JSON-serializable format
-	fileInfoJSON := make(map[string]map[int32]*StripeMetadataJSON)
-	for filename, stripes := range m.fileInfo {
-		fileInfoJSON[filename] = make(map[int32]*StripeMetadataJSON)
-		for stripeNum, stripe := range stripes {
-			fileInfoJSON[filename][stripeNum] = &StripeMetadataJSON{
-				StripeNum: stripe.StripeNum,
-				ChunkIds:  stripe.ChunkIds,
-				Servers:   stripe.Servers,
+	fileInfoJSON := make(map[int64]map[string]map[int32]*StripeMetadataJSON)
+	for clientID, _ := range m.fileInfo {
+		// initialize per-client entry
+		if _, ok := fileInfoJSON[clientID]; !ok {
+			fileInfoJSON[clientID] = make(map[string]map[int32]*StripeMetadataJSON)
+		}
+
+		for filename, stripes := range m.fileInfo[clientID] {
+			fileInfoJSON[clientID][filename] = make(map[int32]*StripeMetadataJSON)
+			for stripeNum, stripe := range stripes {
+				fileInfoJSON[clientID][filename][stripeNum] = &StripeMetadataJSON{
+					StripeNum: stripe.StripeNum,
+					ChunkIds:  stripe.ChunkIds,
+					Servers:   stripe.Servers,
+				}
 			}
 		}
 	}
@@ -105,17 +112,35 @@ func (m *MasterServer) LoadCheckpoint(checkpointPath string) error {
 	m.chunkStatus = checkpoint.ChunkStatus
 
 	// Convert JSON format back to protobuf StripeMetadata
-	m.fileInfo = make(map[string]map[int32]*dfspb.StripeMetadata)
-	for filename, stripesJSON := range checkpoint.FileInfo {
-		m.fileInfo[filename] = make(map[int32]*dfspb.StripeMetadata)
-		for stripeNum, stripeJSON := range stripesJSON {
-			m.fileInfo[filename][stripeNum] = &dfspb.StripeMetadata{
-				StripeNum: stripeJSON.StripeNum,
-				ChunkIds:  stripeJSON.ChunkIds,
-				Servers:   stripeJSON.Servers,
+	m.fileInfo = make(map[int64]map[string]map[int32]*dfspb.StripeMetadata)
+	// 	for filename, stripesJSON := range checkpoint.FileInfo {
+	// 		m.fileInfo[filename] = make(map[int32]*dfspb.StripeMetadata)
+	// 		for stripeNum, stripeJSON := range stripesJSON {
+	// 			m.fileInfo[filename][stripeNum] = &dfspb.StripeMetadata{
+	// 				StripeNum: stripeJSON.StripeNum,
+	// 				ChunkIds:  stripeJSON.ChunkIds,
+	// 				Servers:   stripeJSON.Servers,
+	// 			}
+	// 		}
+	// }
+
+	for clientID, _ := range checkpoint.FileInfo {
+		m.fileInfo[clientID] = make(map[string]map[int32]*dfspb.StripeMetadata)
+		for filename, stripesJSON := range checkpoint.FileInfo[clientID] {
+			// initialize per-file map
+			if _, ok := m.fileInfo[clientID][filename]; !ok {
+				m.fileInfo[clientID][filename] = make(map[int32]*dfspb.StripeMetadata)
+			}
+			for stripeNum, stripeJSON := range stripesJSON {
+				m.fileInfo[clientID][filename][stripeNum] = &dfspb.StripeMetadata{
+					StripeNum: stripeJSON.StripeNum,
+					ChunkIds:  stripeJSON.ChunkIds,
+					Servers:   stripeJSON.Servers,
+				}
 			}
 		}
 	}
+
 
 	checkpointTime := time.Unix(checkpoint.Timestamp, 0)
 	m.logger.Printf("Checkpoint loaded: timestamp=%s, files=%d, clients=%d, chunks=%d",
