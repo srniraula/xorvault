@@ -1,8 +1,34 @@
-# Binaries
+# --- Binaries and Build Artifacts ---
+# Ignore compiled executables (from both local builds and inside /bin directory)
 bin/
 *.exe
+*.out
+/master
+/chunkserver
+/client
+# Ignore any Go cache or temporary files
+/pkg/
+/tmp/
 
-# Storage directories
+# --- Docker Files (DO NOT COMMIT) ---
+# Environment variables used for local setup
+.env
+# Named volumes (if you switch to them)
+volumes/
+# Common archive files often used for distribution, not source
+*.zip
+*.tar
+
+# --- Persistent Data and Storage Directories (CRITICAL) ---
+# These are the host directories bound to the /data mount point in Docker Compose:
+# Master data directory
+master-data/
+# Chunkserver data directories
+chunkserver1-data/
+chunkserver2-data/
+chunkserver3-data/
+
+# Old/Legacy storage directories from internal testing/code:
 chunk_server1/
 chunk_server2/
 chunk_server3/
@@ -11,32 +37,35 @@ chunks1/
 chunks2/
 chunks3/
 
-# Log files
+# --- Log, State, and Temporary Files ---
+# Log directories and files
+log_files/
 *.log
+!log_files/README.md  # Keep the README file inside the log directory
 
-# WAL files
+# Write-Ahead Logs and Checkpoints (used for system recovery/state)
 *.wal
 *.wal.old
-
-# Checkpoint files
 *.checkpoint
 
-# Client ID file
+# Client-side temporary/state files
 .client_id
+.client_id.*
+downloaded_*
 
-# Test PDF files
-*.pdf
+# Test files and workspaces
+files/
+!files/README.md       # Keep the README inside the files directory
+clients/
 
-# Go build artifacts
-*.out
-
-# IDE files
+# --- IDE and OS Files ---
+# Integrated Development Environment configuration files
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# OS files
+# Operating System temporary files
 .DS_Store
 Thumbs.db

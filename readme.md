@@ -84,6 +84,15 @@ make download FILE=myfile.pdf
 
 Downloaded file saved as `downloaded_myfile.pdf`
 
+### 6. Delete a file
+```bash
+make delete FILE=myfile.pdf
+```
+### 7. List uploaded files
+```bash
+make ls
+```
+
 ## Makefile Commands
 
 ```bash

@@ -307,15 +307,17 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 	// Check if file exists
 	stripes, fileExists := m.fileInfo[filename]
 	if !fileExists {
+		m.mu.Unlock()
 		return &dfspb.DeleteFileResponse{
 			Success: false,
-			Message: "file not found",
+			Message: "this file is not found",
 		}, nil
 	}
 
 	// Verify client ownership
 	ownedFiles, clientExists := m.clientIDs[clientID]
 	if !clientExists {
+		m.mu.Unlock()
 		return &dfspb.DeleteFileResponse{
 			Success: false,
 			Message: "file not found",
@@ -331,6 +333,7 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 	}
 
 	if !fileOwned {
+		m.mu.Unlock()
 		return &dfspb.DeleteFileResponse{
 			Success: false,
 			Message: "file not found",

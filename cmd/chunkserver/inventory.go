@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
+	"dfs-project/dfspb"
+	"dfs-project/pkg/config"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"dfs-project/dfspb"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -116,14 +116,14 @@ func (c *ChunkServer) reportInventoryToMaster(port string) (*dfspb.InventoryResp
 	inventory := c.scanInventory()
 
 	// Connect to master
-	conn, err := grpc.NewClient("127.0.0.1:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(config.GetMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to master: %v", err)
 	}
 	defer conn.Close()
 
 	masterClient := dfspb.NewMasterServerClient(conn)
-	myAddr := fmt.Sprintf("127.0.0.1:%s", port)
+	myAddr := config.GetMyAddr(port)
 
 	// Report inventory
 	resp, err := masterClient.ReportInventory(context.Background(), &dfspb.InventoryRequest{

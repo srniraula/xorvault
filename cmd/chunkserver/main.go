@@ -16,7 +16,7 @@ func main() {
 	flag.Parse()
 
 	// Setup logging
-	logFile, err := os.OpenFile("chunkserver.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	logFile, err := os.OpenFile("log_files/chunkserver.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
 		log.Fatalf("Failed to open chunkserver.log: %v", err)
 	}

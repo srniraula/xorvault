@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"dfs-project/dfspb"
+	"dfs-project/pkg/config"
 	"log"
 	"net"
 	"os"
@@ -14,7 +15,7 @@ import (
 // main starts the master server and background health monitoring
 func main() {
 	// Setup log file for Master - all logs will be written to master.log
-	logFile, err := os.OpenFile("master.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	logFile, err := os.OpenFile("log_files/master.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
 		log.Fatalf("Failed to open master.log: %v", err)
 	}
@@ -47,12 +48,12 @@ func main() {
 		fileInfo:     make(map[string]map[int32]*dfspb.StripeMetadata),
 		clientIDs:    make(map[int64][]string),
 		fileSizes:    make(map[string]int64),
-		chunkStatus:  make(map[string]string),                                        // Empty chunk status map
-		chunkServers: []string{"127.0.0.1:9001", "127.0.0.1:9002", "127.0.0.1:9003"}, // 3 chunk servers
-		servers:      make(map[string]*ServerInfo),                                   // Empty server health map
-		logger:       masterLogger,                                                   // Custom logger for file output
-		walFile:      walFile,                                                        // WAL file handle
-		walWriter:    bufio.NewWriter(walFile),                                       // Buffered WAL writer
+		chunkStatus:  make(map[string]string),  // Empty chunk status map
+		chunkServers: config.GetChunkServers(), // Get chunk servers from config (Docker-aware)
+		servers:      make(map[string]*ServerInfo), // Empty server health map
+		logger:       masterLogger,                 // Custom logger for file output
+		walFile:      walFile,                      // WAL file handle
+		walWriter:    bufio.NewWriter(walFile),     // Buffered WAL writer
 	}
 
 	// Restore from checkpoint first (if exists)

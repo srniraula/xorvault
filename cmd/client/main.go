@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"dfs-project/dfspb"
+	"dfs-project/pkg/config"
 	"log"
 	"os"
+	"path/filepath"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -13,6 +15,30 @@ import (
 // CHUNK_SIZE defines how large each chunk should be (1 MB = 1024 * 1024 bytes)
 // Files are split into chunks of this size before uploading to chunk servers
 const CHUNK_SIZE = 1 * 1024 * 1024
+
+// resolveFilePath checks if file exists as-is, otherwise prepends files/ directory
+// For upload: looks in files/ directory if not found in current dir
+// For download: files are saved to current directory with downloaded_ prefix
+func resolveFilePath(filename string, forUpload bool) string {
+	if forUpload {
+		// First try the filename as given
+		if _, err := os.Stat(filename); err == nil {
+			return filename
+		}
+		
+		// If not found, try files/ directory
+		filesPath := "files/" + filename
+		if _, err := os.Stat(filesPath); err == nil {
+			return filesPath
+		}
+		
+		// Return original filename (will fail later with proper error)
+		return filename
+	}
+	
+	// For download, just use the filename as-is (downloaded in current dir)
+	return filename
+}
 
 // main is the entry point - parses command line arguments and calls upload/download
 // Usage: go run cmd/client/main.go upload myfile.pdf
@@ -42,7 +68,9 @@ func main() {
 		file := os.Args[2] // filename to upload/download/delete
 
 		if cmd == "upload" {
-			upload(file, myID)
+			// Resolve file path (check files/ directory)
+			filePath := resolveFilePath(file, true)
+			upload(filePath, myID)
 		} else if cmd == "download" {
 			download(file, myID)
 		} else if cmd == "delete" {
@@ -70,8 +98,12 @@ func upload(localPath string, myID int64) {
 	}
 	fileSize := fileInfo.Size()
 
+	// Extract just the filename (not the full path) for registration
+	// This ensures chunk IDs don't include directory paths
+	filename := filepath.Base(localPath)
+
 	// Connect to master server on localhost:50051 without encryption
-	conn, err := grpc.NewClient("127.0.0.1:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(config.GetMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -80,7 +112,7 @@ func upload(localPath string, myID int64) {
 
 	// Step 1: Register file with master and receive chunk allocation plan
 	createResp, err := master.CreateFile(context.Background(), &dfspb.CreateFileRequest{
-		Filename:  localPath,
+		Filename:  filename,  // Use just filename, not full path
 		TotalSize: fileSize,
 		ClientId:  myID,
 	})
@@ -98,7 +130,7 @@ func upload(localPath string, myID int64) {
 
 	// Calculate total chunks for progress tracking
 	totalChunks := (int(fileSize) + CHUNK_SIZE - 1) / CHUNK_SIZE
-	log.Printf("Uploading %s → %d chunks (%.2f MB)", localPath, totalChunks, float64(fileSize)/(1024*1024))
+	log.Printf("Uploading %s → %d chunks (%.2f MB)", filename, totalChunks, float64(fileSize)/(1024*1024))
 
 	// Display chunk allocation plan received from CreateFile
 	log.Printf("Chunk allocation plan:")
@@ -157,7 +189,7 @@ func upload(localPath string, myID int64) {
 
 	// Step 3: Confirm successful writes to master
 	confirmResp, err := master.ConfirmWrite(context.Background(), &dfspb.ConfirmWriteRequest{
-		Filename: localPath,
+		Filename: filename,  // Use filename, not full path
 		ChunkIds: successfulChunks,
 	})
 	if err != nil {
@@ -180,7 +212,7 @@ func upload(localPath string, myID int64) {
 //  4. Save with "downloaded_" prefix
 func download(filename string, myID int64) {
 	// Connect to master server
-	conn, err := grpc.NewClient("127.0.0.1:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(config.GetMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -193,7 +225,7 @@ func download(filename string, myID int64) {
 		ClientId: myID,
 	})
 	if err != nil {
-		log.Fatal("GetFileMetadata failed:", err)
+		log.Fatal("File not found")
 	}
 	if len(meta.Stripes) == 0 {
 		log.Fatal("File not found or access denied")
@@ -284,7 +316,7 @@ func deleteFile(filename string, myID int64) {
 	log.Printf("Deleting file: %s (client ID: %d)", filename, myID)
 
 	// Connect to master server
-	conn, err := grpc.NewClient("127.0.0.1:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(config.GetMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatal("Failed to connect to master:", err)
 	}
@@ -317,7 +349,7 @@ func listFiles(myID int64) {
 	}
 
 	// Connect to master server
-	conn, err := grpc.NewClient("127.0.0.1:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(config.GetMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatal("Failed to connect to master:", err)
 	}

@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
+	"dfs-project/dfspb"
+	"dfs-project/pkg/config"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"time"
-
-	"dfs-project/dfspb"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -145,7 +145,7 @@ func SendHeartbeats(port string, logger *log.Logger) {
 	ticker := time.NewTicker(5 * time.Second)  
 	defer ticker.Stop()
 
-	conn, err := grpc.NewClient("127.0.0.1:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(config.GetMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		logger.Printf("Failed to connect to master for heartbeat: %v", err)
 		return
@@ -153,7 +153,7 @@ func SendHeartbeats(port string, logger *log.Logger) {
 	defer conn.Close()
 
 	masterClient := dfspb.NewMasterServerClient(conn)
-	myAddr := fmt.Sprintf("127.0.0.1:%s", port)
+	myAddr := config.GetMyAddr(port)
 
 	for range ticker.C {
 		_, err := masterClient.ReceiveHeartbeat(context.Background(), &dfspb.HeartbeatRequest{
