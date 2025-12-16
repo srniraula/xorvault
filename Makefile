@@ -372,3 +372,15 @@ help:
 	@echo "    make upload FILE=test.pdf"
 	@echo ""
 	@echo "Note: .master_config file takes precedence unless MASTER variable is set"
+
+	# Add to Makefile
+
+# Build web server
+build-web:
+	@echo "Building web server..."
+	@go build -o bin/webserver ./cmd/webserver
+	@echo "Web server built: bin/webserver"
+
+# Run web server
+run-web: build-web
+	@./bin/webserver -port 8080 -master $(MASTER)
