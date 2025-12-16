@@ -1,6 +1,6 @@
 <!-- # XorFS - Distributed File System with RAID-5
 
-A distributed file system implementation in Go featuring RAID-5 erasure coding, client authentication, data integrity verification, and crash recovery through WAL and checkpointing.
+Lightweight distributed file system in Go with XOR-based RAID-5 (2 data + 1 parity per stripe), client ownership, CRC32 integrity checks, and master persistence via WAL + checkpointing.
 
 ## Features
 
@@ -35,7 +35,7 @@ A distributed file system implementation in Go featuring RAID-5 erasure coding, 
 make build
 ```
 
-This creates binaries in `bin/` directory:
+Builds binaries under `bin/`:
 - `bin/master` - Master server
 - `bin/chunkserver` - Chunk server
 - `bin/client` - Client CLI
@@ -46,9 +46,9 @@ This creates binaries in `bin/` directory:
 make run-master
 ```
 
-Runs on `localhost:50051` and logs to `master.log`
+The master listens on `0.0.0.0:50051` and logs to `master.log` by default.
 
-### 3. Start Chunk Servers (in separate terminals)
+### 3. Start Chunk Servers (each in its own terminal)
 
 ```bash
 # Terminal 1
@@ -63,27 +63,26 @@ make make run-chunk_server1
 
 Chunk servers run on ports `9001`, `9002`, `9003` with storage in `chunk_server1/`, `chunk_server2/`, `chunk_server3/`
 
-### 4. Upload a File
+### 4. Upload a file
 
 ```bash
 make upload FILE=myfile.pdf
 ```
 
-This will:
-- Generate a client ID (saved to `.client_id`)
-- Split file into stripes
-- Calculate CRC32 checksums
-- Upload chunks in parallel to chunk servers
-- Verify integrity on server side
+What happens:
+- Client registers the file with Master and may receive/learn a Client ID (saved to `.client_id`).
+- File is split into stripes (2 data blocks + 1 parity).
+- CRC32 checksums are computed per chunk and verified by chunk servers.
 
-### 5. Download a File
+### 5. Download a file
 
 ```bash
 make download FILE=myfile.pdf
 ```
 
-Downloaded file saved as `downloaded_myfile.pdf`
+The downloaded file is saved as `downloaded_<filename>`.
 
+<<<<<<< HEAD
 ## Makefile Commands
 
 ```bash
@@ -98,6 +97,34 @@ make upload FILE=<filename>    # Upload file
 make download FILE=<filename>  # Download file
 make clean          # Remove binaries
 make test           # Run tests
+=======
+### 6. Delete a file
+
+```bash
+make delete FILE=myfile.pdf
+```
+
+### 7. List uploaded files
+
+```bash
+make ls
+```
+
+## Useful Commands (Makefile)
+
+```bash
+make build                # Build binaries
+make proto                # Regenerate protobuf files
+make run-master           # Start master server
+make run-chunk_server1    # Start chunk server 1 (port 9001)
+make run-chunk_server2    # Start chunk server 2 (port 9002)
+make run-chunk_server3    # Start chunk server 3 (port 9003)
+make upload FILE=<file>   # Upload a file
+make download FILE=<file> # Download a file
+make delete FILE=<file>   # Delete a file
+make ls                   # List uploaded files
+make clean                # Remove binaries and storage dirs
+>>>>>>> dbe0b59 (updated readme)
 ```
 
 ## How It Works
@@ -129,12 +156,12 @@ make test           # Run tests
 ### Crash Recovery
 
 **Master persistence:**
-1. **WAL (Write-Ahead Log)**: Every operation logged before execution
-   - `CreateFile`, `AllocateChunk`, `ConfirmWrite`
-2. **Checkpointing**: Full state snapshot every 5 minutes
+1. **WAL (Write-Ahead Log)**: Operations are appended to `master.wal` before the in-memory state is changed
+   - Examples: `CreateFile`, `AllocateChunk`, `ConfirmWrite`, `DeleteFile`
+2. **Checkpointing**: Periodic snapshot written to `master.checkpoint` (default every 5 minutes)
 3. **Recovery**: Load checkpoint → replay WAL → resume operations
 
-On restart, master recovers all metadata (files, stripes, clients, chunks).
+On restart, the master recovers metadata (files, stripes, client IDs, chunk statuses) from those artifacts.
 
 ## File Structure
 
@@ -142,27 +169,39 @@ On restart, master recovers all metadata (files, stripes, clients, chunks).
 dfs-project/
 ├── cmd/
 │   ├── master/
-│   │   ├── main.go              # Master startup
-│   │   ├── master.go            # Master logic (CreateFile, AllocateChunk, etc.)
-│   │   ├── wal_operation.go     # WAL logging
-│   │   ├── wal_recovery.go      # WAL replay on startup
-│   │   └── checkpoint.go        # Checkpointing system
+│   │   ├── main.go
+│   │   ├── master.go
+│   │   ├── master_helper.go
+│   │   ├── checkpoint.go
+│   │   ├── wal_operation.go
+│   │   ├── wal_recovery.go
+│   │   └── chunkserver_recovery.go
 │   ├── chunkserver/
-│   │   ├── main.go              # ChunkServer (WriteChunk, ReadChunk)
-│   │   └── checksum.go          # CRC32 calculation
+│   │   ├── main.go
+│   │   ├── checksum.go
+│   │   ├── chunkservertask.go
+│   │   ├── reconstruction.go
+│   │   └── inventory.go
 │   └── client/
-│       ├── main.go              # Client CLI (upload/download)
-│       ├── stripe_reader.go     # File streaming in stripes
-│       ├── parallel_upload.go   # Parallel chunk uploads
-│       ├── download_stripe.go   # Parallel downloads with reconstruction
-│       ├── parity.go            # XOR parity calculation
-│       └── checksum.go          # CRC32 checksums
+│       ├── main.go
+│       ├── client_id.go
+│       ├── stripe.go
+│       ├── stripe_reader.go
+│       ├── parallel_upload.go
+│       ├── download_stripe.go
+│       ├── parity.go
+│       ├── checksum.go
+│       ├── ack_queue.go
+│       ├── upload_test.go
+│       └── parity_test.go
 ├── dfspb/
 │   ├── dfs.pb.go               # Generated protobuf code
 │   └── dfs_grpc.pb.go          # Generated gRPC code
 ├── dfs.proto                   # Protocol definitions
+├── go.mod
 ├── Makefile                    # Build and run commands
-└── README.md                   # This file
+├── master.wal                  # WAL file (may be generated at runtime)
+└── readme.md                   # This file
 ```
 
 ## Data Integrity Layers
@@ -694,3 +733,9 @@ go get -u github.com/gin-gonic/gin
 # Update dependencies
 go mod tidy
 ```
+## Troubleshooting & Tips
+
+- If a chunk server is marked dead, check its logs and ensure it can reach the master at `127.0.0.1:50051`.
+- If uploads or downloads hang, verify that `master.log` and chunk server logs exist and check for errors.
+- You can remove binaries and test data with `make clean`.
+
