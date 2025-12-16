@@ -87,11 +87,16 @@ func (m *MasterServer) replayCreateFile(data json.RawMessage) error {
 	// Restore clientID mapping
 	m.clientIDs[createData.ClientID] = append(m.clientIDs[createData.ClientID], createData.Filename)
 
+	// Ensure per-client maps exist before assigning
+	m.ensureClientMaps(createData.ClientID)
+
 	// Initialize fileInfo map for this file
-	m.fileInfo[createData.Filename] = make(map[int32]*dfspb.StripeMetadata)
+	if _, ok := m.fileInfo[createData.ClientID][createData.Filename]; !ok {
+		m.fileInfo[createData.ClientID][createData.Filename] = make(map[int32]*dfspb.StripeMetadata)
+	}
 
 	// Restore file size
-	m.fileSizes[createData.Filename] = createData.TotalSize
+	m.fileSizes[createData.ClientID][createData.Filename] = createData.TotalSize
 
 	m.logger.Printf("Recovered CREATE_FILE: client=%d, file=%s, size=%d",
 		createData.ClientID, createData.Filename, createData.TotalSize)
@@ -106,9 +111,15 @@ func (m *MasterServer) replayAllocateChunk(data json.RawMessage) error {
 		return fmt.Errorf("failed to unmarshal AllocateChunk data: %v", err)
 	}
 
+	// Ensure per-client and per-file maps exist
+	m.ensureClientMaps(allocData.ClientID)
+	if _, ok := m.fileInfo[allocData.ClientID][allocData.Filename]; !ok {
+		m.fileInfo[allocData.ClientID][allocData.Filename] = make(map[int32]*dfspb.StripeMetadata)
+	}
+
 	// Restore stripe metadata
 	for stripeNum, stripe := range allocData.Stripes {
-		m.fileInfo[allocData.Filename][stripeNum] = stripe
+		m.fileInfo[allocData.ClientID][allocData.Filename][stripeNum] = stripe
 
 		// Restore chunk status (initially PENDING)
 		for _, chunkID := range stripe.ChunkIds {
@@ -150,17 +161,19 @@ func (m *MasterServer) replayDeleteFile(data json.RawMessage) error {
 	filename := deleteData.Filename
 	clientID := deleteData.ClientID
 
-	// Collect all chunk IDs before deletion
+	// Collect all chunk IDs before deletion (guard for missing client/file)
 	allChunkIDs := []string{}
-	if stripes, exists := m.fileInfo[filename]; exists {
-		for _, stripe := range stripes {
-			allChunkIDs = append(allChunkIDs, stripe.ChunkIds...)
+	if clientFiles, clientExists := m.fileInfo[clientID]; clientExists {
+		if stripes, exists := clientFiles[filename]; exists {
+			for _, stripe := range stripes {
+				allChunkIDs = append(allChunkIDs, stripe.ChunkIds...)
+			}
 		}
 	}
 
 	// Remove file metadata
-	delete(m.fileInfo, filename)
-	delete(m.fileSizes, filename)
+	delete(m.fileInfo[clientID], filename)
+	delete(m.fileSizes[clientID], filename)
 
 	// Remove from clientIDs
 	if ownedFiles, exists := m.clientIDs[clientID]; exists {

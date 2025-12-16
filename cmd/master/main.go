@@ -45,9 +45,9 @@ func main() {
 
 	// Initialize the MasterServer with empty maps and known chunk server addresses
 	server := &MasterServer{
-		fileInfo:     make(map[string]map[int32]*dfspb.StripeMetadata),
+		fileInfo:     make(map[int64]map[string]map[int32]*dfspb.StripeMetadata),
 		clientIDs:    make(map[int64][]string),
-		fileSizes:    make(map[string]int64),
+		fileSizes:    make(map[int64]map[string]int64),
 		chunkStatus:  make(map[string]string),  // Empty chunk status map
 		chunkServers: config.GetChunkServers(), // Get chunk servers from config (Docker-aware)
 		servers:      make(map[string]*ServerInfo), // Empty server health map

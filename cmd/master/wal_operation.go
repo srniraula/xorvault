@@ -31,7 +31,8 @@ type CreateFileData struct {
 
 // AllocateChunkData stores the data for AllocateChunk operation with status tracking
 type AllocateChunkData struct {
-	Filename string              `json:"filename"`
+	ClientID      int64      `json:"cliendID"`
+	Filename string `json:"filename"`
 	Stripes map[int32]*dfspb.StripeMetadata `json:"stripes"` //store full stripe info
 	Status   string              `json:"status"`    // "PENDING" or "SUCCESS"
 }

@@ -36,9 +36,9 @@ type ServerInfo struct {
 type MasterServer struct {
 	dfspb.UnimplementedMasterServerServer                                            // Embedded type required by gRPC
 	mu                                    sync.Mutex                                 // Protects fileChunks and fileSizes maps
-	fileInfo                              map[string]map[int32]*dfspb.StripeMetadata // Maps filename -> stripe_num -> StripeMetadata
+	fileInfo                              map[int64]map[string]map[int32]*dfspb.StripeMetadata // Maps filename -> stripe_num -> StripeMetadata
 	clientIDs                             map[int64][]string                         //client_id to filename map
-	fileSizes                             map[string]int64                           // Maps filename -> total file size in bytes
+	fileSizes                             map[int64]map[string]int64                           // Maps filename -> total file size in bytes
 	chunkStatus                           map[string]string                          // Maps chunk_id -> "PENDING"/"SUCCESS"
 	chunkServers                          []string                                   // List of all known chunk server addresses
 	servers                               map[string]*ServerInfo                     // Maps server address -> health status
@@ -49,6 +49,17 @@ type MasterServer struct {
 	walFile   *os.File      // WAL file handle
 	walWriter *bufio.Writer // Buffered writer for WAL
 	walMu     sync.Mutex    // Protects WAL writes
+}
+
+// ensureClientMaps makes sure the per-client nested maps exist to avoid nil-map panics
+func (m *MasterServer) ensureClientMaps(clientID int64) {
+	if _, ok := m.fileInfo[clientID]; !ok {
+		m.fileInfo[clientID] = make(map[string]map[int32]*dfspb.StripeMetadata)
+	}
+	if _, ok := m.fileSizes[clientID]; !ok {
+		m.fileSizes[clientID] = make(map[string]int64)
+	}
+	// clientIDs uses slices; append on nil is OK so no init required
 }
 
 // CreateFile registers a new file in the system
@@ -71,13 +82,19 @@ func (m *MasterServer) CreateFile(ctx context.Context, req *dfspb.CreateFileRequ
 
 	//map client id with filename
 	m.clientIDs[req.ClientId] = append(m.clientIDs[req.ClientId], req.Filename)
-	// Initialize empty map for this filename
-	m.fileInfo[req.Filename] = make(map[int32]*dfspb.StripeMetadata)
 
-	m.fileSizes[req.Filename] = req.TotalSize
+	// ensure nested maps for this client exist
+	m.ensureClientMaps(req.ClientId)
+
+	// Initialize empty map for this filename
+	if _, ok := m.fileInfo[req.ClientId][req.Filename]; !ok {
+		m.fileInfo[req.ClientId][req.Filename] = make(map[int32]*dfspb.StripeMetadata)
+	}
+
+	m.fileSizes[req.ClientId][req.Filename] = req.TotalSize
 
 	// Allocate chunks and get the chunk-to-server mapping
-	allocResp, err := m.allocateChunksInternal(int(req.TotalSize), req.Filename)
+	allocResp, err := m.allocateChunksInternal(int64(req.ClientId),int(req.TotalSize), req.Filename)
 
 	if err != nil {
 		log.Printf("failed to allocate chunks: %v", err)
@@ -93,18 +110,18 @@ func (m *MasterServer) CreateFile(ctx context.Context, req *dfspb.CreateFileRequ
 }
 
 // AllocateChunk is the gRPC handler for chunk allocation requests
-func (m *MasterServer) AllocateChunk(ctx context.Context, req *dfspb.AllocateChunkRequest) (*dfspb.AllocateChunkResponse, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.allocateChunksInternal(int(req.FileSize), req.Filename)
-}
+// func (m *MasterServer) AllocateChunk(ctx context.Context, req *dfspb.AllocateChunkRequest) (*dfspb.AllocateChunkResponse, error) {
+// 	m.mu.Lock()
+// 	defer m.mu.Unlock()
+// 	return m.allocateChunksInternal(m.clientID, int(req.FileSize), req.Filename)
+// }
 
 // allocateChunksInternal assigns chunk IDs and selects chunk servers
 // This is the internal implementation called by CreateFile
 // NOTE: Caller must hold m.mu lock
 // Returns:
 //   - chunk allocation map: which chunks go to which servers
-func (m *MasterServer) allocateChunksInternal(totalSize int, fileName string) (*dfspb.AllocateChunkResponse, error) {
+func (m *MasterServer) allocateChunksInternal(clientID int64,totalSize int, fileName string) (*dfspb.AllocateChunkResponse, error) {
 	// Calculate how many chunks we'll need ==> (a+b-1)/b == ceil(a/b)
 	// Formula: (fileSize + chunkSize - 1) / chunkSize handles partial last chunk
 	totalChunks := (int(totalSize) + CHUNK_SIZE - 1) / CHUNK_SIZE
@@ -114,6 +131,12 @@ func (m *MasterServer) allocateChunksInternal(totalSize int, fileName string) (*
 	// and calculate chunk_ids and return map of
 	// chunkservers: [chunk_ids] to client
 	filename := fileName
+
+	// Ensure client/map exists for storing stripe info
+	m.ensureClientMaps(clientID)
+	if _, ok := m.fileInfo[clientID][fileName]; !ok {
+		m.fileInfo[clientID][fileName] = make(map[int32]*dfspb.StripeMetadata)
+	}
 
 	// Find all healthy (alive) chunk servers
 	m.serversMu.RLock() // Read lock - multiple goroutines can read simultaneously
@@ -172,14 +195,15 @@ func (m *MasterServer) allocateChunksInternal(totalSize int, fileName string) (*
 		m.chunkStatus[parityID] = "PENDING"
 
 		// Store stripe metadata
-		m.fileInfo[filename][int32(stripeNum)] = stripe
+		m.fileInfo[clientID][filename][int32(stripeNum)] = stripe
 	}
 
 	// Log chunk allocation to WAL with PENDING status
-	// Store full stripe metadata for recovery
+	// Store full stripe metadata for ]recovery
 	walData := AllocateChunkData{
+		ClientID : clientID,
 		Filename: filename,
-		Stripes:  m.fileInfo[filename],
+		Stripes:  m.fileInfo[clientID][filename],
 		Status:   "PENDING",
 	}
 
@@ -189,13 +213,13 @@ func (m *MasterServer) allocateChunksInternal(totalSize int, fileName string) (*
 	}
 
 	m.logger.Printf("Allocated chunks for %s (status: PENDING):", filename)
-	for stripeNum, stripe := range m.fileInfo[filename] {
+	for stripeNum, stripe := range m.fileInfo[clientID][filename] {
 		m.logger.Printf("  Stripe %d: chunks=%v, servers=%v", stripeNum, stripe.ChunkIds, stripe.Servers)
 	}
 
 	// Return stripe metadata directly
 	return &dfspb.AllocateChunkResponse{
-		Stripes: m.fileInfo[filename],
+		Stripes: m.fileInfo[clientID][filename],
 	}, nil
 }
 
@@ -205,13 +229,22 @@ func (m *MasterServer) GetFileMetadata(ctx context.Context, req *dfspb.GetFileMe
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	stripes := m.fileInfo[req.Filename]
-	size := m.fileSizes[req.Filename]
-
-	// If file doesn't exist or has no chunks, return empty response
-	if len(stripes) == 0 {
+	// Guard against missing client or file maps
+	clientFiles, clientExists := m.fileInfo[req.ClientId]
+	if !clientExists {
 		return nil, fmt.Errorf("file not found: %s", req.Filename)
 	}
+	stripes, fileExists := clientFiles[req.Filename]
+	if !fileExists || len(stripes) == 0 {
+		return nil, fmt.Errorf("file not found: %s", req.Filename)
+	}
+
+	size := int64(0)
+	if fs, ok := m.fileSizes[req.ClientId]; ok {
+		size = fs[req.Filename]
+	}
+
+	// Already validated above that stripes exist
 
 	// Check ownership: does this client own the file?
 	ownedFiles, exists := m.clientIDs[req.ClientId]
@@ -304,8 +337,17 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 	filename := req.Filename
 	clientID := req.ClientId
 
-	// Check if file exists
-	stripes, fileExists := m.fileInfo[filename]
+	// Check if file exists (guard for missing client)
+	clientFiles, clientExists := m.fileInfo[clientID]
+	if !clientExists {
+		m.mu.Unlock()
+		return &dfspb.DeleteFileResponse{
+			Success: false,
+			Message: "this file is not found",
+		}, nil
+	}
+
+	stripes, fileExists := clientFiles[filename]
 	if !fileExists {
 		m.mu.Unlock()
 		return &dfspb.DeleteFileResponse{
@@ -368,9 +410,9 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 		}
 	}
 
-	// Update metadata - remove file info
-	delete(m.fileInfo, filename)
-	delete(m.fileSizes, filename)
+	// Update metadata - remove file info :: change logic here 
+	delete(m.fileInfo[clientID], filename)
+	delete(m.fileSizes[clientID], filename)
 
 	// Remove filename from clientIDs (but keep the client ID entry)
 	updatedFiles := []string{}

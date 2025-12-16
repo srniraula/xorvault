@@ -54,7 +54,7 @@ log_files/
 downloaded_*
 
 # Test files and workspaces
-files/
+files/*
 !files/README.md       # Keep the README inside the files directory
 clients/
 
