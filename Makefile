@@ -6,9 +6,6 @@ ROOT_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 # Build all binaries
 all: build
 
-# Master address to pass to chunkservers (can be overridden: make run-chunk_server1 MASTER_ADDR=192.168.1.10:50051)
-MASTER_ADDR ?= 127.0.0.1:50051
-
 build:
 	@echo "Building binaries..."
 	@go build -o $(ROOT_DIR)bin/master $(ROOT_DIR)cmd/master
@@ -43,21 +40,47 @@ run-chunk_server2: build
 run-chunk_server3: build
 	@./bin/chunkserver -port 9003 -storage chunk_server3 -master $(MASTER_ADDR)
 
-# Upload a file (usage: cd clients/client1 && make upload FILE=myfile.pdf)
+# Upload a file
+# Usage:
+#  - From project root: make upload FILE=myfile.pdf
+#  - From client workspace (clients/client1): cd clients/client1 && make upload FILE=myfile.pdf
 upload:
-	../../bin/client upload ../../files/$(FILE)
+	@if [ -z "$(FILE)" ]; then \
+		echo "Error: FILE not specified. Usage: make upload FILE=myfile.pdf"; exit 1; \
+	fi; \
+	# Prefer running from project root (./files), otherwise try client workspace relative path
+	if [ -f files/$(FILE) ]; then \
+		./bin/client upload files/$(FILE); \
+	elif [ -f ../../files/$(FILE) ]; then \
+		../../bin/client upload ../../files/$(FILE); \
+	else \
+		echo "Error: file not found: files/$(FILE)"; exit 1; \
+	fi
 
 # Download a file (usage: cd clients/client1 && make download FILE=myfile.pdf)
 download:
-	../../bin/client download $(FILE)
+	./bin/client download $(FILE)
 
 # Delete a file (usage: cd clients/client1 && make delete FILE=myfile.pdf)
 delete:
-	../../bin/client delete $(FILE)
+	./bin/client delete $(FILE)
 
 # List all files uploaded by this client (usage: cd clients/client1 && make ls)
 ls:
-	../../bin/client ls
+	./bin/client ls
+
+# Set the master address for this client workspace
+# Usage (from client workspace): make set-master MASTER_ADDR=192.168.1.10:50051
+.PHONY: set-master
+set-master:
+	@if [ -z "$(MASTER_ADDR)" ]; then \
+		echo "Error: MASTER_ADDR not specified. Usage: make set-master MASTER_ADDR=host:port"; exit 1; \
+	fi
+	@echo "$(MASTER_ADDR)" > .master_addr
+	@echo "Wrote .master_addr with $(MASTER_ADDR)"
+
+.PHONY: set_master
+set_master: set-master
 
 # Generate protobuf code (if you modify dfs.proto)
 proto:

@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -102,8 +103,8 @@ func upload(localPath string, myID int64) {
 	// This ensures chunk IDs don't include directory paths
 	filename := filepath.Base(localPath)
 
-	// Connect to master server on localhost:50051 without encryption
-	conn, err := grpc.NewClient(config.GetMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Connect to master server (address can come from .master_addr, env, or config)
+	conn, err := grpc.NewClient(getMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -212,7 +213,7 @@ func upload(localPath string, myID int64) {
 //  4. Save with "downloaded_" prefix
 func download(filename string, myID int64) {
 	// Connect to master server
-	conn, err := grpc.NewClient(config.GetMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(getMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -316,7 +317,7 @@ func deleteFile(filename string, myID int64) {
 	log.Printf("Deleting file: %s (client ID: %d)", filename, myID)
 
 	// Connect to master server
-	conn, err := grpc.NewClient(config.GetMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(getMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatal("Failed to connect to master:", err)
 	}
@@ -349,7 +350,7 @@ func listFiles(myID int64) {
 	}
 
 	// Connect to master server
-	conn, err := grpc.NewClient(config.GetMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(getMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatal("Failed to connect to master:", err)
 	}
@@ -375,4 +376,27 @@ func listFiles(myID int64) {
 	for i, filename := range resp.Filenames {
 		log.Printf("  %d. %s", i+1, filename)
 	}
+}
+
+// getMasterAddr returns the master address to use for client RPCs.
+// Precedence:
+//  1) The MASTER_ADDR environment variable (set when invoking the command)
+//  2) A local file named ".master_addr" in the current working directory (trimmed)
+//  3) The default from config.GetMasterAddr()
+func getMasterAddr() string {
+	// 1) Prefer explicit environment variable
+	if env := os.Getenv("MASTER_ADDR"); strings.TrimSpace(env) != "" {
+		return strings.TrimSpace(env)
+	}
+
+	// 2) Then look for local .master_addr file (legacy)
+	if data, err := os.ReadFile(".master_addr"); err == nil {
+		addr := strings.TrimSpace(string(data))
+		if addr != "" {
+			return addr
+		}
+	}
+
+	// 3) Fall back to config (which also checks env and defaults)
+	return config.GetMasterAddr()
 }
