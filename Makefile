@@ -269,6 +269,14 @@ run-chunk_server3: build
 		./bin/chunkserver -port 9003 -storage chunk_server3 -master $(MASTER); \
 	fi
 
+# Run chunk server 4
+run-chunk_server4: build
+	@if [ -z "$(MASTER)" ]; then \
+		./bin/chunkserver -port 9004 -storage chunk_server4 -master 127.0.0.1:50051; \
+	else \
+		./bin/chunkserver -port 9004 -storage chunk_server4 -master $(MASTER); \
+	fi
+
 # Upload a file (usage: make upload FILE=myfile.pdf)
 upload: build
 	@if [ -z "$(FILE)" ]; then \
