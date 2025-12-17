@@ -1,12 +1,22 @@
 package config
 
-import "os"
+import (
+	"errors"
+	"net"
+	"os"
+)
 
 // GetMasterAddr returns the master server address
 // Defaults to localhost for local development, can be overridden with env var
 func GetMasterAddr() string {
 	addr := os.Getenv("MASTER_ADDR")
 	if addr == "" {
+		// Try to detect a non-loopback IPv4 address on the device so the
+		// master can be reached from other devices on the LAN. Fall back to
+		// localhost if none found.
+		if ip, err := GetLocalIP(); err == nil {
+			return ip + ":50051"
+		}
 		return "127.0.0.1:50051" // Default for local development
 	}
 	return addr
@@ -42,6 +52,48 @@ func GetMyAddr(port string) string {
 		return hostname + ":" + port
 	}
 	
-	// Otherwise use localhost (local development)
+	// Otherwise try to pick a non-loopback device IP so other machines on
+	// the LAN can reach this server. Fall back to localhost if detection
+	// fails.
+	if ip, err := GetLocalIP(); err == nil {
+		return ip + ":" + port
+	}
 	return "127.0.0.1:" + port
+}
+
+// GetLocalIP returns the first non-loopback IPv4 address found on the
+// machine, or an error if none are available.
+func GetLocalIP() (string, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return "", err
+	}
+	for _, iface := range ifaces {
+		// skip down or loopback interfaces
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.IsLoopback() {
+				continue
+			}
+			ip = ip.To4()
+			if ip == nil {
+				continue // not an ipv4 address
+			}
+			return ip.String(), nil
+		}
+	}
+	return "", errors.New("no non-loopback IPv4 address found")
 }

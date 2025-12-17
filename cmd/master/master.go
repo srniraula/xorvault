@@ -278,6 +278,7 @@ func (m *MasterServer) GetFileMetadata(ctx context.Context, req *dfspb.GetFileMe
 func (m *MasterServer) ReceiveHeartbeat(ctx context.Context, req *dfspb.HeartbeatRequest) (*dfspb.HeartbeatResponse, error) {
 	addr := req.Address
 
+	
 	m.serversMu.Lock() // Write lock - only one goroutine can modify at a time
 	// If this is a new chunk server we haven't seen before, register it
 	if _, exists := m.servers[addr]; !exists {
@@ -410,7 +411,7 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 		}
 	}
 
-	// Update metadata - remove file info :: change logic here 
+	// Update metadata - remove file info :: change logic here
 	delete(m.fileInfo[clientID], filename)
 	delete(m.fileSizes[clientID], filename)
 
