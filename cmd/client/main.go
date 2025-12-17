@@ -274,8 +274,9 @@ func download(filename string, myID int64) {
 		}
 
 		// Check if we have data to write
-		if stripe.DataChunk1 == nil || stripe.DataChunk2 == nil {
-			log.Fatalf("Stripe %d missing data after reconstruction", stripeNum)
+		// Note: DataChunk2 can be nil for last stripe with odd chunks
+		if stripe.DataChunk1 == nil {
+			log.Fatalf("Stripe %d missing DataChunk1 after reconstruction", stripeNum)
 		}
 
 		// Write stripe data to file

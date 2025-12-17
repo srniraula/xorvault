@@ -81,25 +81,37 @@ func (g *GrpcClient) downloadChunkFromServer(chunkID, serverAddr string, clientI
 }
 
 // downloadStripe downloads 3 chunks in parallel
+// Skips chunks with empty ChunkID or Server (happens in last stripe with odd chunks)
 func (g *GrpcClient) downloadStripe(info DownloadStripeInfo, clientID int64) StripeDownload {
 	var wg sync.WaitGroup
 	ch := make(chan DownloadedChunk, 3)
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		ch <- chunkDownloader(g, info.DataChunk1.ChunkID, info.DataChunk1.Server, clientID, true, false, false)
-	}()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		ch <- chunkDownloader(g, info.DataChunk2.ChunkID, info.DataChunk2.Server, clientID, false, true, false)
-	}()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		ch <- chunkDownloader(g, info.ParityChunk.ChunkID, info.ParityChunk.Server, clientID, false, false, true)
-	}()
+	// Download data chunk 1 (always exists)
+	if info.DataChunk1.ChunkID != "" && info.DataChunk1.Server != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ch <- chunkDownloader(g, info.DataChunk1.ChunkID, info.DataChunk1.Server, clientID, true, false, false)
+		}()
+	}
+
+	// Download data chunk 2 (may be empty for last stripe with odd chunks)
+	if info.DataChunk2.ChunkID != "" && info.DataChunk2.Server != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ch <- chunkDownloader(g, info.DataChunk2.ChunkID, info.DataChunk2.Server, clientID, false, true, false)
+		}()
+	}
+
+	// Download parity chunk (always exists)
+	if info.ParityChunk.ChunkID != "" && info.ParityChunk.Server != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ch <- chunkDownloader(g, info.ParityChunk.ChunkID, info.ParityChunk.Server, clientID, false, false, true)
+		}()
+	}
 
 	wg.Wait()
 	close(ch)
@@ -140,6 +152,10 @@ func reconstructMissingChunk(stripe *StripeDownload) error {
 	}
 	if stripe.ParityChunk == nil && stripe.DataChunk1 != nil && stripe.DataChunk2 != nil {
 		return nil
+	}
+	// Single data chunk case: common for last stripe with odd chunks
+	if stripe.DataChunk2 == nil && stripe.DataChunk1 != nil && stripe.ParityChunk == nil {
+		return nil // Valid case: single chunk stripe, no reconstruction needed
 	}
 	return fmt.Errorf("unexpected chunk combination for reconstruction")
 }

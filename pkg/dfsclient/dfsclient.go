@@ -193,6 +193,7 @@ func (g *GrpcClient) DownloadFile(ctx context.Context, clientID int64, filename 
 	for idx, k := range keys {
 		s := meta.Stripes[int32(k)]
 
+		// Build stripe info, handling potentially empty chunks
 		info := DownloadStripeInfo{
 			StripeNum:   k,
 			DataChunk1:  ChunkServerPair{ChunkID: s.ChunkIds[0], Server: s.Servers[0]},
@@ -202,9 +203,17 @@ func (g *GrpcClient) DownloadFile(ctx context.Context, clientID int64, filename 
 
 		sd := g.downloadStripe(info, clientID)
 
-		// attempt reconstruction if needed
-		if sd.ChunksOK < 2 {
-			return fmt.Errorf("insufficient chunks available to reconstruct stripe %d", k)
+		// Attempt reconstruction if needed
+		// Note: For single-chunk stripes (odd chunks), we may have only 1 chunk, which is valid
+		// Check if DataChunk2 was expected (non-empty in metadata)
+		hasDataChunk2 := s.ChunkIds[1] != "" && s.Servers[1] != ""
+		minChunksNeeded := 1
+		if hasDataChunk2 {
+			minChunksNeeded = 2 // Need at least 2 chunks for reconstruction
+		}
+
+		if sd.ChunksOK < minChunksNeeded {
+			return fmt.Errorf("insufficient chunks available for stripe %d (got %d, need %d)", k, sd.ChunksOK, minChunksNeeded)
 		}
 		if sd.ChunksOK < 3 {
 			if err := reconstructMissingChunk(&sd); err != nil {
