@@ -46,19 +46,19 @@ This creates binaries in `bin/` directory:
 make run-master
 ```
 
-Runs on `localhost:50051` and logs to `master.log`
+Runs on `masterIP:50051` and logs to `master.log`
 
 ### 3. Start Chunk Servers (in separate terminals)
 
 ```bash
 # Terminal 1
-make make run-chunk_server1
+make run-chunk_server1 MASTER_ADDR=<master_addr:port>
 
 # Terminal 2
-make make run-chunk_server2
+make make run-chunk_server2 MASTER_ADDR=<master_addr:port>
 
 # Terminal 3
-make make run-chunk_server1
+make make run-chunk_server3 MASTER_ADDR=<master_addr:port>
 ```
 
 Chunk servers run on ports `9001`, `9002`, `9003` with storage in `chunk_server1/`, `chunk_server2/`, `chunk_server3/`
@@ -66,6 +66,7 @@ Chunk servers run on ports `9001`, `9002`, `9003` with storage in `chunk_server1
 ### 4. Upload a File
 
 ```bash
+make set-master MASTER_ADDR=<master_addr:port>
 make upload FILE=myfile.pdf
 ```
 
@@ -187,3 +188,13 @@ All three layers ensure end-to-end integrity.
 - Master tracks which client owns which files
 - Downloads require ownership verification
 - Physical isolation: chunks stored in `chunk_server/client_id/` directories
+
+
+
+
+# run at client terminal
+make set-master MASTER_ADDR=<master_addr:port>
+make upload FILE=<filename_inside_files>
+
+# run chunkserver like this
+
