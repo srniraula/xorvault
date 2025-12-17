@@ -6,6 +6,9 @@ ROOT_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 # Build all binaries
 all: build
 
+# Master address to pass to chunkservers (can be overridden: make run-chunk_server1 MASTER_ADDR=192.168.1.10:50051)
+MASTER_ADDR ?= 127.0.0.1:50051
+
 build:
 	@echo "Building binaries..."
 	@go build -o $(ROOT_DIR)bin/master $(ROOT_DIR)cmd/master
@@ -30,15 +33,15 @@ run-master: build
 
 # Run chunk server 1
 run-chunk_server1: build
-	@./bin/chunkserver -port 9001 -storage chunk_server1
+	@./bin/chunkserver -port 9001 -storage chunk_server1 -master $(MASTER_ADDR)
 
 # Run chunk server 2
 run-chunk_server2: build
-	@./bin/chunkserver -port 9002 -storage chunk_server2
+	@./bin/chunkserver -port 9002 -storage chunk_server2 -master $(MASTER_ADDR)
 
 # Run chunk server 3
 run-chunk_server3: build
-	@./bin/chunkserver -port 9003 -storage chunk_server3
+	@./bin/chunkserver -port 9003 -storage chunk_server3 -master $(MASTER_ADDR)
 
 # Upload a file (usage: cd clients/client1 && make upload FILE=myfile.pdf)
 upload:

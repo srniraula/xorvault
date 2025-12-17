@@ -33,7 +33,7 @@ func (m *MasterServer) ReportInventory(ctx context.Context, req *dfspb.Inventory
 	// }
 	for _, cliendIDtoFiles := range m.fileInfo {
 		for _, stripes := range cliendIDtoFiles {
-			for _,stripe := range stripes{
+			for _, stripe := range stripes {
 				for i, server := range stripe.Servers {
 					if server == addr {
 						chunkID := stripe.ChunkIds[i]
@@ -99,56 +99,56 @@ func (m *MasterServer) buildReconstructionTasks(missingChunks []string, recoveri
 // Finds the stripe, identifies the 2 available chunks, and returns metadata
 func (m *MasterServer) buildTaskForChunk(missingChunkID string, recoveringServer string) *dfspb.ReconstructionTask {
 	// Find which file and stripe this chunk belongs to
-	for _,ClientIDtoFilenames:= range m.fileInfo {
-	for filename, stripes := range ClientIDtoFilenames {
-		for stripeNum, stripe := range stripes {
-			// Check if this chunk is in this stripe
-			var missingIndex int = -1
-			for i, chunkID := range stripe.ChunkIds {
-				if chunkID == missingChunkID && stripe.Servers[i] == recoveringServer {
-					missingIndex = i
-					break
-				}
-			}
-
-			if missingIndex == -1 {
-				continue // Not in this stripe
-			}
-
-			// Found it! Build reconstruction task with the other 2 chunks
-			var otherChunkIDs []string
-			var otherServers []string
-			var clientID int64
-
-			// Get client ID from filename
-			for cid, files := range m.clientIDs {
-				for _, f := range files {
-					if f == filename {
-						clientID = cid
-						goto found
+	for _, ClientIDtoFilenames := range m.fileInfo {
+		for filename, stripes := range ClientIDtoFilenames {
+			for stripeNum, stripe := range stripes {
+				// Check if this chunk is in this stripe
+				var missingIndex int = -1
+				for i, chunkID := range stripe.ChunkIds {
+					if chunkID == missingChunkID && stripe.Servers[i] == recoveringServer {
+						missingIndex = i
+						break
 					}
 				}
-			}
-		found:
 
-			// Collect the other 2 chunks (not the missing one)
-			for i := 0; i < 3; i++ {
-				if i != missingIndex {
-					otherChunkIDs = append(otherChunkIDs, stripe.ChunkIds[i])
-					otherServers = append(otherServers, stripe.Servers[i])
+				if missingIndex == -1 {
+					continue // Not in this stripe
 				}
-			}
 
-			return &dfspb.ReconstructionTask{
-				ChunkId:       missingChunkID,
-				StripeNum:     stripeNum,
-				OtherChunkIds: otherChunkIDs,
-				OtherServers:  otherServers,
-				ClientId:      clientID,
+				// Found it! Build reconstruction task with the other 2 chunks
+				var otherChunkIDs []string
+				var otherServers []string
+				var clientID int64
+
+				// Get client ID from filename
+				for cid, files := range m.clientIDs {
+					for _, f := range files {
+						if f == filename {
+							clientID = cid
+							goto found
+						}
+					}
+				}
+			found:
+
+				// Collect the other 2 chunks (not the missing one)
+				for i := 0; i < 3; i++ {
+					if i != missingIndex {
+						otherChunkIDs = append(otherChunkIDs, stripe.ChunkIds[i])
+						otherServers = append(otherServers, stripe.Servers[i])
+					}
+				}
+
+				return &dfspb.ReconstructionTask{
+					ChunkId:       missingChunkID,
+					StripeNum:     stripeNum,
+					OtherChunkIds: otherChunkIDs,
+					OtherServers:  otherServers,
+					ClientId:      clientID,
+				}
 			}
 		}
 	}
-}
 
 	m.logger.Printf("WARNING: Could not find stripe for missing chunk %s", missingChunkID)
 	return nil

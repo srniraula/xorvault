@@ -21,9 +21,9 @@ func (g *GrpcClient) uploadStripesStreaming(stripeChan <-chan Stripe, ack *AckQu
 		}
 
 		// spawn upload goroutines for each chunk
-		type res struct{
+		type res struct {
 			chunkID string
-			err error
+			err     error
 		}
 
 		resCh := make(chan res, 3)
@@ -31,13 +31,18 @@ func (g *GrpcClient) uploadStripesStreaming(stripeChan <-chan Stripe, ack *AckQu
 
 		for i := 0; i < 3; i++ {
 			cid := stripe.ChunkIDs[i]
-			if cid == "" { continue }
+			if cid == "" {
+				continue
+			}
 			server := stripe.Servers[i]
 			payload := []byte{}
 			switch i {
-			case 0: payload = stripe.DataChunk1
-			case 1: payload = stripe.DataChunk2
-			case 2: payload = stripe.ParityChunk
+			case 0:
+				payload = stripe.DataChunk1
+			case 1:
+				payload = stripe.DataChunk2
+			case 2:
+				payload = stripe.ParityChunk
 			}
 
 			wg.Add(1)

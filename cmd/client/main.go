@@ -25,17 +25,17 @@ func resolveFilePath(filename string, forUpload bool) string {
 		if _, err := os.Stat(filename); err == nil {
 			return filename
 		}
-		
+
 		// If not found, try files/ directory
 		filesPath := "files/" + filename
 		if _, err := os.Stat(filesPath); err == nil {
 			return filesPath
 		}
-		
+
 		// Return original filename (will fail later with proper error)
 		return filename
 	}
-	
+
 	// For download, just use the filename as-is (downloaded in current dir)
 	return filename
 }
@@ -112,7 +112,7 @@ func upload(localPath string, myID int64) {
 
 	// Step 1: Register file with master and receive chunk allocation plan
 	createResp, err := master.CreateFile(context.Background(), &dfspb.CreateFileRequest{
-		Filename:  filename,  // Use just filename, not full path
+		Filename:  filename, // Use just filename, not full path
 		TotalSize: fileSize,
 		ClientId:  myID,
 	})
@@ -189,7 +189,7 @@ func upload(localPath string, myID int64) {
 
 	// Step 3: Confirm successful writes to master
 	confirmResp, err := master.ConfirmWrite(context.Background(), &dfspb.ConfirmWriteRequest{
-		Filename: filename,  // Use filename, not full path
+		Filename: filename, // Use filename, not full path
 		ChunkIds: successfulChunks,
 	})
 	if err != nil {

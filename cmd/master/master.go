@@ -34,16 +34,16 @@ type ServerInfo struct {
 //   - Provide chunk locations to clients for reads/writes
 //   - Log all operations to master.log file
 type MasterServer struct {
-	dfspb.UnimplementedMasterServerServer                                            // Embedded type required by gRPC
-	mu                                    sync.Mutex                                 // Protects fileChunks and fileSizes maps
+	dfspb.UnimplementedMasterServerServer                                                      // Embedded type required by gRPC
+	mu                                    sync.Mutex                                           // Protects fileChunks and fileSizes maps
 	fileInfo                              map[int64]map[string]map[int32]*dfspb.StripeMetadata // Maps filename -> stripe_num -> StripeMetadata
-	clientIDs                             map[int64][]string                         //client_id to filename map
+	clientIDs                             map[int64][]string                                   //client_id to filename map
 	fileSizes                             map[int64]map[string]int64                           // Maps filename -> total file size in bytes
-	chunkStatus                           map[string]string                          // Maps chunk_id -> "PENDING"/"SUCCESS"
-	chunkServers                          []string                                   // List of all known chunk server addresses
-	servers                               map[string]*ServerInfo                     // Maps server address -> health status
-	serversMu                             sync.RWMutex                               // Protects servers map (RWMutex allows multiple readers)
-	logger                                *log.Logger                                // Custom logger for file output (logs to master.log)
+	chunkStatus                           map[string]string                                    // Maps chunk_id -> "PENDING"/"SUCCESS"
+	chunkServers                          []string                                             // List of all known chunk server addresses
+	servers                               map[string]*ServerInfo                               // Maps server address -> health status
+	serversMu                             sync.RWMutex                                         // Protects servers map (RWMutex allows multiple readers)
+	logger                                *log.Logger                                          // Custom logger for file output (logs to master.log)
 
 	// WAL fields
 	walFile   *os.File      // WAL file handle
@@ -94,7 +94,7 @@ func (m *MasterServer) CreateFile(ctx context.Context, req *dfspb.CreateFileRequ
 	m.fileSizes[req.ClientId][req.Filename] = req.TotalSize
 
 	// Allocate chunks and get the chunk-to-server mapping
-	allocResp, err := m.allocateChunksInternal(int64(req.ClientId),int(req.TotalSize), req.Filename)
+	allocResp, err := m.allocateChunksInternal(int64(req.ClientId), int(req.TotalSize), req.Filename)
 
 	if err != nil {
 		log.Printf("failed to allocate chunks: %v", err)
@@ -121,7 +121,7 @@ func (m *MasterServer) CreateFile(ctx context.Context, req *dfspb.CreateFileRequ
 // NOTE: Caller must hold m.mu lock
 // Returns:
 //   - chunk allocation map: which chunks go to which servers
-func (m *MasterServer) allocateChunksInternal(clientID int64,totalSize int, fileName string) (*dfspb.AllocateChunkResponse, error) {
+func (m *MasterServer) allocateChunksInternal(clientID int64, totalSize int, fileName string) (*dfspb.AllocateChunkResponse, error) {
 	// Calculate how many chunks we'll need ==> (a+b-1)/b == ceil(a/b)
 	// Formula: (fileSize + chunkSize - 1) / chunkSize handles partial last chunk
 	totalChunks := (int(totalSize) + CHUNK_SIZE - 1) / CHUNK_SIZE
@@ -201,7 +201,7 @@ func (m *MasterServer) allocateChunksInternal(clientID int64,totalSize int, file
 	// Log chunk allocation to WAL with PENDING status
 	// Store full stripe metadata for ]recovery
 	walData := AllocateChunkData{
-		ClientID : clientID,
+		ClientID: clientID,
 		Filename: filename,
 		Stripes:  m.fileInfo[clientID][filename],
 		Status:   "PENDING",
@@ -278,7 +278,6 @@ func (m *MasterServer) GetFileMetadata(ctx context.Context, req *dfspb.GetFileMe
 func (m *MasterServer) ReceiveHeartbeat(ctx context.Context, req *dfspb.HeartbeatRequest) (*dfspb.HeartbeatResponse, error) {
 	addr := req.Address
 
-	
 	m.serversMu.Lock() // Write lock - only one goroutine can modify at a time
 	// If this is a new chunk server we haven't seen before, register it
 	if _, exists := m.servers[addr]; !exists {

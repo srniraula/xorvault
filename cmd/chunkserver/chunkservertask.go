@@ -17,13 +17,9 @@ import (
 // ChunkServer stores chunk data on disk and handles read/write requests
 type ChunkServer struct {
 	dfspb.UnimplementedChunkServerServer // don't know what it does.
-	storagePath string
-	logger      *log.Logger
+	storagePath                          string
+	logger                               *log.Logger
 }
-
-
-
-
 
 // WriteChunk stores a chunk and its checksum to disk
 // Uses client-specific subdirectories for physical isolation
@@ -33,9 +29,9 @@ func (c *ChunkServer) WriteChunk(ctx context.Context, req *dfspb.WriteChunkReque
 	if req.Checksum != "" {
 		calculatedChecksum := calculateChecksum(req.Data)
 		if calculatedChecksum != req.Checksum {
-			c.logger.Printf("CHECKSUM MISMATCH for %s: received=%s, calculated=%s", 
+			c.logger.Printf("CHECKSUM MISMATCH for %s: received=%s, calculated=%s",
 				req.ChunkId, req.Checksum, calculatedChecksum)
-			return &dfspb.WriteChunkResponse{Success: false}, 
+			return &dfspb.WriteChunkResponse{Success: false},
 				fmt.Errorf("checksum verification failed: data corrupted in transit")
 		}
 		c.logger.Printf("Checksum verified for %s: %s", req.ChunkId, calculatedChecksum)
@@ -139,13 +135,20 @@ func (c *ChunkServer) DeleteChunks(ctx context.Context, req *dfspb.DeleteChunksR
 	}, nil
 }
 
-func SendHeartbeats(port string, logger *log.Logger) {
+func SendHeartbeats(port string, masterAddr string, logger *log.Logger) {
 	// returns a ticker object with a channel (ticker.C)
 	// Every 5 seconds, the ticker sends the current time to its channel
-	ticker := time.NewTicker(5 * time.Second)  
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	conn, err := grpc.NewClient(config.GetMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Determine which master address to use: prefer explicitly provided masterAddr,
+	// otherwise fall back to configured/default master address.
+	target := masterAddr
+	if target == "" {
+		target = config.GetMasterAddr()
+	}
+
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		logger.Printf("Failed to connect to master for heartbeat: %v", err)
 		return

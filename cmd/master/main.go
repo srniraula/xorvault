@@ -4,11 +4,11 @@ import (
 	"bufio"
 	"dfs-project/dfspb"
 	"dfs-project/pkg/config"
+	"google.golang.org/grpc"
 	"log"
 	"net"
 	"os"
 	"time"
-	"google.golang.org/grpc"
 )
 
 // main starts the master server and background health monitoring
@@ -47,8 +47,8 @@ func main() {
 		fileInfo:     make(map[int64]map[string]map[int32]*dfspb.StripeMetadata),
 		clientIDs:    make(map[int64][]string),
 		fileSizes:    make(map[int64]map[string]int64),
-		chunkStatus:  make(map[string]string),  // Empty chunk status map
-		chunkServers: config.GetChunkServers(), // Get chunk servers from config (Docker-aware)
+		chunkStatus:  make(map[string]string),      // Empty chunk status map
+		chunkServers: config.GetChunkServers(),     // Get chunk servers from config (Docker-aware)
 		servers:      make(map[string]*ServerInfo), // Empty server health map
 		logger:       masterLogger,                 // Custom logger for file output
 		walFile:      walFile,                      // WAL file handle

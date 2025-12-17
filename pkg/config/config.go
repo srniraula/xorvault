@@ -34,7 +34,7 @@ func GetChunkServers() []string {
 			"chunkserver3:9003",
 		}
 	}
-	
+
 	// Local development mode: use localhost
 	return []string{
 		"127.0.0.1:9001",
@@ -51,7 +51,7 @@ func GetMyAddr(port string) string {
 	if hostname != "" {
 		return hostname + ":" + port
 	}
-	
+
 	// Otherwise try to pick a non-loopback device IP so other machines on
 	// the LAN can reach this server. Fall back to localhost if detection
 	// fails.

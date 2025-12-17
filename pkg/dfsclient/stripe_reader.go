@@ -1,9 +1,9 @@
 package dfsclient
 
 import (
-	"io"
-	"fmt"
 	"dfs-project/dfspb"
+	"fmt"
+	"io"
 )
 
 // streamFileInStripes reads from io.Reader and emits Stripe objects based on master's stripes map

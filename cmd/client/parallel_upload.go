@@ -101,7 +101,7 @@ func uploadStripesStreaming(stripeChan <-chan Stripe, ackQueue *AckQueue, client
 		}
 
 		// Spawn 3 upload goroutines for this stripe
-		// for odd number of chunks of a file, we skip uploadchunk 
+		// for odd number of chunks of a file, we skip uploadchunk
 		// because chunk is empty
 		for _, task := range tasks {
 			if len(task.ChunkID) == 0 {

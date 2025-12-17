@@ -11,11 +11,11 @@ import (
 
 // Checkpoint represents a snapshot of master state at a point in time
 type Checkpoint struct {
-	Timestamp   int64                                       `json:"timestamp"`
-	FileInfo    map[int64]map[string]map[int32]*StripeMetadataJSON    `json:"file_info"`
-	ClientIDs   map[int64][]string                          `json:"client_ids"`
-	FileSizes   map[int64]map[string]int64                            `json:"file_sizes"`
-	ChunkStatus map[string]string                           `json:"chunk_status"`
+	Timestamp   int64                                              `json:"timestamp"`
+	FileInfo    map[int64]map[string]map[int32]*StripeMetadataJSON `json:"file_info"`
+	ClientIDs   map[int64][]string                                 `json:"client_ids"`
+	FileSizes   map[int64]map[string]int64                         `json:"file_sizes"`
+	ChunkStatus map[string]string                                  `json:"chunk_status"`
 }
 
 // StripeMetadataJSON is a JSON-serializable version of StripeMetadata
@@ -140,7 +140,6 @@ func (m *MasterServer) LoadCheckpoint(checkpointPath string) error {
 			}
 		}
 	}
-
 
 	checkpointTime := time.Unix(checkpoint.Timestamp, 0)
 	m.logger.Printf("Checkpoint loaded: timestamp=%s, files=%d, clients=%d, chunks=%d",
