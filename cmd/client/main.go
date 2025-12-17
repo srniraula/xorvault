@@ -4,6 +4,7 @@ import (
 	"context"
 	"dfs-project/dfspb"
 	"dfs-project/pkg/config"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -118,6 +119,13 @@ func upload(localPath string, myID int64) {
 		ClientId:  myID,
 	})
 	if err != nil {
+		// Check if it's an "already uploaded" error and print it cleanly
+		if strings.Contains(err.Error(), "already uploaded by you") {
+			// Extract the message from the gRPC error or just print a clean message
+			// Simple way: just print what we know
+			fmt.Printf("Error: file %s is already uploaded by you\n", filename)
+			os.Exit(1)
+		}
 		log.Fatal("CreateFile failed:", err)
 	}
 	log.Printf("File registered with client ID: %d", createResp.ClientId)

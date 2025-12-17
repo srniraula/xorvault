@@ -49,7 +49,7 @@ upload:
 		echo "Error: FILE not specified. Usage: make upload FILE=myfile.pdf"; exit 1; \
 	fi; \
 	# Prefer running from project root (./files), otherwise try client workspace relative path
-	if [ -f files/$(FILE) ]; then \
+	@if [ -f files/$(FILE) ]; then \
 		./bin/client upload files/$(FILE); \
 	elif [ -f ../../files/$(FILE) ]; then \
 		../../bin/client upload ../../files/$(FILE); \
