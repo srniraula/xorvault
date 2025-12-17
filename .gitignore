@@ -69,3 +69,8 @@ clients/
 # Operating System temporary files
 .DS_Store
 Thumbs.db
+
+# Allow the dfsclient package under pkg/ to be tracked (pkg/ is ignored by default)
+!/pkg/
+!/pkg/dfsclient/
+!/pkg/dfsclient/**
