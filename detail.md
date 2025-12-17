@@ -118,3 +118,27 @@ This allows us to upload a 10GB file using only ~6MB of RAM!
 *   **Too large (e.g., 1GB):** Moving chunks becomes slow; retry on failure is painful (re-uploading 1GB vs 1MB).
 *   **1MB - 64MB** is the industry standard (GFS uses 64MB). We chose 1MB to make testing easy on local machines.
 
+---
+
+## 6. Future Scope & Innovation (The "What's New?" Section)
+
+**Q12: What is new in this project vs existing systems (HDFS, GFS)?**
+**A:**
+1.  **Parity Implementation**: Most student versions of GFS implement straightforward **replication** (3 copies). We challenged ourselves to implement **RAID-5 (XOR Parity)**, which is mathematically more complex but storage-efficient.
+2.  **Client-Side Parity**: Traditional GFS often does replication centrally. We moved the XOR logic to the **Client**. This is an architectural innovation that distributes the CPU load to the edge, making the central cluster more performant.
+3.  **Odd-Chunk Handling**: Standard RAID maps cleanly to hardware Disks. Mapping logical file chunks to RAID stripes with variable file sizes (odd chunks) required custom algorithmic work (padding logic) that standard libraries don't solve for you.
+
+**Q13: How is it different from existing world systems?**
+**A:**
+*   **HDFS**: Uses Replication by default (300% storage overhead). Only recently added Erasure Coding (similar to our system) in HDFS 3.0 as an advanced feature. We built our entire system *core* around this advanced feature.
+*   **Google Drive/Dropbox**: These use massive object stores (S3-like). Our system is a **Block Store** pattern, giving us lower-level control over data placement and recovery.
+
+**Q14: What would you implement next? (Future Work)**
+**A:**
+1.  **RAID-6 (Double Parity)**: To tolerate 2 simultaneous server failures (using Reed-Solomon codes instead of XOR).
+2.  **Data Deduplication**: Hash chunks before uploading. If a chunk with same hash exists (e.g., duplicate email attachments), just point to existing chunk. Drastically saves space.
+3.  **Geo-Replication**: extend the system so that Chunk Server 1 is in US, Chunk Server 2 in EU. This would require handling high-latency networks, which would require upgrading our Pipeline code.
+4.  **Master High Availability**: Use **Raft Consensus Algorithm** to have 3 Master servers, so if one Master fails, another takes over automatically (removing the Single Point of Failure).
+
+**Q15: Why are you doing this if GFS already exists?**
+**A:** To solve the **Storage Efficiency vs Complexity** trade-off differently. GFS prioritizes simplicity (replication). We prioritized storage cost (Erasure Coding). In a resource-constrained environment (like a small startup or university cluster), buying 1.5TB of disk is cheaper than 3TB. Our architecture proves that we can get enterprise-grade reliability on cheaper hardware constraints.
