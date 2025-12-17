@@ -66,6 +66,8 @@ clients/
 *.swo
 *~
 
+.master_addr
+
 # Operating System temporary files
 .DS_Store
 Thumbs.db
