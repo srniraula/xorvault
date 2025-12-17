@@ -4,6 +4,7 @@ import (
 	"context"
 	"dfs-project/dfspb"
 	"fmt"
+	"log"
 	"os"
 	"sync"
 
@@ -48,6 +49,16 @@ type ChunkServerPair struct {
 // downloadChunkFromServer downloads a single chunk from its designated server
 // Returns DownloadedChunk with success status and data (or error)
 func downloadChunkFromServer(chunkID, serverAddr string, clientID int64, isData1, isData2, isParity bool) DownloadedChunk {
+	chunkType := "unknown"
+	if isData1 {
+		chunkType = "Data1"
+	} else if isData2 {
+		chunkType = "Data2"
+	} else if isParity {
+		chunkType = "Parity"
+	}
+	log.Printf("[DEBUG] Downloading %s chunk %s from %s", chunkType, chunkID, serverAddr)
+
 	result := DownloadedChunk{
 		ChunkID:  chunkID,
 		IsData1:  isData1,
@@ -60,6 +71,7 @@ func downloadChunkFromServer(chunkID, serverAddr string, clientID int64, isData1
 	if err != nil {
 		result.Success = false
 		result.Error = fmt.Errorf("connection failed: %v", err)
+		log.Printf("[DEBUG] %s chunk %s download FAILED: %v", chunkType, chunkID, err)
 		return result
 	}
 	defer conn.Close()
@@ -75,6 +87,7 @@ func downloadChunkFromServer(chunkID, serverAddr string, clientID int64, isData1
 	if err != nil {
 		result.Success = false
 		result.Error = fmt.Errorf("ReadChunk RPC failed: %v", err)
+		log.Printf("[DEBUG] %s chunk %s download FAILED: %v", chunkType, chunkID, err)
 		return result
 	}
 
@@ -84,6 +97,7 @@ func downloadChunkFromServer(chunkID, serverAddr string, clientID int64, isData1
 		if localChecksum != resp.Checksum {
 			result.Success = false
 			result.Error = fmt.Errorf("checksum mismatch: expected %s, got %s", resp.Checksum, localChecksum)
+			log.Printf("[DEBUG] %s chunk %s checksum FAILED: expected %s, got %s", chunkType, chunkID, resp.Checksum, localChecksum)
 			return result
 		}
 	}
@@ -91,6 +105,7 @@ func downloadChunkFromServer(chunkID, serverAddr string, clientID int64, isData1
 	// Success
 	result.Data = resp.Data
 	result.Success = true
+	log.Printf("[DEBUG] %s chunk %s download SUCCESS (%d bytes)", chunkType, chunkID, len(resp.Data))
 	return result
 }
 
@@ -100,44 +115,56 @@ func downloadStripe(stripeInfo DownloadStripeInfo, clientID int64) StripeDownloa
 	var wg sync.WaitGroup
 	resultChan := make(chan DownloadedChunk, 3)
 
-	// Download 3 chunks in parallel
-	wg.Add(3)
+	// Count how many chunks we actually need to download
+	chunksToDownload := 0
 
-	// Download data chunk 1
-	go func() {
-		defer wg.Done()
-		result := downloadChunkFromServer(
-			stripeInfo.DataChunk1.ChunkID,
-			stripeInfo.DataChunk1.Server,
-			clientID,
-			true, false, false, // isData1
-		)
-		resultChan <- result
-	}()
+	// Download data chunk 1 (if exists)
+	if stripeInfo.DataChunk1.ChunkID != "" && stripeInfo.DataChunk1.Server != "" {
+		chunksToDownload++
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result := downloadChunkFromServer(
+				stripeInfo.DataChunk1.ChunkID,
+				stripeInfo.DataChunk1.Server,
+				clientID,
+				true, false, false, // isData1
+			)
+			resultChan <- result
+		}()
+	}
 
-	// Download data chunk 2
-	go func() {
-		defer wg.Done()
-		result := downloadChunkFromServer(
-			stripeInfo.DataChunk2.ChunkID,
-			stripeInfo.DataChunk2.Server,
-			clientID,
-			false, true, false, // isData2
-		)
-		resultChan <- result
-	}()
+	// Download data chunk 2 (if exists - may be missing in last stripe)
+	if stripeInfo.DataChunk2.ChunkID != "" && stripeInfo.DataChunk2.Server != "" {
+		chunksToDownload++
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result := downloadChunkFromServer(
+				stripeInfo.DataChunk2.ChunkID,
+				stripeInfo.DataChunk2.Server,
+				clientID,
+				false, true, false, // isData2
+			)
+			resultChan <- result
+		}()
+	}
 
-	// Download parity chunk
-	go func() {
-		defer wg.Done()
-		result := downloadChunkFromServer(
-			stripeInfo.ParityChunk.ChunkID,
-			stripeInfo.ParityChunk.Server,
-			clientID,
-			false, false, true, // isParity
-		)
-		resultChan <- result
-	}()
+	// Download parity chunk (if exists)
+	if stripeInfo.ParityChunk.ChunkID != "" && stripeInfo.ParityChunk.Server != "" {
+		chunksToDownload++
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result := downloadChunkFromServer(
+				stripeInfo.ParityChunk.ChunkID,
+				stripeInfo.ParityChunk.Server,
+				clientID,
+				false, false, true, // isParity
+			)
+			resultChan <- result
+		}()
+	}
 
 	// Wait for all downloads to complete
 	wg.Wait()
@@ -158,36 +185,78 @@ func downloadStripe(stripeInfo DownloadStripeInfo, clientID int64) StripeDownloa
 			} else if result.IsParity {
 				stripe.ParityChunk = result.Data
 			}
+		} else {
+			log.Printf("[DEBUG] Chunk download failed: %v", result.Error)
 		}
 	}
+
+	log.Printf("[DEBUG] Stripe %d download complete: %d/3 chunks available (Data1=%v, Data2=%v, Parity=%v)",
+		stripe.StripeNum, stripe.ChunksOK,
+		stripe.DataChunk1 != nil, stripe.DataChunk2 != nil, stripe.ParityChunk != nil)
 
 	return stripe
 }
 
 // reconstructMissingChunk uses XOR to recover missing chunk from available 2 chunks
 // Returns reconstructed data or error if reconstruction impossible
-func reconstructMissingChunk(stripe *StripeDownload) error {
-	// Case A: All 3 chunks available - no reconstruction needed
-	if stripe.ChunksOK == 3 {
+func reconstructMissingChunk(stripe *StripeDownload, stripeInfo DownloadStripeInfo) error {
+	log.Printf("[DEBUG] Attempting reconstruction for stripe %d (ChunksOK=%d)", stripe.StripeNum, stripe.ChunksOK)
+
+	// Count how many data chunks were SUPPOSED to exist in this stripe
+	dataChunksExpected := 0
+	if stripeInfo.DataChunk1.ChunkID != "" {
+		dataChunksExpected++
+	}
+	if stripeInfo.DataChunk2.ChunkID != "" {
+		dataChunksExpected++
+	}
+
+	// Count how many data chunks we actually have
+	dataChunksAvailable := 0
+	if stripe.DataChunk1 != nil {
+		dataChunksAvailable++
+	}
+	if stripe.DataChunk2 != nil {
+		dataChunksAvailable++
+	}
+
+	log.Printf("[DEBUG] Expected %d data chunks, have %d data chunks available", dataChunksExpected, dataChunksAvailable)
+
+	// SPECIAL CASE: If we have all expected data chunks, we're good (even if parity is missing)
+	// This handles the odd-chunk case where last stripe has only 1 data chunk
+	if dataChunksAvailable == dataChunksExpected && dataChunksAvailable > 0 {
+		log.Printf("[DEBUG] Have all expected data chunks (%d/%d), no reconstruction needed", dataChunksAvailable, dataChunksExpected)
 		return nil
 	}
 
-	// Case C: Less than 2 chunks - cannot reconstruct
+	// Case A: All 3 chunks available - no reconstruction needed
+	if stripe.ChunksOK == 3 {
+		log.Printf("[DEBUG] All 3 chunks available, no reconstruction needed")
+		return nil
+	}
+
+	// Case C: Less than 2 chunks total - cannot reconstruct
 	if stripe.ChunksOK < 2 {
-		return fmt.Errorf("insufficient chunks for reconstruction: only %d/3 available", stripe.ChunksOK)
+		log.Printf("[DEBUG] Reconstruction FAILED: only %d chunks available (Data1=%v, Data2=%v, Parity=%v)",
+			stripe.ChunksOK, stripe.DataChunk1 != nil, stripe.DataChunk2 != nil, stripe.ParityChunk != nil)
+		return fmt.Errorf("insufficient chunks for reconstruction: only %d available", stripe.ChunksOK)
 	}
 
 	// Case B: Exactly 2 chunks - reconstruct the missing one using XOR
 
 	// Missing data chunk 1: data1 = data2 XOR parity
 	if stripe.DataChunk1 == nil && stripe.DataChunk2 != nil && stripe.ParityChunk != nil {
+		log.Printf("[DEBUG] Reconstructing Data1 from Data2 ⊕ Parity")
 		stripe.DataChunk1 = calculateParity(stripe.DataChunk2, stripe.ParityChunk)
+		log.Printf("[DEBUG] Data1 reconstructed successfully (%d bytes)", len(stripe.DataChunk1))
 		return nil
 	}
 
 	// Missing data chunk 2: data2 = data1 XOR parity
 	if stripe.DataChunk2 == nil && stripe.DataChunk1 != nil && stripe.ParityChunk != nil {
+		log.Printf("[DEBUG] Reconstructing Data2 from Data1 ⊕ Parity")
 		stripe.DataChunk2 = calculateParity(stripe.DataChunk1, stripe.ParityChunk)
+		log.Printf("[DEBUG] Data2 reconstructed successfully (%d bytes)", len(stripe.DataChunk2))
 		return nil
 	}
 
@@ -195,9 +264,12 @@ func reconstructMissingChunk(stripe *StripeDownload) error {
 	// Parity is only needed if we're missing a data chunk
 	// Since we have both data chunks, we can safely ignore missing parity
 	if stripe.ParityChunk == nil && stripe.DataChunk1 != nil && stripe.DataChunk2 != nil {
+		log.Printf("[DEBUG] Parity missing but both data chunks available, no reconstruction needed")
 		return nil // Parity not needed for file output
 	}
 
+	log.Printf("[DEBUG] Unexpected chunk combination: Data1=%v, Data2=%v, Parity=%v",
+		stripe.DataChunk1 != nil, stripe.DataChunk2 != nil, stripe.ParityChunk != nil)
 	return fmt.Errorf("unexpected chunk combination for reconstruction")
 }
 
