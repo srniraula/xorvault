@@ -52,7 +52,7 @@ Runs on `masterIP:50051` and logs to `master.log`
 
 ```bash
 # Terminal 1
-make run-chunk_server1 MASTER_ADDR=<master_addr:port>
+make run-chunk_server1 MASTER_ADDR=192.168.1.77:50051
 
 # Terminal 2
 make make run-chunk_server2 MASTER_ADDR=<master_addr:port>
@@ -66,8 +66,8 @@ Chunk servers run on ports `9001`, `9002`, `9003` with storage in `chunk_server1
 ### 4. Upload a File
 
 ```bash
-make set-master MASTER_ADDR=<master_addr:port>
-make upload FILE=myfile.pdf
+make set-master MASTER_ADDR=192.168.1.77:50051
+make upload FILE=big.pdf
 ```
 
 This will:

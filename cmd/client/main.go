@@ -268,13 +268,14 @@ func download(filename string, myID int64) {
 		stripe := downloadStripe(downloadInfo, myID)
 
 		// Attempt reconstruction if needed
-		err := reconstructMissingChunk(&stripe)
+		err := reconstructMissingChunk(&stripe, downloadInfo)
 		if err != nil {
 			log.Fatalf("Stripe %d reconstruction failed: %v", stripeNum, err)
 		}
 
 		// Check if we have data to write
-		if stripe.DataChunk1 == nil || stripe.DataChunk2 == nil {
+		if (downloadInfo.DataChunk1.ChunkID != "" && stripe.DataChunk1 == nil) ||
+			(downloadInfo.DataChunk2.ChunkID != "" && stripe.DataChunk2 == nil) {
 			log.Fatalf("Stripe %d missing data after reconstruction", stripeNum)
 		}
 
@@ -380,9 +381,9 @@ func listFiles(myID int64) {
 
 // getMasterAddr returns the master address to use for client RPCs.
 // Precedence:
-//  1) The MASTER_ADDR environment variable (set when invoking the command)
-//  2) A local file named ".master_addr" in the current working directory (trimmed)
-//  3) The default from config.GetMasterAddr()
+//  1. The MASTER_ADDR environment variable (set when invoking the command)
+//  2. A local file named ".master_addr" in the current working directory (trimmed)
+//  3. The default from config.GetMasterAddr()
 func getMasterAddr() string {
 	// 1) Prefer explicit environment variable
 	if env := os.Getenv("MASTER_ADDR"); strings.TrimSpace(env) != "" {
