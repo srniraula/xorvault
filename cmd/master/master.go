@@ -75,6 +75,14 @@ func (m *MasterServer) CreateFile(ctx context.Context, req *dfspb.CreateFileRequ
 		req.ClientId = RandomID()
 	}
 
+	// ensure nested maps for this client exist
+	m.ensureClientMaps(req.ClientId)
+
+	// Check if file already exists
+	if _, ok := m.fileInfo[req.ClientId][req.Filename]; ok {
+		return nil, fmt.Errorf("file %s already exists.", req.Filename)
+	}
+
 	// Log to WAL before updating in-memory state with benefit of data durability
 	if err := m.LogCreateFileToWAL(req.ClientId, req.Filename, req.TotalSize); err != nil {
 		return nil, err
@@ -83,13 +91,8 @@ func (m *MasterServer) CreateFile(ctx context.Context, req *dfspb.CreateFileRequ
 	//map client id with filename
 	m.clientIDs[req.ClientId] = append(m.clientIDs[req.ClientId], req.Filename)
 
-	// ensure nested maps for this client exist
-	m.ensureClientMaps(req.ClientId)
-
 	// Initialize empty map for this filename
-	if _, ok := m.fileInfo[req.ClientId][req.Filename]; !ok {
-		m.fileInfo[req.ClientId][req.Filename] = make(map[int32]*dfspb.StripeMetadata)
-	}
+	m.fileInfo[req.ClientId][req.Filename] = make(map[int32]*dfspb.StripeMetadata)
 
 	m.fileSizes[req.ClientId][req.Filename] = req.TotalSize
 
@@ -149,8 +152,8 @@ func (m *MasterServer) allocateChunksInternal(clientID int64, totalSize int, fil
 	m.serversMu.RUnlock()
 
 	// If no servers are available, cannot store the chunk
-	if len(healthy) == 0 {
-		return nil, fmt.Errorf("no healthy chunkservers")
+	if len(healthy) < 3 {
+		return nil, fmt.Errorf("insufficient healthy chunkservers: need 3, got %d", len(healthy))
 	}
 
 	totalStripe := (totalChunks + 2 - 1) / 2
