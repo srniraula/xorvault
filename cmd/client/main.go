@@ -274,8 +274,13 @@ func download(filename string, myID int64) {
 		}
 
 		// Check if we have data to write
-		if stripe.DataChunk1 == nil || stripe.DataChunk2 == nil {
-			log.Fatalf("Stripe %d missing data after reconstruction", stripeNum)
+		// DataChunk1 must always be present
+		// DataChunk2 is only required if it was expected (even stripe or not last stripe)
+		if stripe.DataChunk1 == nil {
+			log.Fatalf("Stripe %d missing DataChunk1 after reconstruction", stripeNum)
+		}
+		if stripe.IsData2Expected && stripe.DataChunk2 == nil {
+			log.Fatalf("Stripe %d missing DataChunk2 after reconstruction", stripeNum)
 		}
 
 		// Write stripe data to file

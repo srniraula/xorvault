@@ -27,8 +27,9 @@ type StripeDownload struct {
 	StripeNum   int
 	DataChunk1  []byte // nil if needs reconstruction
 	DataChunk2  []byte // nil if needs reconstruction
-	ParityChunk []byte // nil if not downloaded
-	ChunksOK    int    // Count of successfully downloaded chunks (0-3)
+	ParityChunk     []byte // nil if not downloaded
+	ChunksOK        int    // Count of successfully downloaded chunks (0-3)
+	IsData2Expected bool   // true if 2nd data chunk is expected (false for odd chunk at end)
 }
 
 // DownloadStripeInfo maps stripe metadata from master's chunk allocation
@@ -100,8 +101,12 @@ func downloadStripe(stripeInfo DownloadStripeInfo, clientID int64) StripeDownloa
 	var wg sync.WaitGroup
 	resultChan := make(chan DownloadedChunk, 3)
 
-	// Download 3 chunks in parallel
-	wg.Add(3)
+	// Calculate number of chunks to download (2 or 3 depending on whether DataChunk2 exists)
+	numChunks := 2 // DataChunk1 + Parity are always present
+	if stripeInfo.DataChunk2.ChunkID != "" {
+		numChunks = 3
+	}
+	wg.Add(numChunks)
 
 	// Download data chunk 1
 	go func() {
@@ -116,16 +121,18 @@ func downloadStripe(stripeInfo DownloadStripeInfo, clientID int64) StripeDownloa
 	}()
 
 	// Download data chunk 2
-	go func() {
-		defer wg.Done()
-		result := downloadChunkFromServer(
-			stripeInfo.DataChunk2.ChunkID,
-			stripeInfo.DataChunk2.Server,
-			clientID,
-			false, true, false, // isData2
-		)
-		resultChan <- result
-	}()
+	if stripeInfo.DataChunk2.ChunkID != "" {
+		go func() {
+			defer wg.Done()
+			result := downloadChunkFromServer(
+				stripeInfo.DataChunk2.ChunkID,
+				stripeInfo.DataChunk2.Server,
+				clientID,
+				false, true, false, // isData2
+			)
+			resultChan <- result
+		}()
+	}
 
 	// Download parity chunk
 	go func() {
@@ -145,7 +152,8 @@ func downloadStripe(stripeInfo DownloadStripeInfo, clientID int64) StripeDownloa
 
 	// Collect results
 	stripe := StripeDownload{
-		StripeNum: stripeInfo.StripeNum,
+		StripeNum:       stripeInfo.StripeNum,
+		IsData2Expected: stripeInfo.DataChunk2.ChunkID != "",
 	}
 
 	for result := range resultChan {
@@ -167,6 +175,21 @@ func downloadStripe(stripeInfo DownloadStripeInfo, clientID int64) StripeDownloa
 // reconstructMissingChunk uses XOR to recover missing chunk from available 2 chunks
 // Returns reconstructed data or error if reconstruction impossible
 func reconstructMissingChunk(stripe *StripeDownload) error {
+	// Case 0: Odd chunk scenario (Data2 not expected)
+	if !stripe.IsData2Expected {
+		// If we found Data1, we are good! (Parity is optional if we have pure data)
+		if stripe.DataChunk1 != nil {
+			return nil
+		}
+		// If Data1 is missing, we need Parity to recover it
+		// Data1 = Parity (since Data2 is zero/empty)
+		if stripe.ParityChunk != nil {
+			stripe.DataChunk1 = stripe.ParityChunk // simple copy since XOR with 0 is identity
+			return nil
+		}
+		return fmt.Errorf("insufficient chunks for reconstruction: missing Data1 and Parity")
+	}
+
 	// Case A: All 3 chunks available - no reconstruction needed
 	if stripe.ChunksOK == 3 {
 		return nil
