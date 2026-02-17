@@ -21,55 +21,6 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type WALEntryType int32
-
-const (
-	WALEntryType_WAL_CREATE_FILE   WALEntryType = 0
-	WALEntryType_WAL_CONFIRM_WRITE WALEntryType = 1
-	WALEntryType_WAL_DELETE_FILE   WALEntryType = 2
-)
-
-// Enum value maps for WALEntryType.
-var (
-	WALEntryType_name = map[int32]string{
-		0: "WAL_CREATE_FILE",
-		1: "WAL_CONFIRM_WRITE",
-		2: "WAL_DELETE_FILE",
-	}
-	WALEntryType_value = map[string]int32{
-		"WAL_CREATE_FILE":   0,
-		"WAL_CONFIRM_WRITE": 1,
-		"WAL_DELETE_FILE":   2,
-	}
-)
-
-func (x WALEntryType) Enum() *WALEntryType {
-	p := new(WALEntryType)
-	*p = x
-	return p
-}
-
-func (x WALEntryType) String() string {
-	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
-}
-
-func (WALEntryType) Descriptor() protoreflect.EnumDescriptor {
-	return file_dfs_proto_enumTypes[0].Descriptor()
-}
-
-func (WALEntryType) Type() protoreflect.EnumType {
-	return &file_dfs_proto_enumTypes[0]
-}
-
-func (x WALEntryType) Number() protoreflect.EnumNumber {
-	return protoreflect.EnumNumber(x)
-}
-
-// Deprecated: Use WALEntryType.Descriptor instead.
-func (WALEntryType) EnumDescriptor() ([]byte, []int) {
-	return file_dfs_proto_rawDescGZIP(), []int{0}
-}
-
 type CreateFileRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Filename      string                 `protobuf:"bytes,1,opt,name=filename,proto3" json:"filename,omitempty"`
@@ -1438,458 +1389,6 @@ func (x *ListFilesResponse) GetFilenames() []string {
 	return nil
 }
 
-type WALEntry struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	SequenceNumber uint64                 `protobuf:"varint,1,opt,name=sequence_number,json=sequenceNumber,proto3" json:"sequence_number,omitempty"`
-	EntryType      WALEntryType           `protobuf:"varint,2,opt,name=entry_type,json=entryType,proto3,enum=dfspb.WALEntryType" json:"entry_type,omitempty"`
-	Payload        []byte                 `protobuf:"bytes,3,opt,name=payload,proto3" json:"payload,omitempty"`
-	TimestampUnix  int64                  `protobuf:"varint,4,opt,name=timestamp_unix,json=timestampUnix,proto3" json:"timestamp_unix,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
-}
-
-func (x *WALEntry) Reset() {
-	*x = WALEntry{}
-	mi := &file_dfs_proto_msgTypes[26]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *WALEntry) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*WALEntry) ProtoMessage() {}
-
-func (x *WALEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_dfs_proto_msgTypes[26]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use WALEntry.ProtoReflect.Descriptor instead.
-func (*WALEntry) Descriptor() ([]byte, []int) {
-	return file_dfs_proto_rawDescGZIP(), []int{26}
-}
-
-func (x *WALEntry) GetSequenceNumber() uint64 {
-	if x != nil {
-		return x.SequenceNumber
-	}
-	return 0
-}
-
-func (x *WALEntry) GetEntryType() WALEntryType {
-	if x != nil {
-		return x.EntryType
-	}
-	return WALEntryType_WAL_CREATE_FILE
-}
-
-func (x *WALEntry) GetPayload() []byte {
-	if x != nil {
-		return x.Payload
-	}
-	return nil
-}
-
-func (x *WALEntry) GetTimestampUnix() int64 {
-	if x != nil {
-		return x.TimestampUnix
-	}
-	return 0
-}
-
-type ReplicateWALRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Entry         *WALEntry              `protobuf:"bytes,1,opt,name=entry,proto3" json:"entry,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ReplicateWALRequest) Reset() {
-	*x = ReplicateWALRequest{}
-	mi := &file_dfs_proto_msgTypes[27]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ReplicateWALRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ReplicateWALRequest) ProtoMessage() {}
-
-func (x *ReplicateWALRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dfs_proto_msgTypes[27]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ReplicateWALRequest.ProtoReflect.Descriptor instead.
-func (*ReplicateWALRequest) Descriptor() ([]byte, []int) {
-	return file_dfs_proto_rawDescGZIP(), []int{27}
-}
-
-func (x *ReplicateWALRequest) GetEntry() *WALEntry {
-	if x != nil {
-		return x.Entry
-	}
-	return nil
-}
-
-type ReplicateWALResponse struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Success         bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
-	LastSequenceAck uint64                 `protobuf:"varint,2,opt,name=last_sequence_ack,json=lastSequenceAck,proto3" json:"last_sequence_ack,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
-}
-
-func (x *ReplicateWALResponse) Reset() {
-	*x = ReplicateWALResponse{}
-	mi := &file_dfs_proto_msgTypes[28]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ReplicateWALResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ReplicateWALResponse) ProtoMessage() {}
-
-func (x *ReplicateWALResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dfs_proto_msgTypes[28]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ReplicateWALResponse.ProtoReflect.Descriptor instead.
-func (*ReplicateWALResponse) Descriptor() ([]byte, []int) {
-	return file_dfs_proto_rawDescGZIP(), []int{28}
-}
-
-func (x *ReplicateWALResponse) GetSuccess() bool {
-	if x != nil {
-		return x.Success
-	}
-	return false
-}
-
-func (x *ReplicateWALResponse) GetLastSequenceAck() uint64 {
-	if x != nil {
-		return x.LastSequenceAck
-	}
-	return 0
-}
-
-type MasterHeartbeatRequest struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	PrimaryAddr     string                 `protobuf:"bytes,1,opt,name=primary_addr,json=primaryAddr,proto3" json:"primary_addr,omitempty"`
-	LastWalSequence uint64                 `protobuf:"varint,2,opt,name=last_wal_sequence,json=lastWalSequence,proto3" json:"last_wal_sequence,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
-}
-
-func (x *MasterHeartbeatRequest) Reset() {
-	*x = MasterHeartbeatRequest{}
-	mi := &file_dfs_proto_msgTypes[29]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *MasterHeartbeatRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*MasterHeartbeatRequest) ProtoMessage() {}
-
-func (x *MasterHeartbeatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dfs_proto_msgTypes[29]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use MasterHeartbeatRequest.ProtoReflect.Descriptor instead.
-func (*MasterHeartbeatRequest) Descriptor() ([]byte, []int) {
-	return file_dfs_proto_rawDescGZIP(), []int{29}
-}
-
-func (x *MasterHeartbeatRequest) GetPrimaryAddr() string {
-	if x != nil {
-		return x.PrimaryAddr
-	}
-	return ""
-}
-
-func (x *MasterHeartbeatRequest) GetLastWalSequence() uint64 {
-	if x != nil {
-		return x.LastWalSequence
-	}
-	return 0
-}
-
-type MasterHeartbeatResponse struct {
-	state                protoimpl.MessageState `protogen:"open.v1"`
-	Success              bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
-	LastReceivedSequence uint64                 `protobuf:"varint,2,opt,name=last_received_sequence,json=lastReceivedSequence,proto3" json:"last_received_sequence,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
-}
-
-func (x *MasterHeartbeatResponse) Reset() {
-	*x = MasterHeartbeatResponse{}
-	mi := &file_dfs_proto_msgTypes[30]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *MasterHeartbeatResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*MasterHeartbeatResponse) ProtoMessage() {}
-
-func (x *MasterHeartbeatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dfs_proto_msgTypes[30]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use MasterHeartbeatResponse.ProtoReflect.Descriptor instead.
-func (*MasterHeartbeatResponse) Descriptor() ([]byte, []int) {
-	return file_dfs_proto_rawDescGZIP(), []int{30}
-}
-
-func (x *MasterHeartbeatResponse) GetSuccess() bool {
-	if x != nil {
-		return x.Success
-	}
-	return false
-}
-
-func (x *MasterHeartbeatResponse) GetLastReceivedSequence() uint64 {
-	if x != nil {
-		return x.LastReceivedSequence
-	}
-	return 0
-}
-
-type CheckpointRequest struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	SequenceNumber uint64                 `protobuf:"varint,1,opt,name=sequence_number,json=sequenceNumber,proto3" json:"sequence_number,omitempty"`
-	StateData      []byte                 `protobuf:"bytes,2,opt,name=state_data,json=stateData,proto3" json:"state_data,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
-}
-
-func (x *CheckpointRequest) Reset() {
-	*x = CheckpointRequest{}
-	mi := &file_dfs_proto_msgTypes[31]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *CheckpointRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*CheckpointRequest) ProtoMessage() {}
-
-func (x *CheckpointRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dfs_proto_msgTypes[31]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use CheckpointRequest.ProtoReflect.Descriptor instead.
-func (*CheckpointRequest) Descriptor() ([]byte, []int) {
-	return file_dfs_proto_rawDescGZIP(), []int{31}
-}
-
-func (x *CheckpointRequest) GetSequenceNumber() uint64 {
-	if x != nil {
-		return x.SequenceNumber
-	}
-	return 0
-}
-
-func (x *CheckpointRequest) GetStateData() []byte {
-	if x != nil {
-		return x.StateData
-	}
-	return nil
-}
-
-type CheckpointResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *CheckpointResponse) Reset() {
-	*x = CheckpointResponse{}
-	mi := &file_dfs_proto_msgTypes[32]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *CheckpointResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*CheckpointResponse) ProtoMessage() {}
-
-func (x *CheckpointResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dfs_proto_msgTypes[32]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use CheckpointResponse.ProtoReflect.Descriptor instead.
-func (*CheckpointResponse) Descriptor() ([]byte, []int) {
-	return file_dfs_proto_rawDescGZIP(), []int{32}
-}
-
-func (x *CheckpointResponse) GetSuccess() bool {
-	if x != nil {
-		return x.Success
-	}
-	return false
-}
-
-type GetActiveMasterRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *GetActiveMasterRequest) Reset() {
-	*x = GetActiveMasterRequest{}
-	mi := &file_dfs_proto_msgTypes[33]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *GetActiveMasterRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*GetActiveMasterRequest) ProtoMessage() {}
-
-func (x *GetActiveMasterRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dfs_proto_msgTypes[33]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use GetActiveMasterRequest.ProtoReflect.Descriptor instead.
-func (*GetActiveMasterRequest) Descriptor() ([]byte, []int) {
-	return file_dfs_proto_rawDescGZIP(), []int{33}
-}
-
-type GetActiveMasterResponse struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	ActiveMasterAddr string                 `protobuf:"bytes,1,opt,name=active_master_addr,json=activeMasterAddr,proto3" json:"active_master_addr,omitempty"`
-	IsPrimary        bool                   `protobuf:"varint,2,opt,name=is_primary,json=isPrimary,proto3" json:"is_primary,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
-}
-
-func (x *GetActiveMasterResponse) Reset() {
-	*x = GetActiveMasterResponse{}
-	mi := &file_dfs_proto_msgTypes[34]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *GetActiveMasterResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*GetActiveMasterResponse) ProtoMessage() {}
-
-func (x *GetActiveMasterResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dfs_proto_msgTypes[34]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use GetActiveMasterResponse.ProtoReflect.Descriptor instead.
-func (*GetActiveMasterResponse) Descriptor() ([]byte, []int) {
-	return file_dfs_proto_rawDescGZIP(), []int{34}
-}
-
-func (x *GetActiveMasterResponse) GetActiveMasterAddr() string {
-	if x != nil {
-		return x.ActiveMasterAddr
-	}
-	return ""
-}
-
-func (x *GetActiveMasterResponse) GetIsPrimary() bool {
-	if x != nil {
-		return x.IsPrimary
-	}
-	return false
-}
-
 var File_dfs_proto protoreflect.FileDescriptor
 
 const file_dfs_proto_rawDesc = "" +
@@ -1986,39 +1485,7 @@ const file_dfs_proto_rawDesc = "" +
 	"\x10ListFilesRequest\x12\x1b\n" +
 	"\tclient_id\x18\x01 \x01(\x03R\bclientId\"1\n" +
 	"\x11ListFilesResponse\x12\x1c\n" +
-	"\tfilenames\x18\x01 \x03(\tR\tfilenames\"\xa8\x01\n" +
-	"\bWALEntry\x12'\n" +
-	"\x0fsequence_number\x18\x01 \x01(\x04R\x0esequenceNumber\x122\n" +
-	"\n" +
-	"entry_type\x18\x02 \x01(\x0e2\x13.dfspb.WALEntryTypeR\tentryType\x12\x18\n" +
-	"\apayload\x18\x03 \x01(\fR\apayload\x12%\n" +
-	"\x0etimestamp_unix\x18\x04 \x01(\x03R\rtimestampUnix\"<\n" +
-	"\x13ReplicateWALRequest\x12%\n" +
-	"\x05entry\x18\x01 \x01(\v2\x0f.dfspb.WALEntryR\x05entry\"\\\n" +
-	"\x14ReplicateWALResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess\x12*\n" +
-	"\x11last_sequence_ack\x18\x02 \x01(\x04R\x0flastSequenceAck\"g\n" +
-	"\x16MasterHeartbeatRequest\x12!\n" +
-	"\fprimary_addr\x18\x01 \x01(\tR\vprimaryAddr\x12*\n" +
-	"\x11last_wal_sequence\x18\x02 \x01(\x04R\x0flastWalSequence\"i\n" +
-	"\x17MasterHeartbeatResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess\x124\n" +
-	"\x16last_received_sequence\x18\x02 \x01(\x04R\x14lastReceivedSequence\"[\n" +
-	"\x11CheckpointRequest\x12'\n" +
-	"\x0fsequence_number\x18\x01 \x01(\x04R\x0esequenceNumber\x12\x1d\n" +
-	"\n" +
-	"state_data\x18\x02 \x01(\fR\tstateData\".\n" +
-	"\x12CheckpointResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess\"\x18\n" +
-	"\x16GetActiveMasterRequest\"f\n" +
-	"\x17GetActiveMasterResponse\x12,\n" +
-	"\x12active_master_addr\x18\x01 \x01(\tR\x10activeMasterAddr\x12\x1d\n" +
-	"\n" +
-	"is_primary\x18\x02 \x01(\bR\tisPrimary*O\n" +
-	"\fWALEntryType\x12\x13\n" +
-	"\x0fWAL_CREATE_FILE\x10\x00\x12\x15\n" +
-	"\x11WAL_CONFIRM_WRITE\x10\x01\x12\x13\n" +
-	"\x0fWAL_DELETE_FILE\x10\x022\x9a\x05\n" +
+	"\tfilenames\x18\x01 \x03(\tR\tfilenames2\xc8\x04\n" +
 	"\fMasterServer\x12A\n" +
 	"\n" +
 	"CreateFile\x12\x18.dfspb.CreateFileRequest\x1a\x19.dfspb.CreateFileResponse\x12J\n" +
@@ -2029,18 +1496,13 @@ const file_dfs_proto_rawDesc = "" +
 	"\fConfirmWrite\x12\x1a.dfspb.ConfirmWriteRequest\x1a\x1b.dfspb.ConfirmWriteResponse\x12A\n" +
 	"\n" +
 	"DeleteFile\x12\x18.dfspb.DeleteFileRequest\x1a\x19.dfspb.DeleteFileResponse\x12>\n" +
-	"\tListFiles\x12\x17.dfspb.ListFilesRequest\x1a\x18.dfspb.ListFilesResponse\x12P\n" +
-	"\x0fGetActiveMaster\x12\x1d.dfspb.GetActiveMasterRequest\x1a\x1e.dfspb.GetActiveMasterResponse2\xa0\x02\n" +
+	"\tListFiles\x12\x17.dfspb.ListFilesRequest\x1a\x18.dfspb.ListFilesResponse2\xa0\x02\n" +
 	"\vChunkServer\x12A\n" +
 	"\n" +
 	"WriteChunk\x12\x18.dfspb.WriteChunkRequest\x1a\x19.dfspb.WriteChunkResponse\x12>\n" +
 	"\tReadChunk\x12\x17.dfspb.ReadChunkRequest\x1a\x18.dfspb.ReadChunkResponse\x12E\n" +
 	"\fForwardChunk\x12\x1a.dfspb.ForwardChunkRequest\x1a\x19.dfspb.WriteChunkResponse\x12G\n" +
-	"\fDeleteChunks\x12\x1a.dfspb.DeleteChunksRequest\x1a\x1b.dfspb.DeleteChunksResponse2\xfe\x01\n" +
-	"\x15SecondaryMasterServer\x12G\n" +
-	"\fReplicateWAL\x12\x1a.dfspb.ReplicateWALRequest\x1a\x1b.dfspb.ReplicateWALResponse\x12T\n" +
-	"\x13SendMasterHeartbeat\x12\x1d.dfspb.MasterHeartbeatRequest\x1a\x1e.dfspb.MasterHeartbeatResponse\x12F\n" +
-	"\x0fApplyCheckpoint\x12\x18.dfspb.CheckpointRequest\x1a\x19.dfspb.CheckpointResponseB\x13Z\x11dfs-project/dfspbb\x06proto3"
+	"\fDeleteChunks\x12\x1a.dfspb.DeleteChunksRequest\x1a\x1b.dfspb.DeleteChunksResponseB\x13Z\x11dfs-project/dfspbb\x06proto3"
 
 var (
 	file_dfs_proto_rawDescOnce sync.Once
@@ -2054,96 +1516,75 @@ func file_dfs_proto_rawDescGZIP() []byte {
 	return file_dfs_proto_rawDescData
 }
 
-var file_dfs_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_dfs_proto_msgTypes = make([]protoimpl.MessageInfo, 38)
+var file_dfs_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_dfs_proto_goTypes = []any{
-	(WALEntryType)(0),               // 0: dfspb.WALEntryType
-	(*CreateFileRequest)(nil),       // 1: dfspb.CreateFileRequest
-	(*CreateFileResponse)(nil),      // 2: dfspb.CreateFileResponse
-	(*AllocateChunkRequest)(nil),    // 3: dfspb.AllocateChunkRequest
-	(*ChunkList)(nil),               // 4: dfspb.ChunkList
-	(*StripeMetadata)(nil),          // 5: dfspb.StripeMetadata
-	(*AllocateChunkResponse)(nil),   // 6: dfspb.AllocateChunkResponse
-	(*GetFileMetadataRequest)(nil),  // 7: dfspb.GetFileMetadataRequest
-	(*GetFileMetadataResponse)(nil), // 8: dfspb.GetFileMetadataResponse
-	(*WriteChunkRequest)(nil),       // 9: dfspb.WriteChunkRequest
-	(*WriteChunkResponse)(nil),      // 10: dfspb.WriteChunkResponse
-	(*ReadChunkRequest)(nil),        // 11: dfspb.ReadChunkRequest
-	(*ReadChunkResponse)(nil),       // 12: dfspb.ReadChunkResponse
-	(*ForwardChunkRequest)(nil),     // 13: dfspb.ForwardChunkRequest
-	(*HeartbeatRequest)(nil),        // 14: dfspb.HeartbeatRequest
-	(*HeartbeatResponse)(nil),       // 15: dfspb.HeartbeatResponse
-	(*InventoryRequest)(nil),        // 16: dfspb.InventoryRequest
-	(*ReconstructionTask)(nil),      // 17: dfspb.ReconstructionTask
-	(*InventoryResponse)(nil),       // 18: dfspb.InventoryResponse
-	(*ConfirmWriteRequest)(nil),     // 19: dfspb.ConfirmWriteRequest
-	(*ConfirmWriteResponse)(nil),    // 20: dfspb.ConfirmWriteResponse
-	(*DeleteFileRequest)(nil),       // 21: dfspb.DeleteFileRequest
-	(*DeleteFileResponse)(nil),      // 22: dfspb.DeleteFileResponse
-	(*DeleteChunksRequest)(nil),     // 23: dfspb.DeleteChunksRequest
-	(*DeleteChunksResponse)(nil),    // 24: dfspb.DeleteChunksResponse
-	(*ListFilesRequest)(nil),        // 25: dfspb.ListFilesRequest
-	(*ListFilesResponse)(nil),       // 26: dfspb.ListFilesResponse
-	(*WALEntry)(nil),                // 27: dfspb.WALEntry
-	(*ReplicateWALRequest)(nil),     // 28: dfspb.ReplicateWALRequest
-	(*ReplicateWALResponse)(nil),    // 29: dfspb.ReplicateWALResponse
-	(*MasterHeartbeatRequest)(nil),  // 30: dfspb.MasterHeartbeatRequest
-	(*MasterHeartbeatResponse)(nil), // 31: dfspb.MasterHeartbeatResponse
-	(*CheckpointRequest)(nil),       // 32: dfspb.CheckpointRequest
-	(*CheckpointResponse)(nil),      // 33: dfspb.CheckpointResponse
-	(*GetActiveMasterRequest)(nil),  // 34: dfspb.GetActiveMasterRequest
-	(*GetActiveMasterResponse)(nil), // 35: dfspb.GetActiveMasterResponse
-	nil,                             // 36: dfspb.CreateFileResponse.StripesEntry
-	nil,                             // 37: dfspb.AllocateChunkResponse.StripesEntry
-	nil,                             // 38: dfspb.GetFileMetadataResponse.StripesEntry
+	(*CreateFileRequest)(nil),       // 0: dfspb.CreateFileRequest
+	(*CreateFileResponse)(nil),      // 1: dfspb.CreateFileResponse
+	(*AllocateChunkRequest)(nil),    // 2: dfspb.AllocateChunkRequest
+	(*ChunkList)(nil),               // 3: dfspb.ChunkList
+	(*StripeMetadata)(nil),          // 4: dfspb.StripeMetadata
+	(*AllocateChunkResponse)(nil),   // 5: dfspb.AllocateChunkResponse
+	(*GetFileMetadataRequest)(nil),  // 6: dfspb.GetFileMetadataRequest
+	(*GetFileMetadataResponse)(nil), // 7: dfspb.GetFileMetadataResponse
+	(*WriteChunkRequest)(nil),       // 8: dfspb.WriteChunkRequest
+	(*WriteChunkResponse)(nil),      // 9: dfspb.WriteChunkResponse
+	(*ReadChunkRequest)(nil),        // 10: dfspb.ReadChunkRequest
+	(*ReadChunkResponse)(nil),       // 11: dfspb.ReadChunkResponse
+	(*ForwardChunkRequest)(nil),     // 12: dfspb.ForwardChunkRequest
+	(*HeartbeatRequest)(nil),        // 13: dfspb.HeartbeatRequest
+	(*HeartbeatResponse)(nil),       // 14: dfspb.HeartbeatResponse
+	(*InventoryRequest)(nil),        // 15: dfspb.InventoryRequest
+	(*ReconstructionTask)(nil),      // 16: dfspb.ReconstructionTask
+	(*InventoryResponse)(nil),       // 17: dfspb.InventoryResponse
+	(*ConfirmWriteRequest)(nil),     // 18: dfspb.ConfirmWriteRequest
+	(*ConfirmWriteResponse)(nil),    // 19: dfspb.ConfirmWriteResponse
+	(*DeleteFileRequest)(nil),       // 20: dfspb.DeleteFileRequest
+	(*DeleteFileResponse)(nil),      // 21: dfspb.DeleteFileResponse
+	(*DeleteChunksRequest)(nil),     // 22: dfspb.DeleteChunksRequest
+	(*DeleteChunksResponse)(nil),    // 23: dfspb.DeleteChunksResponse
+	(*ListFilesRequest)(nil),        // 24: dfspb.ListFilesRequest
+	(*ListFilesResponse)(nil),       // 25: dfspb.ListFilesResponse
+	nil,                             // 26: dfspb.CreateFileResponse.StripesEntry
+	nil,                             // 27: dfspb.AllocateChunkResponse.StripesEntry
+	nil,                             // 28: dfspb.GetFileMetadataResponse.StripesEntry
 }
 var file_dfs_proto_depIdxs = []int32{
-	36, // 0: dfspb.CreateFileResponse.stripes:type_name -> dfspb.CreateFileResponse.StripesEntry
-	37, // 1: dfspb.AllocateChunkResponse.stripes:type_name -> dfspb.AllocateChunkResponse.StripesEntry
-	38, // 2: dfspb.GetFileMetadataResponse.stripes:type_name -> dfspb.GetFileMetadataResponse.StripesEntry
-	17, // 3: dfspb.InventoryResponse.reconstruction_tasks:type_name -> dfspb.ReconstructionTask
-	0,  // 4: dfspb.WALEntry.entry_type:type_name -> dfspb.WALEntryType
-	27, // 5: dfspb.ReplicateWALRequest.entry:type_name -> dfspb.WALEntry
-	5,  // 6: dfspb.CreateFileResponse.StripesEntry.value:type_name -> dfspb.StripeMetadata
-	5,  // 7: dfspb.AllocateChunkResponse.StripesEntry.value:type_name -> dfspb.StripeMetadata
-	5,  // 8: dfspb.GetFileMetadataResponse.StripesEntry.value:type_name -> dfspb.StripeMetadata
-	1,  // 9: dfspb.MasterServer.CreateFile:input_type -> dfspb.CreateFileRequest
-	3,  // 10: dfspb.MasterServer.AllocateChunk:input_type -> dfspb.AllocateChunkRequest
-	7,  // 11: dfspb.MasterServer.GetFileMetadata:input_type -> dfspb.GetFileMetadataRequest
-	14, // 12: dfspb.MasterServer.ReceiveHeartbeat:input_type -> dfspb.HeartbeatRequest
-	16, // 13: dfspb.MasterServer.ReportInventory:input_type -> dfspb.InventoryRequest
-	19, // 14: dfspb.MasterServer.ConfirmWrite:input_type -> dfspb.ConfirmWriteRequest
-	21, // 15: dfspb.MasterServer.DeleteFile:input_type -> dfspb.DeleteFileRequest
-	25, // 16: dfspb.MasterServer.ListFiles:input_type -> dfspb.ListFilesRequest
-	34, // 17: dfspb.MasterServer.GetActiveMaster:input_type -> dfspb.GetActiveMasterRequest
-	9,  // 18: dfspb.ChunkServer.WriteChunk:input_type -> dfspb.WriteChunkRequest
-	11, // 19: dfspb.ChunkServer.ReadChunk:input_type -> dfspb.ReadChunkRequest
-	13, // 20: dfspb.ChunkServer.ForwardChunk:input_type -> dfspb.ForwardChunkRequest
-	23, // 21: dfspb.ChunkServer.DeleteChunks:input_type -> dfspb.DeleteChunksRequest
-	28, // 22: dfspb.SecondaryMasterServer.ReplicateWAL:input_type -> dfspb.ReplicateWALRequest
-	30, // 23: dfspb.SecondaryMasterServer.SendMasterHeartbeat:input_type -> dfspb.MasterHeartbeatRequest
-	32, // 24: dfspb.SecondaryMasterServer.ApplyCheckpoint:input_type -> dfspb.CheckpointRequest
-	2,  // 25: dfspb.MasterServer.CreateFile:output_type -> dfspb.CreateFileResponse
-	6,  // 26: dfspb.MasterServer.AllocateChunk:output_type -> dfspb.AllocateChunkResponse
-	8,  // 27: dfspb.MasterServer.GetFileMetadata:output_type -> dfspb.GetFileMetadataResponse
-	15, // 28: dfspb.MasterServer.ReceiveHeartbeat:output_type -> dfspb.HeartbeatResponse
-	18, // 29: dfspb.MasterServer.ReportInventory:output_type -> dfspb.InventoryResponse
-	20, // 30: dfspb.MasterServer.ConfirmWrite:output_type -> dfspb.ConfirmWriteResponse
-	22, // 31: dfspb.MasterServer.DeleteFile:output_type -> dfspb.DeleteFileResponse
-	26, // 32: dfspb.MasterServer.ListFiles:output_type -> dfspb.ListFilesResponse
-	35, // 33: dfspb.MasterServer.GetActiveMaster:output_type -> dfspb.GetActiveMasterResponse
-	10, // 34: dfspb.ChunkServer.WriteChunk:output_type -> dfspb.WriteChunkResponse
-	12, // 35: dfspb.ChunkServer.ReadChunk:output_type -> dfspb.ReadChunkResponse
-	10, // 36: dfspb.ChunkServer.ForwardChunk:output_type -> dfspb.WriteChunkResponse
-	24, // 37: dfspb.ChunkServer.DeleteChunks:output_type -> dfspb.DeleteChunksResponse
-	29, // 38: dfspb.SecondaryMasterServer.ReplicateWAL:output_type -> dfspb.ReplicateWALResponse
-	31, // 39: dfspb.SecondaryMasterServer.SendMasterHeartbeat:output_type -> dfspb.MasterHeartbeatResponse
-	33, // 40: dfspb.SecondaryMasterServer.ApplyCheckpoint:output_type -> dfspb.CheckpointResponse
-	25, // [25:41] is the sub-list for method output_type
-	9,  // [9:25] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	26, // 0: dfspb.CreateFileResponse.stripes:type_name -> dfspb.CreateFileResponse.StripesEntry
+	27, // 1: dfspb.AllocateChunkResponse.stripes:type_name -> dfspb.AllocateChunkResponse.StripesEntry
+	28, // 2: dfspb.GetFileMetadataResponse.stripes:type_name -> dfspb.GetFileMetadataResponse.StripesEntry
+	16, // 3: dfspb.InventoryResponse.reconstruction_tasks:type_name -> dfspb.ReconstructionTask
+	4,  // 4: dfspb.CreateFileResponse.StripesEntry.value:type_name -> dfspb.StripeMetadata
+	4,  // 5: dfspb.AllocateChunkResponse.StripesEntry.value:type_name -> dfspb.StripeMetadata
+	4,  // 6: dfspb.GetFileMetadataResponse.StripesEntry.value:type_name -> dfspb.StripeMetadata
+	0,  // 7: dfspb.MasterServer.CreateFile:input_type -> dfspb.CreateFileRequest
+	2,  // 8: dfspb.MasterServer.AllocateChunk:input_type -> dfspb.AllocateChunkRequest
+	6,  // 9: dfspb.MasterServer.GetFileMetadata:input_type -> dfspb.GetFileMetadataRequest
+	13, // 10: dfspb.MasterServer.ReceiveHeartbeat:input_type -> dfspb.HeartbeatRequest
+	15, // 11: dfspb.MasterServer.ReportInventory:input_type -> dfspb.InventoryRequest
+	18, // 12: dfspb.MasterServer.ConfirmWrite:input_type -> dfspb.ConfirmWriteRequest
+	20, // 13: dfspb.MasterServer.DeleteFile:input_type -> dfspb.DeleteFileRequest
+	24, // 14: dfspb.MasterServer.ListFiles:input_type -> dfspb.ListFilesRequest
+	8,  // 15: dfspb.ChunkServer.WriteChunk:input_type -> dfspb.WriteChunkRequest
+	10, // 16: dfspb.ChunkServer.ReadChunk:input_type -> dfspb.ReadChunkRequest
+	12, // 17: dfspb.ChunkServer.ForwardChunk:input_type -> dfspb.ForwardChunkRequest
+	22, // 18: dfspb.ChunkServer.DeleteChunks:input_type -> dfspb.DeleteChunksRequest
+	1,  // 19: dfspb.MasterServer.CreateFile:output_type -> dfspb.CreateFileResponse
+	5,  // 20: dfspb.MasterServer.AllocateChunk:output_type -> dfspb.AllocateChunkResponse
+	7,  // 21: dfspb.MasterServer.GetFileMetadata:output_type -> dfspb.GetFileMetadataResponse
+	14, // 22: dfspb.MasterServer.ReceiveHeartbeat:output_type -> dfspb.HeartbeatResponse
+	17, // 23: dfspb.MasterServer.ReportInventory:output_type -> dfspb.InventoryResponse
+	19, // 24: dfspb.MasterServer.ConfirmWrite:output_type -> dfspb.ConfirmWriteResponse
+	21, // 25: dfspb.MasterServer.DeleteFile:output_type -> dfspb.DeleteFileResponse
+	25, // 26: dfspb.MasterServer.ListFiles:output_type -> dfspb.ListFilesResponse
+	9,  // 27: dfspb.ChunkServer.WriteChunk:output_type -> dfspb.WriteChunkResponse
+	11, // 28: dfspb.ChunkServer.ReadChunk:output_type -> dfspb.ReadChunkResponse
+	9,  // 29: dfspb.ChunkServer.ForwardChunk:output_type -> dfspb.WriteChunkResponse
+	23, // 30: dfspb.ChunkServer.DeleteChunks:output_type -> dfspb.DeleteChunksResponse
+	19, // [19:31] is the sub-list for method output_type
+	7,  // [7:19] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_dfs_proto_init() }
@@ -2156,14 +1597,13 @@ func file_dfs_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_dfs_proto_rawDesc), len(file_dfs_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   38,
+			NumEnums:      0,
+			NumMessages:   29,
 			NumExtensions: 0,
-			NumServices:   3,
+			NumServices:   2,
 		},
 		GoTypes:           file_dfs_proto_goTypes,
 		DependencyIndexes: file_dfs_proto_depIdxs,
-		EnumInfos:         file_dfs_proto_enumTypes,
 		MessageInfos:      file_dfs_proto_msgTypes,
 	}.Build()
 	File_dfs_proto = out.File

@@ -1,4 +1,10 @@
-.PHONY: all build clean run-master run-chunk_server1 run-chunk_server2 run-chunk_server3 test proto docker-build docker-up docker-down docker-logs docker-clean docker-upload docker-download docker-delete docker-ls
+#.PHONY: all build clean run-master run-chunk_server1 run-chunk_server2 run-chunk_server3 test proto docker-build docker-up docker-down docker-logs docker-clean docker-upload docker-download docker-delete docker-ls
+.PHONY: all build clean test proto \
+        run-master run-master-primary run-master-secondary \
+        run-chunk_server1 run-chunk_server2 run-chunk_server3 \
+        docker-build docker-up docker-down docker-logs docker-clean \
+        docker-upload docker-download docker-delete docker-ls
+
 
 # Get the directory where this Makefile is located (project root)
 ROOT_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
@@ -24,9 +30,9 @@ clean:
 	@rm -rf clients/
 	@echo "Clean complete"
 
-# Run master server
+# Run master with defaults (no failover) — backward compatible
 run-master: build
-	@./bin/master
+	@./bin/master -addr 0.0.0.0:50051
 
 # Run chunk server 1
 run-chunk_server1: build
@@ -39,6 +45,22 @@ run-chunk_server2: build
 # Run chunk server 3
 run-chunk_server3: build
 	@./bin/chunkserver -port 9003 -storage chunk_server3 -master $(MASTER_ADDR)
+
+# Run primary master (with secondary address)
+# Usage: make run-master-primary SECONDARY_ADDR=192.168.1.20:50052 MY_ADDR=192.168.1.10:50051
+run-master-primary: build
+	@if [ -z "$(MY_ADDR)" ]; then \
+		echo "Error: MY_ADDR not specified. Usage: make run-master-primary MY_ADDR=192.168.1.10:50051 SECONDARY_ADDR=192.168.1.20:50052"; exit 1; \
+	fi
+	@./bin/master -addr $(MY_ADDR) -secondary $(SECONDARY_ADDR)
+
+# Run secondary master (standby mode — no -secondary flag means watchdog mode)
+# Usage: make run-master-secondary MY_ADDR=192.168.1.20:50052
+run-master-secondary: build
+	@if [ -z "$(MY_ADDR)" ]; then \
+		echo "Error: MY_ADDR not specified. Usage: make run-master-secondary MY_ADDR=192.168.1.20:50052"; exit 1; \
+	fi
+	@./bin/master -addr $(MY_ADDR)
 
 # Upload a file
 # Usage:
@@ -68,6 +90,9 @@ delete:
 # List all files uploaded by this client (usage: cd clients/client1 && make ls)
 ls:
 	./bin/client ls
+
+test:
+	@go test ./...
 
 # Set the master address for this client workspace
 # Usage (from client workspace): make set-master MASTER_ADDR=192.168.1.10:50051
@@ -357,3 +382,6 @@ help:
 	@echo "  make docker-download FILE=mypic.jpg"
 	@echo "  make docker-down"
 	@echo ""
+	@echo "=== Master Failover ==="
+	@echo "  make run-master-primary MY_ADDR=<ip:port> SECONDARY_ADDR=<ip:port>"
+	@echo "  make run-master-secondary MY_ADDR=<ip:port>"

@@ -145,6 +145,42 @@ make test           # Run tests
 
 On restart, master recovers all metadata (files, stripes, clients, chunks).
 
+### Master Failover
+
+The system supports automatic master failover with a primary/secondary pair.
+
+**How it works:**
+1. Primary master sends WAL entries to secondary after every write (CreateFile, ConfirmWrite, DeleteFile)
+2. Primary sends a heartbeat to secondary every 3 seconds
+3. Secondary applies all WAL entries to keep its in-memory state in sync
+4. If secondary receives no heartbeat for 10 seconds, it promotes itself to primary
+5. After promotion, secondary starts accepting all client and chunk server RPCs directly
+
+**How to run with failover (LAN example):**
+```bash
+# On the primary machine (e.g. Mac at 192.168.1.10)
+make run-master-primary MY_ADDR=192.168.1.10:50051 SECONDARY_ADDR=192.168.1.20:50052
+
+# On the secondary machine (e.g. Kali at 192.168.1.20) — start this FIRST
+make run-master-secondary MY_ADDR=192.168.1.20:50052
+
+# Chunk servers — point to primary as usual
+make run-chunk_server1 MASTER_ADDR=192.168.1.10:50051
+
+# Clients — point to primary as usual
+make set-master MASTER_ADDR=192.168.1.10:50051
+make upload FILE=myfile.pdf
+```
+
+**To test failover:**
+1. Start secondary first, then primary
+2. Upload a file
+3. Kill the primary (`Ctrl+C`)
+4. Within 10 seconds the secondary prints: `>>> THIS NODE IS NOW THE ACTIVE PRIMARY MASTER <<<`
+5. Point clients and chunk servers to the secondary address and operations continue
+
+**Note:** Start the secondary BEFORE the primary, so it is ready to receive heartbeats and WAL entries immediately.
+
 ## File Structure
 
 ```
