@@ -86,10 +86,20 @@ func (m *MasterServer) AppendWAL(operation string, data interface{}) error {
 		return fmt.Errorf("failed to flush WAL: %v", err)
 	}
 
+	// // Sync to disk for durability (survives crash/power loss)
+	// if err := m.walFile.Sync(); err != nil {
+	// 	return fmt.Errorf("failed to sync WAL: %v", err)
+	// }
+
+	// return nil
 	// Sync to disk for durability (survives crash/power loss)
 	if err := m.walFile.Sync(); err != nil {
 		return fmt.Errorf("failed to sync WAL: %v", err)
 	}
+
+	// Increment sequence counter and replicate to secondary (best-effort)
+	m.walSeq++
+	go m.replicateWALToSecondary(entry, m.walSeq)
 
 	return nil
 }

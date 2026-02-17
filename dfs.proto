@@ -136,15 +136,27 @@ message ListFilesResponse {
   repeated string filenames = 1;
 }
 
+// service MasterServer {
+//   rpc CreateFile(CreateFileRequest) returns (CreateFileResponse);
+//   rpc AllocateChunk(AllocateChunkRequest) returns (AllocateChunkResponse);
+//   rpc GetFileMetadata(GetFileMetadataRequest) returns (GetFileMetadataResponse);
+//   rpc ReceiveHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+//   rpc ReportInventory(InventoryRequest) returns (InventoryResponse);
+//   rpc ConfirmWrite(ConfirmWriteRequest) returns (ConfirmWriteResponse);
+//   rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
+//   rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+// }
+
 service MasterServer {
-  rpc CreateFile(CreateFileRequest) returns (CreateFileResponse);
-  rpc AllocateChunk(AllocateChunkRequest) returns (AllocateChunkResponse);
+  rpc CreateFile(CreateFileRequest)           returns (CreateFileResponse);
+  rpc AllocateChunk(AllocateChunkRequest)     returns (AllocateChunkResponse);
   rpc GetFileMetadata(GetFileMetadataRequest) returns (GetFileMetadataResponse);
-  rpc ReceiveHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
-  rpc ReportInventory(InventoryRequest) returns (InventoryResponse);
-  rpc ConfirmWrite(ConfirmWriteRequest) returns (ConfirmWriteResponse);
-  rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
-  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+  rpc ReceiveHeartbeat(HeartbeatRequest)      returns (HeartbeatResponse);
+  rpc ReportInventory(InventoryRequest)       returns (InventoryResponse);
+  rpc ConfirmWrite(ConfirmWriteRequest)       returns (ConfirmWriteResponse);
+  rpc DeleteFile(DeleteFileRequest)           returns (DeleteFileResponse);
+  rpc ListFiles(ListFilesRequest)             returns (ListFilesResponse);
+  rpc GetActiveMaster(GetActiveMasterRequest) returns (GetActiveMasterResponse);
 }
 
 service ChunkServer {
@@ -152,4 +164,55 @@ service ChunkServer {
   rpc ReadChunk(ReadChunkRequest) returns (ReadChunkResponse);
   rpc ForwardChunk(ForwardChunkRequest) returns (WriteChunkResponse);
   rpc DeleteChunks(DeleteChunksRequest) returns (DeleteChunksResponse);
+}
+
+// ─── MASTER FAILOVER ─────────────────────────────────────────────────────────
+
+enum WALEntryType {
+  WAL_CREATE_FILE   = 0;
+  WAL_CONFIRM_WRITE = 1;
+  WAL_DELETE_FILE   = 2;
+}
+
+message WALEntry {
+  uint64       sequence_number = 1;
+  WALEntryType entry_type      = 2;
+  bytes        payload         = 3;
+  int64        timestamp_unix  = 4;
+}
+
+message ReplicateWALRequest  { WALEntry entry = 1; }
+message ReplicateWALResponse {
+  bool   success           = 1;
+  uint64 last_sequence_ack = 2;
+}
+
+message MasterHeartbeatRequest {
+  string primary_addr      = 1;
+  uint64 last_wal_sequence = 2;
+}
+message MasterHeartbeatResponse {
+  bool   success                = 1;
+  uint64 last_received_sequence = 2;
+}
+
+message CheckpointRequest {
+  uint64 sequence_number = 1;
+  bytes  state_data      = 2;
+}
+message CheckpointResponse { bool success = 1; }
+
+message GetActiveMasterRequest  {}
+message GetActiveMasterResponse {
+  string active_master_addr = 1;
+  bool   is_primary         = 2;
+}
+
+// Add GetActiveMaster to the existing MasterServer service by replacing it:
+// (delete your old MasterServer block and paste this one)
+
+service SecondaryMasterServer {
+  rpc ReplicateWAL(ReplicateWALRequest)             returns (ReplicateWALResponse);
+  rpc SendMasterHeartbeat(MasterHeartbeatRequest)   returns (MasterHeartbeatResponse);
+  rpc ApplyCheckpoint(CheckpointRequest)            returns (CheckpointResponse);
 }

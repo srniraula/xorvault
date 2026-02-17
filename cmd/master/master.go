@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"dfs-project/dfspb"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -49,6 +50,12 @@ type MasterServer struct {
 	walFile   *os.File      // WAL file handle
 	walWriter *bufio.Writer // Buffered writer for WAL
 	walMu     sync.Mutex    // Protects WAL writes
+
+	// Failover fields
+	secondaryAddr string // address of secondary master, e.g. "192.168.1.20:50052"
+	myAddr        string // this instance's own address, e.g. "192.168.1.10:50051"
+	walSeq        uint64 // monotonically increasing WAL sequence number
+	isPrimary     bool   // true if this instance is the active primary
 }
 
 // ensureClientMaps makes sure the per-client nested maps exist to avoid nil-map panics
@@ -497,4 +504,67 @@ func (m *MasterServer) ListFiles(ctx context.Context, req *dfspb.ListFilesReques
 	return &dfspb.ListFilesResponse{
 		Filenames: files,
 	}, nil
+}
+
+// GetActiveMaster lets any node (client, chunk server) discover the active master.
+// Returns this node's own address and whether it is currently the primary.
+// Both primary and standby implement this identically — the caller uses
+// IsPrimary to know if it needs to try the other address.
+func (m *MasterServer) GetActiveMaster(ctx context.Context, req *dfspb.GetActiveMasterRequest) (*dfspb.GetActiveMasterResponse, error) {
+	return &dfspb.GetActiveMasterResponse{
+		ActiveMasterAddr: m.myAddr,
+		IsPrimary:        m.isPrimary,
+	}, nil
+}
+
+// replicateWALToSecondary sends a single WAL entry to the secondary master.
+// Runs in a goroutine (called via `go` from AppendWAL) so it never blocks
+// the primary RPC. Errors are logged but do NOT fail the primary operation.
+func (m *MasterServer) replicateWALToSecondary(entry WALEntry, seq uint64) {
+	if m.secondaryAddr == "" {
+		return
+	}
+
+	// Marshal first — fail fast before making a network connection
+	payload, err := json.Marshal(entry)
+	if err != nil {
+		m.logger.Printf("WAL replication: marshal failed: %v", err)
+		return
+	}
+
+	conn, err := grpc.NewClient(m.secondaryAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		m.logger.Printf("WAL replication: cannot connect to secondary %s: %v", m.secondaryAddr, err)
+		return
+	}
+	defer conn.Close()
+
+	client := dfspb.NewSecondaryMasterServerClient(conn)
+	resp, err := client.ReplicateWAL(context.Background(), &dfspb.ReplicateWALRequest{
+		Entry: &dfspb.WALEntry{
+			SequenceNumber: seq,
+			EntryType:      walEntryTypeFromOp(entry.Operation),
+			Payload:        payload,
+			TimestampUnix:  entry.Timestamp,
+		},
+	})
+	if err != nil {
+		m.logger.Printf("WAL replication RPC failed (seq %d): %v", seq, err)
+		return
+	}
+	m.logger.Printf("WAL seq %d replicated (secondary ack=%d)", seq, resp.LastSequenceAck)
+}
+
+// walEntryTypeFromOp converts our string op constants to the proto WALEntryType enum.
+func walEntryTypeFromOp(op string) dfspb.WALEntryType {
+	switch op {
+	case OpCreateFile:
+		return dfspb.WALEntryType_WAL_CREATE_FILE
+	case OpConfirmWrite:
+		return dfspb.WALEntryType_WAL_CONFIRM_WRITE
+	case OpDeleteFile:
+		return dfspb.WALEntryType_WAL_DELETE_FILE
+	default:
+		return dfspb.WALEntryType_WAL_CREATE_FILE
+	}
 }

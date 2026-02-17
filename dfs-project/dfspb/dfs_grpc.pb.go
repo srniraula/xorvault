@@ -27,7 +27,6 @@ const (
 	MasterServer_ConfirmWrite_FullMethodName     = "/dfspb.MasterServer/ConfirmWrite"
 	MasterServer_DeleteFile_FullMethodName       = "/dfspb.MasterServer/DeleteFile"
 	MasterServer_ListFiles_FullMethodName        = "/dfspb.MasterServer/ListFiles"
-	MasterServer_GetActiveMaster_FullMethodName  = "/dfspb.MasterServer/GetActiveMaster"
 )
 
 // MasterServerClient is the client API for MasterServer service.
@@ -42,7 +41,6 @@ type MasterServerClient interface {
 	ConfirmWrite(ctx context.Context, in *ConfirmWriteRequest, opts ...grpc.CallOption) (*ConfirmWriteResponse, error)
 	DeleteFile(ctx context.Context, in *DeleteFileRequest, opts ...grpc.CallOption) (*DeleteFileResponse, error)
 	ListFiles(ctx context.Context, in *ListFilesRequest, opts ...grpc.CallOption) (*ListFilesResponse, error)
-	GetActiveMaster(ctx context.Context, in *GetActiveMasterRequest, opts ...grpc.CallOption) (*GetActiveMasterResponse, error)
 }
 
 type masterServerClient struct {
@@ -133,16 +131,6 @@ func (c *masterServerClient) ListFiles(ctx context.Context, in *ListFilesRequest
 	return out, nil
 }
 
-func (c *masterServerClient) GetActiveMaster(ctx context.Context, in *GetActiveMasterRequest, opts ...grpc.CallOption) (*GetActiveMasterResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetActiveMasterResponse)
-	err := c.cc.Invoke(ctx, MasterServer_GetActiveMaster_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // MasterServerServer is the server API for MasterServer service.
 // All implementations must embed UnimplementedMasterServerServer
 // for forward compatibility.
@@ -155,7 +143,6 @@ type MasterServerServer interface {
 	ConfirmWrite(context.Context, *ConfirmWriteRequest) (*ConfirmWriteResponse, error)
 	DeleteFile(context.Context, *DeleteFileRequest) (*DeleteFileResponse, error)
 	ListFiles(context.Context, *ListFilesRequest) (*ListFilesResponse, error)
-	GetActiveMaster(context.Context, *GetActiveMasterRequest) (*GetActiveMasterResponse, error)
 	mustEmbedUnimplementedMasterServerServer()
 }
 
@@ -189,9 +176,6 @@ func (UnimplementedMasterServerServer) DeleteFile(context.Context, *DeleteFileRe
 }
 func (UnimplementedMasterServerServer) ListFiles(context.Context, *ListFilesRequest) (*ListFilesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListFiles not implemented")
-}
-func (UnimplementedMasterServerServer) GetActiveMaster(context.Context, *GetActiveMasterRequest) (*GetActiveMasterResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetActiveMaster not implemented")
 }
 func (UnimplementedMasterServerServer) mustEmbedUnimplementedMasterServerServer() {}
 func (UnimplementedMasterServerServer) testEmbeddedByValue()                      {}
@@ -358,24 +342,6 @@ func _MasterServer_ListFiles_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MasterServer_GetActiveMaster_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetActiveMasterRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MasterServerServer).GetActiveMaster(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: MasterServer_GetActiveMaster_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MasterServerServer).GetActiveMaster(ctx, req.(*GetActiveMasterRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // MasterServer_ServiceDesc is the grpc.ServiceDesc for MasterServer service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -414,10 +380,6 @@ var MasterServer_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListFiles",
 			Handler:    _MasterServer_ListFiles_Handler,
-		},
-		{
-			MethodName: "GetActiveMaster",
-			Handler:    _MasterServer_GetActiveMaster_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -634,184 +596,6 @@ var ChunkServer_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteChunks",
 			Handler:    _ChunkServer_DeleteChunks_Handler,
-		},
-	},
-	Streams:  []grpc.StreamDesc{},
-	Metadata: "dfs.proto",
-}
-
-const (
-	SecondaryMasterServer_ReplicateWAL_FullMethodName        = "/dfspb.SecondaryMasterServer/ReplicateWAL"
-	SecondaryMasterServer_SendMasterHeartbeat_FullMethodName = "/dfspb.SecondaryMasterServer/SendMasterHeartbeat"
-	SecondaryMasterServer_ApplyCheckpoint_FullMethodName     = "/dfspb.SecondaryMasterServer/ApplyCheckpoint"
-)
-
-// SecondaryMasterServerClient is the client API for SecondaryMasterServer service.
-//
-// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type SecondaryMasterServerClient interface {
-	ReplicateWAL(ctx context.Context, in *ReplicateWALRequest, opts ...grpc.CallOption) (*ReplicateWALResponse, error)
-	SendMasterHeartbeat(ctx context.Context, in *MasterHeartbeatRequest, opts ...grpc.CallOption) (*MasterHeartbeatResponse, error)
-	ApplyCheckpoint(ctx context.Context, in *CheckpointRequest, opts ...grpc.CallOption) (*CheckpointResponse, error)
-}
-
-type secondaryMasterServerClient struct {
-	cc grpc.ClientConnInterface
-}
-
-func NewSecondaryMasterServerClient(cc grpc.ClientConnInterface) SecondaryMasterServerClient {
-	return &secondaryMasterServerClient{cc}
-}
-
-func (c *secondaryMasterServerClient) ReplicateWAL(ctx context.Context, in *ReplicateWALRequest, opts ...grpc.CallOption) (*ReplicateWALResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ReplicateWALResponse)
-	err := c.cc.Invoke(ctx, SecondaryMasterServer_ReplicateWAL_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *secondaryMasterServerClient) SendMasterHeartbeat(ctx context.Context, in *MasterHeartbeatRequest, opts ...grpc.CallOption) (*MasterHeartbeatResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(MasterHeartbeatResponse)
-	err := c.cc.Invoke(ctx, SecondaryMasterServer_SendMasterHeartbeat_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *secondaryMasterServerClient) ApplyCheckpoint(ctx context.Context, in *CheckpointRequest, opts ...grpc.CallOption) (*CheckpointResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(CheckpointResponse)
-	err := c.cc.Invoke(ctx, SecondaryMasterServer_ApplyCheckpoint_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-// SecondaryMasterServerServer is the server API for SecondaryMasterServer service.
-// All implementations must embed UnimplementedSecondaryMasterServerServer
-// for forward compatibility.
-type SecondaryMasterServerServer interface {
-	ReplicateWAL(context.Context, *ReplicateWALRequest) (*ReplicateWALResponse, error)
-	SendMasterHeartbeat(context.Context, *MasterHeartbeatRequest) (*MasterHeartbeatResponse, error)
-	ApplyCheckpoint(context.Context, *CheckpointRequest) (*CheckpointResponse, error)
-	mustEmbedUnimplementedSecondaryMasterServerServer()
-}
-
-// UnimplementedSecondaryMasterServerServer must be embedded to have
-// forward compatible implementations.
-//
-// NOTE: this should be embedded by value instead of pointer to avoid a nil
-// pointer dereference when methods are called.
-type UnimplementedSecondaryMasterServerServer struct{}
-
-func (UnimplementedSecondaryMasterServerServer) ReplicateWAL(context.Context, *ReplicateWALRequest) (*ReplicateWALResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ReplicateWAL not implemented")
-}
-func (UnimplementedSecondaryMasterServerServer) SendMasterHeartbeat(context.Context, *MasterHeartbeatRequest) (*MasterHeartbeatResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method SendMasterHeartbeat not implemented")
-}
-func (UnimplementedSecondaryMasterServerServer) ApplyCheckpoint(context.Context, *CheckpointRequest) (*CheckpointResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ApplyCheckpoint not implemented")
-}
-func (UnimplementedSecondaryMasterServerServer) mustEmbedUnimplementedSecondaryMasterServerServer() {}
-func (UnimplementedSecondaryMasterServerServer) testEmbeddedByValue()                               {}
-
-// UnsafeSecondaryMasterServerServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to SecondaryMasterServerServer will
-// result in compilation errors.
-type UnsafeSecondaryMasterServerServer interface {
-	mustEmbedUnimplementedSecondaryMasterServerServer()
-}
-
-func RegisterSecondaryMasterServerServer(s grpc.ServiceRegistrar, srv SecondaryMasterServerServer) {
-	// If the following call panics, it indicates UnimplementedSecondaryMasterServerServer was
-	// embedded by pointer and is nil.  This will cause panics if an
-	// unimplemented method is ever invoked, so we test this at initialization
-	// time to prevent it from happening at runtime later due to I/O.
-	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
-		t.testEmbeddedByValue()
-	}
-	s.RegisterService(&SecondaryMasterServer_ServiceDesc, srv)
-}
-
-func _SecondaryMasterServer_ReplicateWAL_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ReplicateWALRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SecondaryMasterServerServer).ReplicateWAL(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: SecondaryMasterServer_ReplicateWAL_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SecondaryMasterServerServer).ReplicateWAL(ctx, req.(*ReplicateWALRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _SecondaryMasterServer_SendMasterHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MasterHeartbeatRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SecondaryMasterServerServer).SendMasterHeartbeat(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: SecondaryMasterServer_SendMasterHeartbeat_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SecondaryMasterServerServer).SendMasterHeartbeat(ctx, req.(*MasterHeartbeatRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _SecondaryMasterServer_ApplyCheckpoint_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CheckpointRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SecondaryMasterServerServer).ApplyCheckpoint(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: SecondaryMasterServer_ApplyCheckpoint_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SecondaryMasterServerServer).ApplyCheckpoint(ctx, req.(*CheckpointRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-// SecondaryMasterServer_ServiceDesc is the grpc.ServiceDesc for SecondaryMasterServer service.
-// It's only intended for direct use with grpc.RegisterService,
-// and not to be introspected or modified (even as a copy)
-var SecondaryMasterServer_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "dfspb.SecondaryMasterServer",
-	HandlerType: (*SecondaryMasterServerServer)(nil),
-	Methods: []grpc.MethodDesc{
-		{
-			MethodName: "ReplicateWAL",
-			Handler:    _SecondaryMasterServer_ReplicateWAL_Handler,
-		},
-		{
-			MethodName: "SendMasterHeartbeat",
-			Handler:    _SecondaryMasterServer_SendMasterHeartbeat_Handler,
-		},
-		{
-			MethodName: "ApplyCheckpoint",
-			Handler:    _SecondaryMasterServer_ApplyCheckpoint_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
