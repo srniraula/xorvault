@@ -93,6 +93,30 @@ make delete FILE=myfile.pdf
 ```bash
 make ls
 ```
+### 8. Create a folder
+```bash
+make mkdir FOLDER=documents/photos
+```
+### 9. List files with details (sizes, timestamps, folders)
+```bash
+make ls-detailed
+# Or list specific folder:
+make ls-detailed FOLDER=documents
+```
+### 10. Move or rename a file
+```bash
+make mv SRC=myfile.pdf DEST=documents/myfile.pdf
+# Or rename:
+make mv SRC=oldname.pdf DEST=newname.pdf
+```
+### 11. Preview file content (cat)
+```bash
+make cat FILE=readme.txt
+```
+### 12. Remove empty folder
+```bash
+make rmdir FOLDER=documents/photos
+```
 
 ## Makefile Commands
 
@@ -103,11 +127,27 @@ make run-master     # Start master server
 make run-chunk_server1     # Start chunk server 1 (port 9001)
 make run-chunk_server2     # Start chunk server 2 (port 9002)
 make run-chunk_server3     # Start chunk server 3 (port 9003)
+
+# File operations
 make upload FILE=<filename>    # Upload file
 make download FILE=<filename>  # Download file
+make delete FILE=<filename>    # Delete file
+make cat FILE=<filename>       # Preview file content
+
+# Folder operations
+make mkdir FOLDER=<path>       # Create folder hierarchy
+make rmdir FOLDER=<path>       # Remove empty folder
+make mv SRC=<source> DEST=<destination>  # Move/rename file
+
+# Listing operations
+make ls                        # List all files (simple)
+make ls-detailed              # List all files with details
+make ls-detailed FOLDER=<path> # List specific folder contents
+
 make clean          # Remove binaries
 make test           # Run tests
 ```
+
 
 ## How It Works
 

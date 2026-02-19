@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -49,7 +50,7 @@ func resolveFilePath(filename string, forUpload bool) string {
 func main() {
 	// Check if user provided correct number of arguments
 	if len(os.Args) < 2 {
-		log.Fatal("Usage: go run cmd/client/main.go <upload|download|delete|ls> <filename>")
+		log.Fatal("Usage: go run cmd/client/main.go <upload|download|delete|ls|mkdir|rmdir|mv|cat|ls-detailed> <args...>")
 	}
 
 	// Load client ID from .client_id file (0 if new client)
@@ -60,13 +61,41 @@ func main() {
 		log.Printf("Using existing client ID: %d", myID)
 	}
 
-	cmd := os.Args[1] // "upload", "download", "delete", or "ls"
+	cmd := os.Args[1] // command name
 
-	if cmd == "ls" {
+	switch cmd {
+	case "ls":
 		listFiles(myID)
-	} else if len(os.Args) < 3 {
-		log.Fatal("Usage: go run cmd/client/main.go <upload|download|delete> <filename>")
-	} else {
+	case "ls-detailed":
+		folderPath := ""
+		if len(os.Args) > 2 {
+			folderPath = os.Args[2]
+		}
+		listFilesDetailed(myID, folderPath)
+	case "mkdir":
+		if len(os.Args) < 3 {
+			log.Fatal("Usage: client mkdir <folder_path>")
+		}
+		createFolder(myID, os.Args[2])
+	case "rmdir":
+		if len(os.Args) < 3 {
+			log.Fatal("Usage: client rmdir <folder_path>")
+		}
+		deleteFolder(myID, os.Args[2])
+	case "mv":
+		if len(os.Args) < 4 {
+			log.Fatal("Usage: client mv <source_path> <destination_path>")
+		}
+		moveFile(myID, os.Args[2], os.Args[3])
+	case "cat":
+		if len(os.Args) < 3 {
+			log.Fatal("Usage: client cat <filename>")
+		}
+		catFile(myID, os.Args[2])
+	case "upload", "download", "delete":
+		if len(os.Args) < 3 {
+			log.Fatalf("Usage: go run cmd/client/main.go %s <filename>", cmd)
+		}
 		file := os.Args[2] // filename to upload/download/delete
 
 		if cmd == "upload" {
@@ -77,9 +106,9 @@ func main() {
 			download(file, myID)
 		} else if cmd == "delete" {
 			deleteFile(file, myID)
-		} else {
-			log.Fatalf("Unknown command: %s. Use upload, download, delete, or ls", cmd)
 		}
+	default:
+		log.Fatalf("Unknown command: %s. Use upload, download, delete, ls, mkdir, rmdir, mv, cat, or ls-detailed", cmd)
 	}
 }
 
@@ -128,7 +157,6 @@ func upload(localPath string, myID int64) {
 		}
 		log.Fatal("CreateFile failed:", err)
 	}
-	log.Printf("File registered with client ID: %d", createResp.ClientId)
 
 	// Save client ID for future use (if new client)
 	if myID == 0 {
@@ -138,14 +166,7 @@ func upload(localPath string, myID int64) {
 	}
 
 	// Calculate total chunks for progress tracking
-	totalChunks := (int(fileSize) + CHUNK_SIZE - 1) / CHUNK_SIZE
-	log.Printf("Uploading %s → %d chunks (%.2f MB)", filename, totalChunks, float64(fileSize)/(1024*1024))
-
-	// Display chunk allocation plan received from CreateFile
-	log.Printf("Chunk allocation plan:")
-	for stripeNum, stripe := range createResp.Stripes {
-		log.Printf("  Stripe %d: chunks=%v, servers=%v", stripeNum, stripe.ChunkIds, stripe.Servers)
-	}
+	// Calculate total chunks for progress tracking
 
 	// Step 2: Stream file in stripes and upload chunks in parallel using pipeline pattern
 	// Producer goroutine reads file -> Consumer goroutines upload chunks
@@ -194,8 +215,6 @@ func upload(localPath string, myID int64) {
 		log.Fatal("Upload incomplete - not all chunks were confirmed")
 	}
 
-	log.Printf("Successfully uploaded %d chunks", len(successfulChunks))
-
 	// Step 3: Confirm successful writes to master
 	confirmResp, err := master.ConfirmWrite(context.Background(), &dfspb.ConfirmWriteRequest{
 		Filename: filename, // Use filename, not full path
@@ -206,9 +225,9 @@ func upload(localPath string, myID int64) {
 	}
 
 	if confirmResp.Success {
-		log.Printf("Upload complete! %d/%d chunks confirmed as SUCCESS", totalChunks, totalChunks)
+		fmt.Println("Upload complete")
 	} else {
-		log.Printf("Upload completed but confirmation failed")
+		fmt.Println("Upload completed but confirmation failed")
 	}
 
 }
@@ -240,8 +259,6 @@ func download(filename string, myID int64) {
 		log.Fatal("File not found or access denied")
 	}
 
-	log.Printf("Downloading %s (%d bytes)", filename, meta.FileSize)
-
 	// Use stripe map directly from master (no parsing needed)
 	totalStripes := len(meta.Stripes)
 
@@ -255,7 +272,6 @@ func download(filename string, myID int64) {
 
 	// Step 2: Download and write stripes sequentially (streaming)
 	var bytesWritten int64
-	successfulStripes := 0
 
 	for stripeNum := int32(1); stripeNum <= int32(totalStripes); stripeNum++ {
 		stripeInfo, exists := meta.Stripes[stripeNum]
@@ -295,14 +311,6 @@ func download(filename string, myID int64) {
 		}
 
 		bytesWritten += int64(written)
-		successfulStripes++
-
-		chunkWord := "chunk"
-		if stripe.ChunksOK != 1 {
-			chunkWord = "chunks"
-		}
-		log.Printf("Stripe %d/%d: %d/%d %s downloaded, %d bytes written",
-			stripeNum, totalStripes, stripe.ChunksOK, 3, chunkWord, written)
 	}
 
 	// Step 3: Verify and finalize
@@ -310,7 +318,7 @@ func download(filename string, myID int64) {
 		log.Printf("Warning: File size mismatch (expected %d, wrote %d)", meta.FileSize, bytesWritten)
 	}
 
-	log.Printf("Download complete: %s (%d stripes, %d bytes)", outputFile, successfulStripes, bytesWritten)
+	fmt.Println("Download complete")
 }
 
 // deleteFile removes a file from the DFS
@@ -392,20 +400,77 @@ func listFiles(myID int64) {
 //  1. The MASTER_ADDR environment variable (set when invoking the command)
 //  2. A local file named ".master_addr" in the current working directory (trimmed)
 //  3. The default from config.GetMasterAddr()
+//
+// Automatic failover:
+// If the resolved primary address is unreachable or responds as standby, the
+// client tries the address in ".secondary_addr".  When the secondary is found
+// to be active it rewrites ".master_addr" so that all subsequent calls use the
+// promoted secondary without any manual reconfiguration.
 func getMasterAddr() string {
-	// 1) Prefer explicit environment variable
+	// 1) Prefer explicit environment variable (no failover – caller knows best)
 	if env := os.Getenv("MASTER_ADDR"); strings.TrimSpace(env) != "" {
 		return strings.TrimSpace(env)
 	}
 
-	// 2) Then look for local .master_addr file (legacy)
+	// 2) Read candidate primary from .master_addr / config
+	primaryAddr := ""
 	if data, err := os.ReadFile(".master_addr"); err == nil {
-		addr := strings.TrimSpace(string(data))
-		if addr != "" {
-			return addr
+		if addr := strings.TrimSpace(string(data)); addr != "" {
+			primaryAddr = addr
+		}
+	}
+	if primaryAddr == "" {
+		primaryAddr = config.GetMasterAddr()
+	}
+
+	// 3) Read secondary address (written by standby master at startup)
+	secondaryAddr := ""
+	if data, err := os.ReadFile(".secondary_addr"); err == nil {
+		if addr := strings.TrimSpace(string(data)); addr != "" {
+			secondaryAddr = addr
 		}
 	}
 
-	// 3) Fall back to config (which also checks env and defaults)
-	return config.GetMasterAddr()
+	// If there is no secondary configured just return primary immediately.
+	if secondaryAddr == "" {
+		return primaryAddr
+	}
+
+	// 4) Probe the primary: if it is reachable and active, use it.
+	if isActive(primaryAddr) {
+		return primaryAddr
+	}
+
+	// 5) Primary is down or in standby – try secondary.
+	log.Printf("[failover] Primary %s is unavailable, trying secondary %s", primaryAddr, secondaryAddr)
+	if isActive(secondaryAddr) {
+		log.Printf("[failover] Secondary %s is ACTIVE – updating .master_addr", secondaryAddr)
+		// Persist so future client invocations skip the probe.
+		_ = os.WriteFile(".master_addr", []byte(secondaryAddr+"\n"), 0644)
+		return secondaryAddr
+	}
+
+	// Both unreachable – return primary and let the caller surface the error.
+	log.Printf("[failover] Both primary and secondary appear down; using primary %s", primaryAddr)
+	return primaryAddr
+}
+
+// isActive dials addr and calls Ping.  Returns true only when the server
+// responds with Active=true (i.e., it is in primary mode, not standby).
+func isActive(addr string) bool {
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+
+	client := dfspb.NewMasterServerClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	resp, err := client.Ping(ctx, &dfspb.PingRequest{})
+	if err != nil {
+		return false
+	}
+	return resp.Active
 }

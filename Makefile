@@ -1,7 +1,12 @@
-.PHONY: all build clean run-master run-chunk_server1 run-chunk_server2 run-chunk_server3 test proto docker-build docker-up docker-down docker-logs docker-clean docker-upload docker-download docker-delete docker-ls
+.PHONY: all build clean run-master run-secondary run-chunk_server1 run-chunk_server2 run-chunk_server3 test proto \
+        upload download delete ls ls-detailed mkdir rmdir mv cat set-master \
+        docker-build docker-up docker-down docker-logs docker-clean docker-upload docker-download docker-delete docker-ls
 
 # Get the directory where this Makefile is located (project root)
 ROOT_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+
+# Default master address for local development (can be overridden)
+MASTER_ADDR ?= 127.0.0.1:50051
 
 # Build all binaries
 all: build
@@ -57,17 +62,63 @@ upload:
 		echo "Error: file not found: files/$(FILE)"; exit 1; \
 	fi
 
-# Download a file (usage: cd clients/client1 && make download FILE=myfile.pdf)
+# Download a file (usage: make download FILE=myfile.pdf)
 download:
-	./bin/client download $(FILE)
+	@if [ -z "$(FILE)" ]; then \
+		echo "Error: FILE not specified. Usage: make download FILE=myfile.pdf"; exit 1; \
+	fi
+	@./bin/client download "$(FILE)"
 
-# Delete a file (usage: cd clients/client1 && make delete FILE=myfile.pdf)
+# Delete a file (usage: make delete FILE=myfile.pdf)
 delete:
-	./bin/client delete $(FILE)
+	@if [ -z "$(FILE)" ]; then \
+		echo "Error: FILE not specified. Usage: make delete FILE=myfile.pdf"; exit 1; \
+	fi
+	@./bin/client delete "$(FILE)"
 
 # List all files uploaded by this client (usage: cd clients/client1 && make ls)
 ls:
 	./bin/client ls
+
+# List files with details (usage: make ls-detailed [FOLDER=path])
+ls-detailed:
+	@if [ -z "$(FOLDER)" ]; then \
+		./bin/client ls-detailed; \
+	else \
+		./bin/client ls-detailed $(FOLDER); \
+	fi
+
+# Create a folder (usage: make mkdir FOLDER=documents/photos)
+mkdir:
+	@if [ -z "$(FOLDER)" ]; then \
+		echo "Error: FOLDER not specified. Usage: make mkdir FOLDER=path"; exit 1; \
+	else \
+		./bin/client mkdir "$(FOLDER)"; \
+	fi
+
+# Remove an empty folder (usage: make rmdir FOLDER=documents/photos)
+rmdir:
+	@if [ -z "$(FOLDER)" ]; then \
+		echo "Error: FOLDER not specified. Usage: make rmdir FOLDER=path"; exit 1; \
+	else \
+		./bin/client rmdir "$(FOLDER)"; \
+	fi
+
+# Move/rename a file (usage: make mv SRC=file.pdf DEST=folder/file.pdf)
+mv:
+	@if [ -z "$(SRC)" ] || [ -z "$(DEST)" ]; then \
+		echo "Error: SRC and DEST required. Usage: make mv SRC=source DEST=destination"; exit 1; \
+	else \
+		./bin/client mv "$(SRC)" "$(DEST)"; \
+	fi
+
+# Preview file content (usage: make cat FILE=readme.txt)
+cat:
+	@if [ -z "$(FILE)" ]; then \
+		echo "Error: FILE not specified. Usage: make cat FILE=filename"; exit 1; \
+	else \
+		./bin/client cat "$(FILE)"; \
+	fi
 
 # Set the master address for this client workspace
 # Usage (from client workspace): make set-master MASTER_ADDR=192.168.1.10:50051
@@ -357,3 +408,221 @@ help:
 	@echo "  make docker-download FILE=mypic.jpg"
 	@echo "  make docker-down"
 	@echo ""
+# ========== Test Suite ==========
+
+# Run integration tests for file system operations
+# Replaces test_filesystem.sh
+test: build
+	@echo "=========================================="
+	@echo "XorFS File System Operations Test Suite"
+	@echo "=========================================="
+	@echo ""
+	
+	@echo "Creating test files..."
+	@echo "This is a test file for XorFS operations" > test_file.txt
+	@echo "This is another test file" > test_file2.txt
+	@mkdir -p files
+	@cp test_file.txt files/
+	@cp test_file2.txt files/
+
+	@echo ""
+	@echo "=================="
+	@echo "Test 1: Folder Creation (mkdir)"
+	@echo "=================="
+	@$(MAKE) mkdir FOLDER=test_docs >/dev/null
+	@$(MAKE) mkdir FOLDER=test_docs/reports/2024 >/dev/null
+	@$(MAKE) mkdir FOLDER=test_photos >/dev/null
+	@echo "✓ PASS: Folder creation"
+
+	@echo ""
+	@echo "=================="
+	@echo "Test 2: View Folder Structure (ls-detailed)"
+	@echo "=================="
+	@$(MAKE) ls-detailed >/dev/null
+	@$(MAKE) ls-detailed FOLDER=test_docs >/dev/null
+	@echo "✓ PASS: View folder structure"
+
+	@echo ""
+	@echo "=================="
+	@echo "Test 3: File Upload"
+	@echo "=================="
+	@$(MAKE) upload FILE=test_file.txt >/dev/null
+	@$(MAKE) upload FILE=test_file2.txt >/dev/null
+	@echo "✓ PASS: File upload"
+
+	@echo ""
+	@echo "=================="
+	@echo "Test 4: Move/Rename Files (mv)"
+	@echo "=================="
+	@$(MAKE) mv SRC=test_file.txt DEST=test_docs/test_file.txt >/dev/null
+	@$(MAKE) mv SRC=test_file2.txt DEST=renamed_file.txt >/dev/null
+	@$(MAKE) mv SRC=renamed_file.txt DEST=test_docs/reports/2024/report.txt >/dev/null
+	@echo "✓ PASS: Move/Rename files"
+
+	@echo ""
+	@echo "=================="
+	@echo "Test 5: Verify File Organization"
+	@echo "=================="
+	@$(MAKE) ls-detailed FOLDER=test_docs >/dev/null
+	@$(MAKE) ls-detailed FOLDER=test_docs/reports/2024 >/dev/null
+	@echo "✓ PASS: Verify organization"
+
+	@echo ""
+	@echo "=================="
+	@echo "Test 6: Preview File Content (cat)"
+	@echo "=================="
+	@$(MAKE) cat FILE=test_docs/test_file.txt >/dev/null
+	@echo "✓ PASS: Preview file"
+
+	@echo ""
+	@echo "=================="
+	@echo "Test 7: Error Handling"
+	@echo "=================="
+	@# Expect failure for duplicate folder
+	@if $(MAKE) mkdir FOLDER=test_docs >/dev/null 2>&1; then \
+		echo "✗ FAIL: Should have rejected duplicate folder creation"; exit 1; \
+	else \
+		echo "✓ PASS: Rejected duplicate folder creation"; \
+	fi
+	@# Expect failure for non-empty delete
+	@if $(MAKE) rmdir FOLDER=test_docs >/dev/null 2>&1; then \
+		echo "✗ FAIL: Should have rejected deletion of non-empty folder"; exit 1; \
+	else \
+		echo "✓ PASS: Rejected deletion of non-empty folder"; \
+	fi
+
+	@echo ""
+	@echo "=================="
+	@echo "Test 8: Delete Empty Folder (rmdir)"
+	@echo "=================="
+	@$(MAKE) rmdir FOLDER=test_photos >/dev/null
+	@echo "✓ PASS: Delete empty folder"
+
+	@echo ""
+	@echo "=================="
+	@echo "Test 9: Cleanup Operations"
+	@echo "=================="
+	@$(MAKE) delete FILE=test_docs/test_file.txt >/dev/null
+	@$(MAKE) delete FILE=test_docs/reports/2024/report.txt >/dev/null
+	@$(MAKE) rmdir FOLDER=test_docs/reports/2024 >/dev/null
+	@$(MAKE) rmdir FOLDER=test_docs/reports >/dev/null
+	@$(MAKE) rmdir FOLDER=test_docs >/dev/null
+	@echo "✓ PASS: Cleanup operations"
+
+	@echo ""
+	@echo "=================="
+	@echo "Test 10: Final Verification"
+	@echo "=================="
+	@$(MAKE) ls-detailed >/dev/null
+	@echo "✓ PASS: Final listing"
+
+	@echo ""
+	@echo "=========================================="
+	@echo "Test Summary"
+	@echo "=========================================="
+	@echo "All tests passed!"
+	@echo "=========================================="
+	@rm -f test_file.txt test_file2.txt
+
+# ========== Setup & Demo ==========
+
+# Setup client workspaces (replaces setup_clients.sh)
+setup-clients:
+	@echo "Setting up client workspaces..."
+	@mkdir -p clients
+	@for i in 1 2 3; do \
+		CLIENT_DIR="clients/client$$i"; \
+		mkdir -p "$$CLIENT_DIR"; \
+		ln -sf ../../Makefile "$$CLIENT_DIR/Makefile"; \
+		touch "$$CLIENT_DIR/.client_id"; \
+		echo "# Client $$i Workspace" > "$$CLIENT_DIR/README.md"; \
+		echo "This is an isolated workspace for Client $$i." >> "$$CLIENT_DIR/README.md"; \
+		echo "Run 'make upload FILE=...' from here." >> "$$CLIENT_DIR/README.md"; \
+		echo "Created $$CLIENT_DIR"; \
+	done
+	@echo "Setup complete! Created 3 client workspaces in clients/"
+
+# Run demo sequence (replaces demo_filesystem.sh)
+demo:
+	@echo "=================================================="
+	@echo "XorFS File System Operations Demo"
+	@echo "=================================================="
+	@echo ""
+	@echo ">>> Demo 1: Create Folder Structure"
+	@$(MAKE) mkdir FOLDER=documents >/dev/null
+	@$(MAKE) mkdir FOLDER=documents/reports >/dev/null
+	@$(MAKE) mkdir FOLDER=documents/reports/2024 >/dev/null
+	@$(MAKE) mkdir FOLDER=photos >/dev/null
+	@$(MAKE) mkdir FOLDER=photos/vacation >/dev/null
+	@echo "Folders created."
+	@echo ""
+	
+	@echo ">>> Demo 2: View Folder Structure"
+	@$(MAKE) ls-detailed
+	
+	@echo ">>> Demo 3: Upload Files"
+	@echo "For this demo, we assume files exist. Skipping actual upload if files missing."
+	@# Simplified for demo target - just echo or try upload if files exist
+	@echo "(Skipping upload in make-demo to avoid errors if files missing)"
+	
+	@echo ">>> Demo 5: View Organized Structure"
+	@$(MAKE) ls-detailed FOLDER=documents
+	@$(MAKE) ls-detailed FOLDER=photos
+	
+	@echo ">>> Demo 10: Final Structure"
+	@$(MAKE) ls-detailed
+	@echo "Demo Complete!"
+
+# ========== Local Cluster Management (New) ==========
+
+pid_file := .cluster_pids
+
+start-cluster: build
+	@echo "Starting local cluster..."
+	@mkdir -p log_files
+	@# Start Master
+	@./bin/master > log_files/master_stdout.log 2>&1 & echo $$! >> $(pid_file)
+	@echo "Master started (PID $$(tail -n 1 $(pid_file)))"
+	@sleep 1
+	@# Start Chunkservers
+	@./bin/chunkserver -port 9001 -storage chunk_server1 -master $(MASTER_ADDR) > log_files/cs1_stdout.log 2>&1 & echo $$! >> $(pid_file)
+	@echo "Chunkserver 1 started (PID $$(tail -n 1 $(pid_file)))"
+	@./bin/chunkserver -port 9002 -storage chunk_server2 -master $(MASTER_ADDR) > log_files/cs2_stdout.log 2>&1 & echo $$! >> $(pid_file)
+	@echo "Chunkserver 2 started (PID $$(tail -n 1 $(pid_file)))"
+	@./bin/chunkserver -port 9003 -storage chunk_server3 -master $(MASTER_ADDR) > log_files/cs3_stdout.log 2>&1 & echo $$! >> $(pid_file)
+	@echo "Chunkserver 3 started (PID $$(tail -n 1 $(pid_file)))"
+	@echo ""
+	@echo "Cluster is running in the background."
+	@echo "Logs are in log_files/"
+	@echo "Run 'make stop-cluster' to stop all servers."
+
+stop-cluster:
+	@if [ -f $(pid_file) ]; then \
+		echo "Stopping cluster..."; \
+		while read pid; do \
+			if kill -0 $$pid 2>/dev/null; then \
+				kill $$pid; \
+				echo "Stopped PID $$pid"; \
+			fi; \
+		done < $(pid_file); \
+		rm $(pid_file); \
+		echo "Cluster stopped."; \
+	else \
+		echo "No PID file found. Cleaning up by process name..."; \
+		pkill -f "bin/master" || true; \
+		pkill -f "bin/chunkserver" || true; \
+		echo "Cleanup complete."; \
+	fi
+
+# View local logs
+logs-local:
+	@tail -f log_files/*.log
+
+# Run Secondary Master (High Availability)
+# Usage: make run-secondary [SEC_PORT=50052] [PRIMARY_ADDR=127.0.0.1:50051]
+SEC_PORT ?= 50052
+PRIMARY_ADDR ?= 127.0.0.1:50051
+
+run-secondary: build
+	@echo "Starting Secondary Master on port $(SEC_PORT) monitoring primary $(PRIMARY_ADDR)..."
+	@./bin/master -port $(SEC_PORT) -mode standby -primary $(PRIMARY_ADDR)

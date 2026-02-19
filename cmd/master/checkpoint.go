@@ -188,23 +188,41 @@ func (m *MasterServer) TruncateWAL(walPath string) error {
 
 // PeriodicCheckpoint runs in a goroutine and creates checkpoints periodically
 // Recommended interval: 5-10 minutes
+// Also polling WAL for Standby mode
 func (m *MasterServer) PeriodicCheckpoint(intervalMinutes int, checkpointPath string, walPath string) {
 	ticker := time.NewTicker(time.Duration(intervalMinutes) * time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		// Create checkpoint
-		if err := m.CreateCheckpoint(checkpointPath); err != nil {
-			m.logger.Printf("ERROR: Failed to create checkpoint: %v", err)
-			continue
-		}
+	// WAL polling ticker for Standby mode
+	walPoller := time.NewTicker(500 * time.Millisecond)
+	defer walPoller.Stop()
 
-		// Truncate WAL after successful checkpoint
-		if err := m.TruncateWAL(walPath); err != nil {
-			m.logger.Printf("ERROR: Failed to truncate WAL: %v", err)
-			// Don't return - checkpoint was created, just WAL truncate failed
-		}
+	for {
+		select {
+		case <-ticker.C:
+			// If Standby, we skip checkpoint creation
+			if m.IsStandby {
+				continue
+			}
+			// Create checkpoint
+			if err := m.CreateCheckpoint(checkpointPath); err != nil {
+				m.logger.Printf("ERROR: Failed to create checkpoint: %v", err)
+				continue
+			}
 
-		m.logger.Printf("Periodic checkpoint complete")
+			// Truncate WAL after successful checkpoint
+			if err := m.TruncateWAL(walPath); err != nil {
+				m.logger.Printf("ERROR: Failed to truncate WAL: %v", err)
+			}
+			m.logger.Printf("Periodic checkpoint complete")
+
+		case <-walPoller.C:
+			// If Standby, poll WAL for new updates using incremental read
+			if m.IsStandby {
+				if err := m.RecoverFromWALIncremental(walPath); err != nil {
+					m.logger.Printf("Standby incremental WAL error: %v", err)
+				}
+			}
+		}
 	}
 }

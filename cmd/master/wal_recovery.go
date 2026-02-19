@@ -5,6 +5,7 @@ import (
 	"dfs-project/dfspb"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -61,6 +62,85 @@ func (m *MasterServer) RecoverFromWAL(walPath string) error {
 	return nil
 }
 
+// RecoverFromWALIncremental reads only WAL entries that were appended after
+// m.walOffset and updates m.walOffset to the end of those new entries.
+// This is used by the standby master to stay in sync efficiently.
+// The caller must NOT hold m.walMu (this function acquires it briefly to read offset).
+func (m *MasterServer) RecoverFromWALIncremental(walPath string) error {
+	// Snapshot the current offset under the WAL mutex so we don't race with the
+	// primary's AppendWAL.
+	m.walMu.Lock()
+	startOffset := m.walOffset
+	m.walMu.Unlock()
+
+	file, err := os.Open(walPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // No WAL yet - nothing to do
+		}
+		return fmt.Errorf("failed to open WAL file: %v", err)
+	}
+	defer file.Close()
+
+	// Seek to where we left off
+	if startOffset > 0 {
+		if _, err := file.Seek(startOffset, io.SeekStart); err != nil {
+			return fmt.Errorf("WAL seek failed: %v", err)
+		}
+	}
+
+	reader := bufio.NewReader(file)
+	opsReplayed := 0
+	bytesRead := int64(0)
+
+	for {
+		line, err := reader.ReadString('\n')
+		if len(line) > 0 {
+			bytesRead += int64(len(line))
+			trimmed := line
+			// Trim the trailing newline
+			if len(trimmed) > 0 && trimmed[len(trimmed)-1] == '\n' {
+				trimmed = trimmed[:len(trimmed)-1]
+			}
+			if len(trimmed) == 0 {
+				if err == io.EOF {
+					break
+				}
+				continue
+			}
+
+			var entry WALEntry
+			if jsonErr := json.Unmarshal([]byte(trimmed), &entry); jsonErr != nil {
+				m.logger.Printf("Standby: skipping malformed WAL entry: %v", jsonErr)
+			} else {
+				m.mu.Lock()
+				if replayErr := m.replayOperation(&entry); replayErr != nil {
+					m.logger.Printf("Standby: replay error: %v", replayErr)
+				} else {
+					opsReplayed++
+				}
+				m.mu.Unlock()
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("error reading incremental WAL: %v", err)
+		}
+	}
+
+	// Advance the stored offset
+	if bytesRead > 0 {
+		m.walMu.Lock()
+		m.walOffset = startOffset + bytesRead
+		m.walMu.Unlock()
+		m.logger.Printf("Standby WAL sync: +%d bytes, %d ops replayed (total offset %d)",
+			bytesRead, opsReplayed, m.walOffset)
+	}
+	return nil
+}
+
 // replayOperation applies a single WAL entry to restore state
 func (m *MasterServer) replayOperation(entry *WALEntry) error {
 	switch entry.Operation {
@@ -84,8 +164,17 @@ func (m *MasterServer) replayCreateFile(data json.RawMessage) error {
 		return fmt.Errorf("failed to unmarshal CreateFile data: %v", err)
 	}
 
-	// Restore clientID mapping
-	m.clientIDs[createData.ClientID] = append(m.clientIDs[createData.ClientID], createData.Filename)
+	// Restore clientID mapping (Check for duplicates to ensure idempotency)
+	exists := false
+	for _, f := range m.clientIDs[createData.ClientID] {
+		if f == createData.Filename {
+			exists = true
+			break
+		}
+	}
+	if !exists {
+		m.clientIDs[createData.ClientID] = append(m.clientIDs[createData.ClientID], createData.Filename)
+	}
 
 	// Ensure per-client maps exist before assigning
 	m.ensureClientMaps(createData.ClientID)
@@ -98,8 +187,8 @@ func (m *MasterServer) replayCreateFile(data json.RawMessage) error {
 	// Restore file size
 	m.fileSizes[createData.ClientID][createData.Filename] = createData.TotalSize
 
-	m.logger.Printf("Recovered CREATE_FILE: client=%d, file=%s, size=%d",
-		createData.ClientID, createData.Filename, createData.TotalSize)
+	// Only log if verbose or separate logger?
+	// m.logger.Printf("Recovered CREATE_FILE: client=%d, file=%s, size=%d", createData.ClientID, createData.Filename, createData.TotalSize)
 
 	return nil
 }
