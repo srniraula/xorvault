@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,10 +46,20 @@ type MasterServer struct {
 	serversMu                             sync.RWMutex                                         // Protects servers map (RWMutex allows multiple readers)
 	logger                                *log.Logger                                          // Custom logger for file output (logs to master.log)
 
+	// Folder support
+	clientFolders   map[int64]map[string]bool  // Maps client_id -> folder_path -> exists
+	fileUploadTimes map[int64]map[string]int64 // Maps client_id -> filename -> unix_timestamp
+
 	// WAL fields
 	walFile   *os.File      // WAL file handle
 	walWriter *bufio.Writer // Buffered writer for WAL
 	walMu     sync.Mutex    // Protects WAL writes
+
+	// High Availability
+	IsStandby  bool       // If true, this is a passive master (reads WAL for updates)
+	standbyMu  sync.Mutex // Protects startup/failover transition
+	walOffset  int64      // Byte offset into WAL that standby has already replayed
+	listenAddr string     // Own gRPC listen address (e.g. "0.0.0.0:50052") – written to .master_addr on promotion
 }
 
 // ensureClientMaps makes sure the per-client nested maps exist to avoid nil-map panics
@@ -59,6 +70,12 @@ func (m *MasterServer) ensureClientMaps(clientID int64) {
 	if _, ok := m.fileSizes[clientID]; !ok {
 		m.fileSizes[clientID] = make(map[string]int64)
 	}
+	if _, ok := m.clientFolders[clientID]; !ok {
+		m.clientFolders[clientID] = make(map[string]bool)
+	}
+	if _, ok := m.fileUploadTimes[clientID]; !ok {
+		m.fileUploadTimes[clientID] = make(map[string]int64)
+	}
 	// clientIDs uses slices; append on nil is OK so no init required
 }
 
@@ -68,6 +85,10 @@ func (m *MasterServer) ensureClientMaps(clientID int64) {
 //   - filename: name of the file to create
 //   - total_size: size of the entire file in bytes
 func (m *MasterServer) CreateFile(ctx context.Context, req *dfspb.CreateFileRequest) (*dfspb.CreateFileResponse, error) {
+	if m.IsStandby {
+		return nil, fmt.Errorf("master is in STANDBY mode. Write operations are disabled")
+	}
+
 	m.mu.Lock()         // Lock to prevent concurrent modifications
 	defer m.mu.Unlock() // Unlock when function returns
 
@@ -96,6 +117,9 @@ func (m *MasterServer) CreateFile(ctx context.Context, req *dfspb.CreateFileRequ
 
 	m.fileSizes[req.ClientId][req.Filename] = req.TotalSize
 
+	// Track upload time
+	m.fileUploadTimes[req.ClientId][req.Filename] = time.Now().Unix()
+
 	// Allocate chunks and get the chunk-to-server mapping
 	allocResp, err := m.allocateChunksInternal(int64(req.ClientId), int(req.TotalSize), req.Filename)
 
@@ -113,11 +137,13 @@ func (m *MasterServer) CreateFile(ctx context.Context, req *dfspb.CreateFileRequ
 }
 
 // AllocateChunk is the gRPC handler for chunk allocation requests
-// func (m *MasterServer) AllocateChunk(ctx context.Context, req *dfspb.AllocateChunkRequest) (*dfspb.AllocateChunkResponse, error) {
-// 	m.mu.Lock()
-// 	defer m.mu.Unlock()
-// 	return m.allocateChunksInternal(m.clientID, int(req.FileSize), req.Filename)
-// }
+func (m *MasterServer) AllocateChunk(ctx context.Context, req *dfspb.AllocateChunkRequest) (*dfspb.AllocateChunkResponse, error) {
+	if m.IsStandby {
+		return nil, fmt.Errorf("master is in STANDBY mode. Write operations are disabled")
+	}
+	// TODO: Update allocateChunksInternal to not rely on CreateFile params if used directly
+	return nil, fmt.Errorf("AllocateChunk RPC not directly implemented yet (use CreateFile)")
+}
 
 // allocateChunksInternal assigns chunk IDs and selects chunk servers
 // This is the internal implementation called by CreateFile
@@ -285,7 +311,19 @@ func (m *MasterServer) ReceiveHeartbeat(ctx context.Context, req *dfspb.Heartbea
 	// If this is a new chunk server we haven't seen before, register it
 	if _, exists := m.servers[addr]; !exists {
 		m.servers[addr] = &ServerInfo{}
-		m.chunkServers = append(m.chunkServers, addr)
+
+		// Check if really new to chunkServers slice (avoid duplicates)
+		found := false
+		for _, s := range m.chunkServers {
+			if s == addr {
+				found = true
+				break
+			}
+		}
+		if !found {
+			m.chunkServers = append(m.chunkServers, addr)
+		}
+
 		m.logger.Printf("New chunkserver registered: %s", addr)
 	}
 	// Update the heartbeat timestamp and mark server as alive
@@ -300,6 +338,9 @@ func (m *MasterServer) ReceiveHeartbeat(ctx context.Context, req *dfspb.Heartbea
 // ConfirmWrite marks chunks as successfully written after client confirmation
 // This updates the WAL with SUCCESS status for uploaded chunks
 func (m *MasterServer) ConfirmWrite(ctx context.Context, req *dfspb.ConfirmWriteRequest) (*dfspb.ConfirmWriteResponse, error) {
+	if m.IsStandby {
+		return &dfspb.ConfirmWriteResponse{Success: false}, fmt.Errorf("master is in STANDBY mode")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -334,6 +375,9 @@ func (m *MasterServer) ConfirmWrite(ctx context.Context, req *dfspb.ConfirmWrite
 // DeleteFile removes a file and all its chunks from the system
 // Verifies client ownership before deletion
 func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequest) (*dfspb.DeleteFileResponse, error) {
+	if m.IsStandby {
+		return &dfspb.DeleteFileResponse{Success: false, Message: "master is in STANDBY mode"}, nil
+	}
 	m.mu.Lock()
 	// Note: manually unlocking before checkpoint, no defer
 
@@ -497,4 +541,106 @@ func (m *MasterServer) ListFiles(ctx context.Context, req *dfspb.ListFilesReques
 	return &dfspb.ListFilesResponse{
 		Filenames: files,
 	}, nil
+}
+
+// Ping is used by the secondary master (or others) to check health
+func (m *MasterServer) Ping(ctx context.Context, req *dfspb.PingRequest) (*dfspb.PingResponse, error) {
+	return &dfspb.PingResponse{Active: !m.IsStandby}, nil
+}
+
+// MonitorPrimary runs in a background goroutine on the Secondary Master
+// It pings the Primary periodically. If Primary fails, Secondary promotes itself.
+func (m *MasterServer) MonitorPrimary(primaryAddr string) {
+	m.logger.Printf("Starting monitoring of Primary Master at %s", primaryAddr)
+
+	ticker := time.NewTicker(2 * time.Second) // Ping every 2 seconds
+	defer ticker.Stop()
+
+	failCount := 0
+	maxFails := 3 // Promote after 3 consecutive failures (approx 6 seconds)
+
+	for range ticker.C {
+		// Stop monitoring if we identify we are no longer standby (promoted)
+		if !m.IsStandby {
+			return
+		}
+
+		conn, err := grpc.NewClient(primaryAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			failCount++
+			m.logger.Printf("Failed to connect to primary (attempt %d/%d): %v", failCount, maxFails, err)
+		} else {
+			client := dfspb.NewMasterServerClient(conn)
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+			_, err := client.Ping(ctx, &dfspb.PingRequest{})
+			cancel()
+			conn.Close()
+
+			if err != nil {
+				failCount++
+				m.logger.Printf("Primary ping failed (attempt %d/%d): %v", failCount, maxFails, err)
+			} else {
+				// Success, reset counter
+				if failCount > 0 {
+					m.logger.Printf("Primary recovered after %d failures", failCount)
+				}
+				failCount = 0
+			}
+		}
+
+		if failCount >= maxFails {
+			m.PromoteToActive()
+			return
+		}
+	}
+}
+
+// PromoteToActive switches the server from Standby to Active mode.
+// Before accepting writes it performs one final incremental WAL catch-up so
+// no committed operation is lost, then advertises itself as the new primary
+// by rewriting the ".master_addr" file.
+func (m *MasterServer) PromoteToActive() {
+	m.standbyMu.Lock()
+	defer m.standbyMu.Unlock()
+
+	if !m.IsStandby {
+		return // Already active
+	}
+
+	m.logger.Println("!!! PRIMARY FAILURE DETECTED - PROMOTING TO ACTIVE !!!")
+
+	// --- Final incremental WAL catch-up ---
+	// Read any WAL entries that arrived after our last poll so we are
+	// fully up-to-date before we start serving writes.
+	walName := "master.wal"
+	if m.walFile != nil {
+		walName = m.walFile.Name()
+	}
+	if err := m.RecoverFromWALIncremental(walName); err != nil {
+		m.logger.Printf("Warning: final WAL catch-up error during promotion: %v", err)
+	}
+
+	// --- Switch mode ---
+	m.IsStandby = false
+
+	// --- Advertise self as primary ---
+	// Rewrite .master_addr so clients that re-read the file find us.
+	if m.listenAddr != "" {
+		// Convert a listen addr like "0.0.0.0:50052" to a routable address.
+		// We use the port from listenAddr but 127.0.0.1 as host for local deployments.
+		// In a real multi-host setup you would substitute the actual hostname/IP here.
+		host := "127.0.0.1"
+		portSuffix := "" // e.g. ":50052"
+		if idx := strings.LastIndex(m.listenAddr, ":"); idx >= 0 {
+			portSuffix = m.listenAddr[idx:] // includes the ':'
+		}
+		publicAddr := host + portSuffix
+		if err := os.WriteFile(".master_addr", []byte(publicAddr+"\n"), 0644); err != nil {
+			m.logger.Printf("Warning: could not update .master_addr: %v", err)
+		} else {
+			m.logger.Printf("Updated .master_addr → %s", publicAddr)
+		}
+	}
+
+	m.logger.Println("Server is now ACTIVE and accepting write requests.")
 }

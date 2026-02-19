@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -135,37 +136,75 @@ func (c *ChunkServer) DeleteChunks(ctx context.Context, req *dfspb.DeleteChunksR
 	}, nil
 }
 
+// resolveActiveMaster returns the current active master address.
+// It reads .master_addr first (updated by the secondary on promotion),
+// falling back to the initially configured address.
+func resolveActiveMaster(configuredAddr string) string {
+	if data, err := os.ReadFile(".master_addr"); err == nil {
+		if addr := strings.TrimSpace(string(data)); addr != "" {
+			return addr
+		}
+	}
+	if configuredAddr != "" {
+		return configuredAddr
+	}
+	return config.GetMasterAddr()
+}
+
+// SendHeartbeats periodically pings the master to announce this chunk server.
+// It re-reads .master_addr on every tick so that after a master failover the
+// chunk server automatically follows the new primary without a restart.
 func SendHeartbeats(port string, masterAddr string, logger *log.Logger) {
-	// returns a ticker object with a channel (ticker.C)
-	// Every 5 seconds, the ticker sends the current time to its channel
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	// Determine which master address to use: prefer explicitly provided masterAddr,
-	// otherwise fall back to configured/default master address.
-	target := masterAddr
-	if target == "" {
-		target = config.GetMasterAddr()
-	}
-
-	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		logger.Printf("Failed to connect to master for heartbeat: %v", err)
-		return
-	}
-	defer conn.Close()
-
-	masterClient := dfspb.NewMasterServerClient(conn)
 	myAddr := config.GetMyAddr(port)
 
+	var conn *grpc.ClientConn
+	var masterClient dfspb.MasterServerClient
+	currentTarget := ""
+
 	for range ticker.C {
+		// Re-resolve the active master on every heartbeat
+		target := resolveActiveMaster(masterAddr)
+
+		// Reconnect if the address has changed (or first iteration)
+		if target != currentTarget {
+			if conn != nil {
+				conn.Close()
+			}
+			var err error
+			conn, err = grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if err != nil {
+				logger.Printf("Failed to connect to master %s: %v", target, err)
+				conn = nil
+				masterClient = nil
+				continue
+			}
+			masterClient = dfspb.NewMasterServerClient(conn)
+			logger.Printf("Heartbeat target changed: %s → %s", currentTarget, target)
+			currentTarget = target
+		}
+
+		if masterClient == nil {
+			continue
+		}
+
 		_, err := masterClient.ReceiveHeartbeat(context.Background(), &dfspb.HeartbeatRequest{
 			Address: myAddr,
 		})
 		if err != nil {
-			logger.Printf("Heartbeat failed: %v", err)
+			logger.Printf("Heartbeat failed to %s: %v", currentTarget, err)
+			// Force reconnect on next tick in case the address file was just updated
+			conn.Close()
+			conn = nil
+			masterClient = nil
+			currentTarget = ""
 		} else {
-			logger.Printf("Heartbeat sent to master from %s", myAddr)
+			logger.Printf("Heartbeat sent to %s from %s", currentTarget, myAddr)
 		}
+	}
+	if conn != nil {
+		conn.Close()
 	}
 }

@@ -3,31 +3,39 @@ package main
 import (
 	"bufio"
 	"dfs-project/dfspb"
-	"dfs-project/pkg/config"
-	"google.golang.org/grpc"
+	"flag"
+	"fmt"
 	"log"
 	"net"
 	"os"
 	"time"
+
+	"google.golang.org/grpc"
 )
 
 // main starts the master server and background health monitoring
 func main() {
+	// Parse command line flags
+	port := flag.String("port", "50051", "port to listen on")
+	mode := flag.String("mode", "active", "server mode: active or standby")
+	primaryAddr := flag.String("primary", "127.0.0.1:50051", "address of primary master to monitor (only for standby)")
+	flag.Parse()
+
 	// Setup log file for Master - all logs will be written to master.log
-	logFile, err := os.OpenFile("log_files/master.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	logFile, err := os.OpenFile(fmt.Sprintf("log_files/master_%s.log", *port), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
-		log.Fatalf("Failed to open master.log: %v", err)
+		log.Fatalf("Failed to open log file: %v", err)
 	}
 	defer logFile.Close()
 
 	// Create custom logger with prefix "MASTER: " and timestamp
-	masterLogger := log.New(logFile, "MASTER: ", log.LstdFlags|log.Lshortfile)
+	masterLogger := log.New(logFile, fmt.Sprintf("MASTER(%s): ", *port), log.LstdFlags|log.Lshortfile)
 
 	// Replace default log with file logger (for fatal errors)
 	log.SetOutput(logFile)
 
-	// Start listening on port 50051 for incoming gRPC requests
-	lis, err := net.Listen("tcp", "0.0.0.0:50051")
+	// Start listening on configured port
+	lis, err := net.Listen("tcp", "0.0.0.0:"+*port)
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
@@ -36,23 +44,32 @@ func main() {
 	s := grpc.NewServer()
 
 	// Open WAL file for write-ahead logging
-	walFile, err := os.OpenFile("master.wal", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	// In standby mode, we open read-only initially, but for simplicity we keep it append
+	// (Standby won't write unless promoted, but needs to read)
+	// Actually, if we are on the same filesystem, only one writer allowed usually if using lock
+	// But append mode is generally safe for single writer. Standby should probably just READ.
+	// For now, let's open it same way.
+	walFile, err := os.OpenFile("master.wal", os.O_CREATE|os.O_RDWR|os.O_APPEND, 0666)
 	if err != nil {
 		log.Fatalf("Failed to open WAL file: %v", err)
 	}
 	defer walFile.Close()
 
-	// Initialize the MasterServer with empty maps and known chunk server addresses
+	// Initialize the MasterServer with empty maps
 	server := &MasterServer{
-		fileInfo:     make(map[int64]map[string]map[int32]*dfspb.StripeMetadata),
-		clientIDs:    make(map[int64][]string),
-		fileSizes:    make(map[int64]map[string]int64),
-		chunkStatus:  make(map[string]string),      // Empty chunk status map
-		chunkServers: config.GetChunkServers(),     // Get chunk servers from config (Docker-aware)
-		servers:      make(map[string]*ServerInfo), // Empty server health map
-		logger:       masterLogger,                 // Custom logger for file output
-		walFile:      walFile,                      // WAL file handle
-		walWriter:    bufio.NewWriter(walFile),     // Buffered WAL writer
+		fileInfo:        make(map[int64]map[string]map[int32]*dfspb.StripeMetadata),
+		clientIDs:       make(map[int64][]string),
+		fileSizes:       make(map[int64]map[string]int64),
+		chunkStatus:     make(map[string]string),          // Empty chunk status map
+		chunkServers:    make([]string, 0),                // Start empty, discover via heartbeats
+		servers:         make(map[string]*ServerInfo),     // Empty server health map
+		logger:          masterLogger,                     // Custom logger for file output
+		walFile:         walFile,                          // WAL file handle
+		walWriter:       bufio.NewWriter(walFile),         // Buffered WAL writer
+		clientFolders:   make(map[int64]map[string]bool),  // Folder hierarchy support
+		fileUploadTimes: make(map[int64]map[string]int64), // Upload timestamps
+		IsStandby:       *mode == "standby",               // Set mode
+		listenAddr:      "0.0.0.0:" + *port,               // Own listen address (for .master_addr update on promotion)
 	}
 
 	// Restore from checkpoint first (if exists)
@@ -63,6 +80,23 @@ func main() {
 	// Then replay WAL entries after checkpoint
 	if err := server.RecoverFromWAL("master.wal"); err != nil {
 		log.Fatalf("WAL recovery failed: %v", err)
+	}
+
+	// Seed walOffset so the standby's incremental poller starts from the END of
+	// the WAL we just read (not the beginning) to avoid replaying old entries.
+	if fi, err := walFile.Stat(); err == nil {
+		server.walOffset = fi.Size()
+	}
+
+	// If we are a standby, write our own address to .secondary_addr so clients
+	// have a fallback address to discover us after the primary dies.
+	if server.IsStandby {
+		secondaryPublicAddr := "127.0.0.1:" + *port
+		if err := os.WriteFile(".secondary_addr", []byte(secondaryPublicAddr+"\n"), 0644); err != nil {
+			log.Printf("Warning: could not write .secondary_addr: %v", err)
+		} else {
+			log.Printf("Standby: wrote .secondary_addr = %s", secondaryPublicAddr)
+		}
 	}
 	// Register our MasterServer to handle gRPC requests
 	dfspb.RegisterMasterServerServer(s, server)
@@ -90,7 +124,12 @@ func main() {
 		}
 	}()
 
-	log.Println("Master running on :50051 – Logs to master.log")
+	// Start monitoring Primary if we are Standby
+	if server.IsStandby {
+		go server.MonitorPrimary(*primaryAddr)
+	}
+
+	log.Printf("Master running on :%s (Mode: %s) – Logs to %s", *port, *mode, logFile.Name())
 
 	// Start serving - this blocks until server shuts down
 	if err := s.Serve(lis); err != nil {
