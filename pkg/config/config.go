@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"strings"
 )
 
 // GetMasterAddr returns the master server address
@@ -62,14 +63,31 @@ func GetMyAddr(port string) string {
 }
 
 // GetLocalIP returns the first non-loopback IPv4 address found on the
-// machine, or an error if none are available.
+// machine, prioritizing the bridge network interface (enp0s9).
 func GetLocalIP() (string, error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return "", err
 	}
+	
+	// Priority 1: Look for bridge network interface (enp0s9) first
 	for _, iface := range ifaces {
-		// skip down or loopback interfaces
+		if iface.Name == "enp0s9" && iface.Flags&net.FlagUp != 0 && iface.Flags&net.FlagLoopback == 0 {
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, addr := range addrs {
+				if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil && !ipnet.IP.IsLoopback() {
+					return ipnet.IP.String(), nil
+				}
+			}
+		}
+	}
+	
+	// Priority 2: Fall back to any other non-loopback interface
+	for _, iface := range ifaces {
+		// skip down, loopback interfaces, or NAT interface
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
 		}
@@ -78,22 +96,15 @@ func GetLocalIP() (string, error) {
 			continue
 		}
 		for _, addr := range addrs {
-			var ip net.IP
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
+			if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil && !ipnet.IP.IsLoopback() {
+				ip := ipnet.IP.String()
+				// Skip NAT interface (10.0.2.x)
+				if !strings.HasPrefix(ip, "10.0.2.") {
+					return ip, nil
+				}
 			}
-			if ip == nil || ip.IsLoopback() {
-				continue
-			}
-			ip = ip.To4()
-			if ip == nil {
-				continue // not an ipv4 address
-			}
-			return ip.String(), nil
 		}
 	}
-	return "", errors.New("no non-loopback IPv4 address found")
+	
+	return "", errors.New("no suitable IPv4 address found")
 }
