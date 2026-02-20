@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"dfs-project/pkg/auth"
 	"dfs-project/pkg/config"
 	"dfs-project/pkg/dfsclient"
 
@@ -18,6 +19,18 @@ import (
 )
 
 func main() {
+	// Ensure data directory exists for user storage
+	dataDir := "data"
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		panic("Failed to create data directory: " + err.Error())
+	}
+
+	// Set auth storage directory and initialize
+	auth.SetStorageDir(dataDir)
+	if err := auth.InitStorage(); err != nil {
+		panic("Failed to initialize auth storage: " + err.Error())
+	}
+
 	r := gin.Default()
 
 	// Create a DFS client (gRPC)
@@ -49,19 +62,38 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 		c.Next()
 	})
 
-	r.POST("/files", func(c *gin.Context) {
-		// Request validation
-		clientIDStr := c.PostForm("clientId")
-		clientID := int64(0)
-		if clientIDStr != "" {
-			id, err := strconv.ParseInt(clientIDStr, 10, 64)
-			if err != nil || id < 0 {
-				c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid clientId"})
-				return
-			}
-			clientID = id
+	// Authentication endpoints (no auth required)
+	r.POST("/auth/register", auth.RegisterHandler)
+	r.POST("/auth/login", auth.LoginHandler)
+
+	// File operations (require authentication)
+	r.POST("/files", auth.AuthMiddleware(), func(c *gin.Context) {
+		// Get authenticated user info
+		userID, clientID, ok := auth.GetUserFromContext(c)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication required"})
+			return
 		}
 
+		// If user doesn't have a clientID assigned, assign one
+		if clientID == 0 {
+			// Generate a new client ID (simple timestamp-based)
+			clientID = int(time.Now().Unix() % 1000000)
+
+			// Update user with new clientID
+			user, err := auth.GetUser(userID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to retrieve user"})
+				return
+			}
+			user.ClientID = clientID
+			if err := auth.SaveUser(userID, user); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to update user"})
+				return
+			}
+		}
+
+		// Request validation
 		filename := c.PostForm("filename")
 		fileHeader, err := c.FormFile("file")
 		if err != nil {
@@ -86,7 +118,7 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 		uctx, cancel := context.WithTimeout(cRequestContext(c), 10*time.Minute)
 		defer cancel()
 
-		assignedClient, err := cli.UploadFile(uctx, clientID, filename, f, size)
+		assignedClient, err := cli.UploadFile(uctx, int64(clientID), filename, f, size)
 		if err != nil {
 			// Map common errors to HTTP status
 			if err.Error() == "no healthy chunkservers" {
@@ -119,29 +151,25 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 		c.JSON(http.StatusCreated, gin.H{"success": true, "clientId": assignedClient, "filename": filename})
 	})
 
-	r.GET("/files", func(c *gin.Context) {
-		// Accept multiple query param spellings for client id (case-insensitive)
-		clientIDStr := c.Query("clientId")
-		if clientIDStr == "" {
-			clientIDStr = c.Query("clientid")
-		}
-		if clientIDStr == "" {
-			clientIDStr = c.Query("client_id")
-		}
-		if clientIDStr == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "clientId required"})
+	r.GET("/files", auth.AuthMiddleware(), func(c *gin.Context) {
+		// Get authenticated user info
+		_, clientID, ok := auth.GetUserFromContext(c)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication required"})
 			return
 		}
-		id, err := strconv.ParseInt(clientIDStr, 10, 64)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid clientId"})
+
+		// If user doesn't have a clientID assigned yet
+		if clientID == 0 {
+			c.JSON(http.StatusOK, gin.H{"filenames": []string{}})
 			return
 		}
+
 		// add timeout
 		lctx, cancel := context.WithTimeout(cRequestContext(c), 30*time.Second)
 		defer cancel()
 
-		files, err := cli.ListFiles(lctx, id)
+		files, err := cli.ListFiles(lctx, int64(clientID))
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
 			return
@@ -149,18 +177,32 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"filenames": files})
 	})
 
-	r.GET("/files/:clientId/:filename", func(c *gin.Context) {
+	r.GET("/files/:clientId/:filename", auth.AuthMiddleware(), func(c *gin.Context) {
+		// Get authenticated user info
+		_, userClientID, ok := auth.GetUserFromContext(c)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication required"})
+			return
+		}
+
 		clientIDStr := c.Param("clientId")
-		id, err := strconv.ParseInt(clientIDStr, 10, 64)
+		requestedClientID, err := strconv.ParseInt(clientIDStr, 10, 64)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid clientId"})
 			return
 		}
+
+		// Ensure user can only access their own files
+		if int64(userClientID) != requestedClientID {
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "access denied"})
+			return
+		}
+
 		filename := c.Param("filename")
 		// Sanity check: verify file exists in listing
 		lctx, lcancel := context.WithTimeout(cRequestContext(c), 15*time.Second)
 		defer lcancel()
-		files, err := cli.ListFiles(lctx, id)
+		files, err := cli.ListFiles(lctx, requestedClientID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to validate file existence: " + err.Error()})
 			return
@@ -177,12 +219,12 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 			return
 		}
 
-		tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("download_%d_%s", id, filename))
+		tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("download_%d_%s", requestedClientID, filename))
 		_ = os.Remove(tmpPath)
 
 		dctx, dcancel := context.WithTimeout(cRequestContext(c), 5*time.Minute)
 		defer dcancel()
-		if err := cli.DownloadFile(dctx, id, filename, tmpPath); err != nil {
+		if err := cli.DownloadFile(dctx, requestedClientID, filename, tmpPath); err != nil {
 			if err.Error() == "file not found" {
 				c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "file not found"})
 				return
@@ -200,18 +242,32 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 		}()
 	})
 
-	r.DELETE("/files/:clientId/:filename", func(c *gin.Context) {
+	r.DELETE("/files/:clientId/:filename", auth.AuthMiddleware(), func(c *gin.Context) {
+		// Get authenticated user info
+		_, userClientID, ok := auth.GetUserFromContext(c)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication required"})
+			return
+		}
+
 		clientIDStr := c.Param("clientId")
-		id, err := strconv.ParseInt(clientIDStr, 10, 64)
+		requestedClientID, err := strconv.ParseInt(clientIDStr, 10, 64)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid clientId"})
 			return
 		}
+
+		// Ensure user can only delete their own files
+		if int64(userClientID) != requestedClientID {
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "access denied"})
+			return
+		}
+
 		filename := c.Param("filename")
 		dctx, dcancel := context.WithTimeout(cRequestContext(c), 30*time.Second)
 		defer dcancel()
 
-		deleted, err := cli.DeleteFile(dctx, id, filename)
+		deleted, err := cli.DeleteFile(dctx, requestedClientID, filename)
 		if err != nil {
 			// Map not found
 			if err.Error() == "file not found" {
@@ -228,10 +284,109 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"success": true, "message": msg})
 	})
 
-	// Chunked upload endpoints
-	r.POST("/files/chunk", handleChunkUpload)
-	r.POST("/files/finalize", handleFinalizeUpload(cli))
-	r.GET("/files/status/:uploadId", handleUploadStatus)
+	// Simplified download endpoint that uses authentication
+	r.GET("/files/download/:filename", auth.AuthMiddleware(), func(c *gin.Context) {
+		// Get authenticated user info
+		_, userClientID, ok := auth.GetUserFromContext(c)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication required"})
+			return
+		}
+
+		// User must have a clientID assigned
+		if userClientID == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "no files available"})
+			return
+		}
+
+		filename := c.Param("filename")
+		clientID := int64(userClientID)
+
+		// Sanity check: verify file exists in listing
+		lctx, lcancel := context.WithTimeout(cRequestContext(c), 15*time.Second)
+		defer lcancel()
+		files, err := cli.ListFiles(lctx, clientID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to validate file existence: " + err.Error()})
+			return
+		}
+		found := false
+		for _, f := range files {
+			if f == filename {
+				found = true
+				break
+			}
+		}
+		if !found {
+			c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "file not found"})
+			return
+		}
+
+		tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("download_%d_%s", clientID, filename))
+		_ = os.Remove(tmpPath)
+
+		dctx, dcancel := context.WithTimeout(cRequestContext(c), 5*time.Minute)
+		defer dcancel()
+		if err := cli.DownloadFile(dctx, clientID, filename, tmpPath); err != nil {
+			if err.Error() == "file not found" {
+				c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "file not found"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+
+		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+		c.File(tmpPath)
+		// remove temp file after a short delay to allow transfer to finish
+		go func() {
+			time.Sleep(1 * time.Second)
+			_ = os.Remove(tmpPath)
+		}()
+	})
+
+	// Simplified delete endpoint that uses authentication
+	r.DELETE("/files/delete/:filename", auth.AuthMiddleware(), func(c *gin.Context) {
+		// Get authenticated user info
+		_, userClientID, ok := auth.GetUserFromContext(c)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication required"})
+			return
+		}
+
+		// User must have a clientID assigned
+		if userClientID == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "no files to delete"})
+			return
+		}
+
+		filename := c.Param("filename")
+		clientID := int64(userClientID)
+
+		dctx, dcancel := context.WithTimeout(cRequestContext(c), 30*time.Second)
+		defer dcancel()
+
+		deleted, err := cli.DeleteFile(dctx, clientID, filename)
+		if err != nil {
+			// Map not found
+			if err.Error() == "file not found" {
+				c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "file not found"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+		msg := "deleted"
+		if deleted > 0 {
+			msg = fmt.Sprintf("deleted %d chunks", deleted)
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": msg})
+	})
+
+	// Chunked upload endpoints (require authentication)
+	r.POST("/files/chunk", auth.AuthMiddleware(), handleChunkUpload)
+	r.POST("/files/finalize", auth.AuthMiddleware(), handleFinalizeUpload(cli))
+	r.GET("/files/status/:uploadId", auth.AuthMiddleware(), handleUploadStatus)
 
 	return r
 }
@@ -338,10 +493,34 @@ func handleChunkUpload(c *gin.Context) {
 // handleFinalizeUpload reassembles chunks and uploads to DFS
 func handleFinalizeUpload(cli dfsclient.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Get authenticated user info
+		userID, clientID, ok := auth.GetUserFromContext(c)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication required"})
+			return
+		}
+
+		// If user doesn't have a clientID assigned, assign one
+		if clientID == 0 {
+			// Generate a new client ID (simple timestamp-based)
+			clientID = int(time.Now().Unix() % 1000000)
+
+			// Update user with new clientID
+			user, err := auth.GetUser(userID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to retrieve user"})
+				return
+			}
+			user.ClientID = clientID
+			if err := auth.SaveUser(userID, user); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to update user"})
+				return
+			}
+		}
+
 		uploadId := c.PostForm("uploadId")
 		filename := c.PostForm("filename")
 		totalSizeStr := c.PostForm("totalSize")
-		clientIDStr := c.PostForm("clientId")
 
 		if uploadId == "" || filename == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "uploadId and filename required"})
@@ -352,16 +531,6 @@ func handleFinalizeUpload(cli dfsclient.Client) gin.HandlerFunc {
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid totalSize"})
 			return
-		}
-
-		clientID := int64(0)
-		if clientIDStr != "" {
-			id, err := strconv.ParseInt(clientIDStr, 10, 64)
-			if err != nil || id < 0 {
-				c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid clientId"})
-				return
-			}
-			clientID = id
 		}
 
 		// Get upload status
@@ -407,7 +576,7 @@ func handleFinalizeUpload(cli dfsclient.Client) gin.HandlerFunc {
 		uctx, cancel := context.WithTimeout(cRequestContext(c), 15*time.Minute) // Extended timeout for large files
 		defer cancel()
 
-		assignedClient, err := cli.UploadFile(uctx, clientID, filename, file, totalSize)
+		assignedClient, err := cli.UploadFile(uctx, int64(clientID), filename, file, totalSize)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
 			return

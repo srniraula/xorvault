@@ -1,0 +1,19 @@
+{
+  "users": {
+    "100000": {
+      "password": "$2a$10$dPWf5nVUweOL8hTUxcVD2ef95wiCKfBezucZnrszstEiIwtWkX30i",
+      "clientId": 603612,
+      "createdAt": "2026-02-20T21:51:33.65048564+05:45"
+    },
+    "100001": {
+      "password": "$2a$10$rGyYCj2nGpD6GmztXdSIb.0wmk28zjIV/ZVZSkdSp8iPM/UacMTG2",
+      "clientId": 604113,
+      "createdAt": "2026-02-20T21:59:58.061615919+05:45"
+    },
+    "shantiram": {
+      "password": "$2a$10$0aPUCZGbGBuLeAGkmjvdaO2dByfHa0x3w6pQOP4AS/6.4QvZ5vX9O",
+      "clientId": 605264,
+      "createdAt": "2026-02-20T22:16:59.64086371+05:45"
+    }
+  }
+}

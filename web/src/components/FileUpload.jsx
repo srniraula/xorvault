@@ -6,7 +6,7 @@ const API_BASE = import.meta.env.VITE_API_BASE || `${window.location.protocol}//
 // Large file threshold - files above this will use chunked upload
 const CHUNKED_UPLOAD_THRESHOLD = 10 * 1024 * 1024 // 10MB
 
-export default function FileUpload({onSuccess, onClientAssigned}){
+export default function FileUpload({ onSuccess, authToken }) {
   const [file, setFile] = useState(null)
   const [filename, setFilename] = useState('')
   const [uploading, setUploading] = useState(false)
@@ -22,16 +22,23 @@ export default function FileUpload({onSuccess, onClientAssigned}){
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
+  const getAuthHeaders = () => ({
+    'Authorization': `Bearer ${authToken}`
+  });
+
   const regularUpload = async (formData) => {
-    const res = await fetch(`${API_BASE}/files`, { method: 'POST', body: formData })
+    const res = await fetch(`${API_BASE}/files`, { 
+      method: 'POST', 
+      headers: getAuthHeaders(),
+      body: formData 
+    });
     const data = await res.json()
     if (!res.ok) throw new Error(data.message || 'upload failed')
     return data
   }
 
   const chunkedUpload = async () => {
-    const localClient = localStorage.getItem('clientId')
-    const uploader = new ChunkedUploader(file, API_BASE)
+    const uploader = new ChunkedUploader(file, API_BASE, authToken)
     
     uploader.onProgress = (percent) => {
       setProgress(percent)
@@ -41,7 +48,7 @@ export default function FileUpload({onSuccess, onClientAssigned}){
       console.error('Chunked upload error:', error)
     }
     
-    const result = await uploader.upload(localClient, filename)
+    const result = await uploader.upload(filename)
     return result
   }
 
@@ -69,8 +76,6 @@ export default function FileUpload({onSuccess, onClientAssigned}){
         // Use regular upload for small files
         const fd = new FormData()
         fd.append('file', file)
-        const localClient = localStorage.getItem('clientId')
-        if(localClient) fd.append('clientId', localClient)
         if(filename) fd.append('filename', filename)
         
         data = await regularUpload(fd)
@@ -87,12 +92,6 @@ export default function FileUpload({onSuccess, onClientAssigned}){
         type:'success', 
         text: `Uploaded successfully! ${isLargeFile ? '(Chunked)' : '(Standard)'}`
       })
-      
-      // Handle client ID assignment
-      if(data.clientId){
-        localStorage.setItem('clientId', String(data.clientId))
-        if(onClientAssigned) onClientAssigned(data.clientId)
-      }
       
       if(onSuccess) onSuccess(data)
       

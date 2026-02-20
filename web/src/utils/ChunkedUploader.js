@@ -1,7 +1,8 @@
 class ChunkedUploader {
-    constructor(file, apiBase, chunkSize = 1024 * 1024) { // 1MB chunks
+    constructor(file, apiBase, authToken, chunkSize = 1024 * 1024) { // 1MB chunks
         this.file = file;
         this.apiBase = apiBase;
+        this.authToken = authToken;
         this.chunkSize = chunkSize;
         this.totalChunks = Math.ceil(file.size / chunkSize);
         this.uploadId = this.generateUploadId();
@@ -14,10 +15,16 @@ class ChunkedUploader {
         return `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     }
 
-    async upload(clientId, filename) {
+    getAuthHeaders() {
+        return {
+            'Authorization': `Bearer ${this.authToken}`
+        };
+    }
+
+    async upload(filename) {
         try {
             for (let chunkIndex = 0; chunkIndex < this.totalChunks; chunkIndex++) {
-                await this.uploadChunk(chunkIndex, clientId, filename);
+                await this.uploadChunk(chunkIndex, filename);
                 
                 // Update progress
                 const progress = Math.round(((chunkIndex + 1) / this.totalChunks) * 100);
@@ -27,7 +34,7 @@ class ChunkedUploader {
             }
             
             // Finalize upload
-            const result = await this.finalizeUpload(clientId, filename);
+            const result = await this.finalizeUpload(filename);
             
             if (this.onComplete) {
                 this.onComplete(result);
@@ -43,7 +50,7 @@ class ChunkedUploader {
         }
     }
 
-    async uploadChunk(chunkIndex, clientId, filename) {
+    async uploadChunk(chunkIndex, filename) {
         const start = chunkIndex * this.chunkSize;
         const end = Math.min(start + this.chunkSize, this.file.size);
         const chunk = this.file.slice(start, end);
@@ -55,12 +62,9 @@ class ChunkedUploader {
         formData.append('totalChunks', this.totalChunks.toString());
         formData.append('filename', filename || this.file.name);
         
-        if (clientId) {
-            formData.append('clientId', clientId.toString());
-        }
-        
         const response = await fetch(`${this.apiBase}/files/chunk`, {
             method: 'POST',
+            headers: this.getAuthHeaders(),
             body: formData
         });
         
@@ -72,18 +76,15 @@ class ChunkedUploader {
         return await response.json();
     }
 
-    async finalizeUpload(clientId, filename) {
+    async finalizeUpload(filename) {
         const formData = new FormData();
         formData.append('uploadId', this.uploadId);
         formData.append('filename', filename || this.file.name);
         formData.append('totalSize', this.file.size.toString());
         
-        if (clientId) {
-            formData.append('clientId', clientId.toString());
-        }
-        
         const response = await fetch(`${this.apiBase}/files/finalize`, {
             method: 'POST',
+            headers: this.getAuthHeaders(),
             body: formData
         });
         
@@ -96,7 +97,9 @@ class ChunkedUploader {
     }
 
     async getUploadStatus() {
-        const response = await fetch(`${this.apiBase}/files/status/${this.uploadId}`);
+        const response = await fetch(`${this.apiBase}/files/status/${this.uploadId}`, {
+            headers: this.getAuthHeaders()
+        });
         
         if (!response.ok) {
             return { uploadedChunks: [] };
