@@ -16,6 +16,7 @@ build:
 	@go build -o $(ROOT_DIR)bin/master $(ROOT_DIR)cmd/master
 	@go build -o $(ROOT_DIR)bin/chunkserver $(ROOT_DIR)cmd/chunkserver
 	@go build -o $(ROOT_DIR)bin/client $(ROOT_DIR)cmd/client
+	@go build -o $(ROOT_DIR)bin/webserver $(ROOT_DIR)cmd/webserver
 	@echo "Build complete: binaries in bin/"
 
 # Clean build artifacts and data
@@ -44,6 +45,10 @@ run-chunk_server2: build
 # Run chunk server 3
 run-chunk_server3: build
 	@./bin/chunkserver -port 9003 -storage chunk_server3 -master $(MASTER_ADDR)
+
+# Run web server
+run-webserver: build
+	@./bin/webserver
 
 # Upload a file
 # Usage:
