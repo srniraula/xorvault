@@ -77,9 +77,9 @@ func GetLocalIP() (string, error) {
 		return "", err
 	}
 	
-	// Priority 1: Look for bridge network interface (enp0s9) first
+	// Priority 1: Look for virtualbox host-only network interface (enp0s8) first
 	for _, iface := range ifaces {
-		if iface.Name == "enp0s9" && iface.Flags&net.FlagUp != 0 && iface.Flags&net.FlagLoopback == 0 {
+		if iface.Name == "enp0s8" && iface.Flags&net.FlagUp != 0 && iface.Flags&net.FlagLoopback == 0 {
 			addrs, err := iface.Addrs()
 			if err != nil {
 				continue
