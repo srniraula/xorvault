@@ -28,7 +28,7 @@ func (g *GrpcClient) streamFileInStripes(r io.Reader, stripes map[int32]*dfspb.S
 		// read chunk2
 		buf2 := make([]byte, CHUNK_SIZE)
 		n2, err2 := io.ReadFull(r, buf2)
-		if err2 != nil && err2 != io.ErrUnexpectedEOF {
+		if err2 != nil && err2 != io.ErrUnexpectedEOF && err2 != io.EOF {
 			errChan <- fmt.Errorf("error reading chunk2: %v", err2)
 			return
 		}
