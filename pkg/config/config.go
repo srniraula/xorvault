@@ -12,6 +12,13 @@ import (
 func GetMasterAddr() string {
 	addr := os.Getenv("MASTER_ADDR")
 	if addr == "" {
+		if data, err := os.ReadFile(".master_addr"); err == nil {
+			if fileAddr := strings.TrimSpace(string(data)); fileAddr != "" {
+				addr = fileAddr
+			}
+		}
+	}
+	if addr == "" {
 		// Try to detect a non-loopback IPv4 address on the device so the
 		// master can be reached from other devices on the LAN. Fall back to
 		// localhost if none found.
