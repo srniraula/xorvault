@@ -1,6 +1,5 @@
 # --- Binaries and Build Artifacts ---
 # Ignore compiled executables (from both local builds and inside /bin directory)
-bin/
 *.exe
 *.out
 /master
