@@ -66,7 +66,8 @@ Chunk servers run on ports `9001`, `9002`, `9003` with storage in `chunk_server1
 ### 4. Upload a File
 
 ```bash
-make set-master MASTER_ADDR=192.168.1.77:50051
+# Point to primary (and optionally secondary) master
+make set-master MASTER_ADDR=192.168.1.71:50051 SECONDARY_MASTER_ADDR=192.168.1.75:50052
 make upload FILE=big.pdf
 ```
 
@@ -105,6 +106,7 @@ make run-master-secondary MY_ADDR=<ip:port>                           # Start se
 make run-chunk_server1 MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>]  # port 9001
 make run-chunk_server2 MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>]  # port 9002
 make run-chunk_server3 MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>]  # port 9003
+make set-master MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>] # Configure master addresses
 make upload FILE=<filename>    # Upload file
 make download FILE=<filename>  # Download file
 make delete FILE=<filename>    # Delete file
@@ -173,8 +175,8 @@ make run-chunk_server1 MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.
 make run-chunk_server2 MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
 make run-chunk_server3 MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
 
-# Clients — point to primary as usual
-make set-master MASTER_ADDR=192.168.1.10:50051
+# Clients — point to primary and secondary so they auto-failover
+make set-master MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
 make upload FILE=myfile.pdf
 ```
 
@@ -185,9 +187,25 @@ make upload FILE=myfile.pdf
 4. Kill the primary (`Ctrl+C`)
 5. Within 10 seconds the secondary prints: `>>> THIS NODE IS NOW THE ACTIVE PRIMARY MASTER <<<`
 6. Within 15 seconds each chunk server prints: `[CHUNKSERVER] FAILOVER: switching active master from <primary> to <secondary>`
-7. Point clients to the secondary address — uploads and downloads continue without any chunk server restart
+7. **Client remains connected** — subsequent commands (like `make ls`) will auto-detect the primary failure and retry against the secondary address automatically.
 
 **Note:** Start the secondary BEFORE the primary, so it is ready to receive heartbeats and WAL entries immediately.
+
+### Client Auto-Failover
+
+Clients use a "Retry-on-Failure" strategy to handle master crashes:
+
+- When you run `make set-master MASTER_ADDR=192.168.1.71:50051 SECONDARY_MASTER_ADDR=192.168.1.75:50052`, both addresses are stored.
+- On every command (`upload`, `ls`, etc.), the client first attempts to connect to the **Primary** master (192.168.1.71).
+- It performs a lightweight connectivity probe (`GetActiveMaster`).
+- If the probe fails (unreachable/timed out), it logs the failure and automatically retries the operation against the **Secondary** address (192.168.1.75).
+- This ensures seamless operation even if the primary master is completely down, without needing to re-point the client.
+
+| Scenario | Behavior |
+204: |---|---|
+205: | No `SECONDARY_MASTER_ADDR` | Client fails immediately if primary is down (backward compatible) |
+206: | Primary alive | Client connects to primary; zero overhead |
+207: | Primary fails | Client logs failover and proceeds with secondary seamlessly |
 
 ### Chunk Server Auto-Failover
 

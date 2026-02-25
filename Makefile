@@ -102,10 +102,14 @@ test:
 .PHONY: set-master
 set-master:
 	@if [ -z "$(MASTER_ADDR)" ]; then \
-		echo "Error: MASTER_ADDR not specified. Usage: make set-master MASTER_ADDR=host:port"; exit 1; \
+		echo "Error: MASTER_ADDR not specified. Usage: make set-master MASTER_ADDR=host:port [SECONDARY_MASTER_ADDR=host:port]"; exit 1; \
 	fi
 	@echo "$(MASTER_ADDR)" > .master_addr
 	@echo "Wrote .master_addr with $(MASTER_ADDR)"
+	@if [ -n "$(SECONDARY_MASTER_ADDR)" ]; then \
+		echo "$(SECONDARY_MASTER_ADDR)" > .secondary_master_addr; \
+		echo "Wrote .secondary_master_addr with $(SECONDARY_MASTER_ADDR)"; \
+	fi
 
 .PHONY: set_master
 set_master: set-master
