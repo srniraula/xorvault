@@ -100,11 +100,15 @@ make ls
 make build          # Build all binaries
 make proto          # Regenerate protobuf files
 make run-master     # Start master server
-make run-chunk_server1     # Start chunk server 1 (port 9001)
-make run-chunk_server2     # Start chunk server 2 (port 9002)
-make run-chunk_server3     # Start chunk server 3 (port 9003)
+make run-master-primary MY_ADDR=<ip:port> SECONDARY_ADDR=<ip:port>   # Start primary master with failover
+make run-master-secondary MY_ADDR=<ip:port>                           # Start secondary/standby master
+make run-chunk_server1 MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>]  # port 9001
+make run-chunk_server2 MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>]  # port 9002
+make run-chunk_server3 MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>]  # port 9003
 make upload FILE=<filename>    # Upload file
 make download FILE=<filename>  # Download file
+make delete FILE=<filename>    # Delete file
+make ls                        # List uploaded files
 make clean          # Remove binaries
 make test           # Run tests
 ```
@@ -158,14 +162,16 @@ The system supports automatic master failover with a primary/secondary pair.
 
 **How to run with failover (LAN example):**
 ```bash
-# On the primary machine (e.g. Mac at 192.168.1.10)
-make run-master-primary MY_ADDR=192.168.1.10:50051 SECONDARY_ADDR=192.168.1.20:50052
-
 # On the secondary machine (e.g. Kali at 192.168.1.20) — start this FIRST
 make run-master-secondary MY_ADDR=192.168.1.20:50052
 
-# Chunk servers — point to primary as usual
-make run-chunk_server1 MASTER_ADDR=192.168.1.10:50051
+# On the primary machine (e.g. Mac at 192.168.1.10)
+make run-master-primary MY_ADDR=192.168.1.10:50051 SECONDARY_ADDR=192.168.1.20:50052
+
+# Chunk servers — pass BOTH master addresses so they auto-failover too
+make run-chunk_server1 MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
+make run-chunk_server2 MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
+make run-chunk_server3 MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
 
 # Clients — point to primary as usual
 make set-master MASTER_ADDR=192.168.1.10:50051
@@ -174,12 +180,32 @@ make upload FILE=myfile.pdf
 
 **To test failover:**
 1. Start secondary first, then primary
-2. Upload a file
-3. Kill the primary (`Ctrl+C`)
-4. Within 10 seconds the secondary prints: `>>> THIS NODE IS NOW THE ACTIVE PRIMARY MASTER <<<`
-5. Point clients and chunk servers to the secondary address and operations continue
+2. Start chunk servers with both master addresses (see above)
+3. Upload a file
+4. Kill the primary (`Ctrl+C`)
+5. Within 10 seconds the secondary prints: `>>> THIS NODE IS NOW THE ACTIVE PRIMARY MASTER <<<`
+6. Within 15 seconds each chunk server prints: `[CHUNKSERVER] FAILOVER: switching active master from <primary> to <secondary>`
+7. Point clients to the secondary address — uploads and downloads continue without any chunk server restart
 
 **Note:** Start the secondary BEFORE the primary, so it is ready to receive heartbeats and WAL entries immediately.
+
+### Chunk Server Auto-Failover
+
+Chunk servers use a `MasterTracker` to monitor the active master:
+
+- Each chunk server sends a heartbeat to its **active master** every 5 seconds
+- If **3 consecutive heartbeats fail** (~15 seconds), it automatically switches
+  `activeAddr` to the secondary master address
+- An immediate post-failover heartbeat is sent to re-register with the secondary
+- All subsequent heartbeats and inventory reports go to the secondary
+- No chunk server restart is required
+
+| Scenario | Behaviour |
+|---|---|
+| No `-secondary-master` flag | Heartbeats keep retrying primary indefinitely (backward compatible) |
+| Primary alive | Heartbeats go to primary; counter stays at 0 |
+| Primary fails (3 misses) | Switches to secondary, sends immediate registration heartbeat |
+| Secondary becomes new primary | Operations continue seamlessly |
 
 ## File Structure
 

@@ -8,11 +8,70 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
+// MasterTracker keeps track of which master (primary or secondary) is currently
+// active and handles automatic failover when the primary becomes unreachable.
+type MasterTracker struct {
+	mu            sync.RWMutex
+	primaryAddr   string
+	secondaryAddr string
+	activeAddr    string
+	failureCount  int
+	maxFailures   int // consecutive failures before failover
+}
+
+// NewMasterTracker creates a tracker with the given primary and secondary addresses.
+func NewMasterTracker(primaryAddr, secondaryAddr string) *MasterTracker {
+	return &MasterTracker{
+		primaryAddr:   primaryAddr,
+		secondaryAddr: secondaryAddr,
+		activeAddr:    primaryAddr,
+		maxFailures:   3, // 3 x 5s heartbeat interval = 15 seconds before failover
+	}
+}
+
+// ActiveAddr returns the currently active master address.
+func (t *MasterTracker) ActiveAddr() string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.activeAddr
+}
+
+// ReportSuccess resets the failure counter (heartbeat succeeded).
+func (t *MasterTracker) ReportSuccess() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.failureCount = 0
+}
+
+// ReportFailure increments the failure counter and triggers failover if threshold
+// is reached AND a secondary address is configured.
+// Returns true if a failover just happened.
+func (t *MasterTracker) ReportFailure(logger *log.Logger) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.failureCount++
+	logger.Printf("MasterTracker: heartbeat to %s failed (%d/%d consecutive failures)",
+		t.activeAddr, t.failureCount, t.maxFailures)
+
+	if t.failureCount >= t.maxFailures && t.secondaryAddr != "" && t.activeAddr != t.secondaryAddr {
+		logger.Printf("FAILOVER: primary master %s unreachable after %d failures — switching to secondary %s",
+			t.primaryAddr, t.failureCount, t.secondaryAddr)
+		fmt.Printf("[CHUNKSERVER] FAILOVER: switching active master from %s to %s\n",
+			t.activeAddr, t.secondaryAddr)
+		t.activeAddr = t.secondaryAddr
+		t.failureCount = 0
+		return true
+	}
+	return false
+}
 
 // ChunkServer stores chunk data on disk and handles read/write requests
 type ChunkServer struct {
@@ -135,37 +194,54 @@ func (c *ChunkServer) DeleteChunks(ctx context.Context, req *dfspb.DeleteChunksR
 	}, nil
 }
 
-func SendHeartbeats(port string, masterAddr string, logger *log.Logger) {
-	// returns a ticker object with a channel (ticker.C)
-	// Every 5 seconds, the ticker sends the current time to its channel
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	// Determine which master address to use: prefer explicitly provided masterAddr,
-	// otherwise fall back to configured/default master address.
-	target := masterAddr
-	if target == "" {
-		target = config.GetMasterAddr()
-	}
-
-	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+// sendSingleHeartbeat sends one heartbeat to the given master address.
+// Returns true on success, false on failure.
+func sendSingleHeartbeat(masterAddr, myAddr string, logger *log.Logger) bool {
+	conn, err := grpc.NewClient(masterAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		logger.Printf("Failed to connect to master for heartbeat: %v", err)
-		return
+		logger.Printf("Heartbeat: failed to connect to master %s: %v", masterAddr, err)
+		return false
 	}
 	defer conn.Close()
 
 	masterClient := dfspb.NewMasterServerClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, err = masterClient.ReceiveHeartbeat(ctx, &dfspb.HeartbeatRequest{Address: myAddr})
+	if err != nil {
+		logger.Printf("Heartbeat to %s failed: %v", masterAddr, err)
+		return false
+	}
+	logger.Printf("Heartbeat sent to master %s from %s", masterAddr, myAddr)
+	return true
+}
+
+// SendHeartbeats sends periodic heartbeats to the active master.
+// If the primary master becomes unreachable (3 consecutive failures), it
+// automatically fails over to the secondary master address (if provided).
+func SendHeartbeats(port string, tracker *MasterTracker, logger *log.Logger) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
 	myAddr := config.GetMyAddr(port)
 
 	for range ticker.C {
-		_, err := masterClient.ReceiveHeartbeat(context.Background(), &dfspb.HeartbeatRequest{
-			Address: myAddr,
-		})
-		if err != nil {
-			logger.Printf("Heartbeat failed: %v", err)
+		activeAddr := tracker.ActiveAddr()
+
+		if ok := sendSingleHeartbeat(activeAddr, myAddr, logger); ok {
+			tracker.ReportSuccess()
 		} else {
-			logger.Printf("Heartbeat sent to master from %s", myAddr)
+			didFailover := tracker.ReportFailure(logger)
+			if didFailover {
+				// Immediately try the new (secondary) master so it registers us quickly.
+				newAddr := tracker.ActiveAddr()
+				logger.Printf("Post-failover: sending immediate heartbeat to new master %s", newAddr)
+				if sendSingleHeartbeat(newAddr, myAddr, logger) {
+					tracker.ReportSuccess()
+					logger.Printf("Post-failover heartbeat to %s succeeded — chunk server re-registered", newAddr)
+				}
+			}
 		}
 	}
 }

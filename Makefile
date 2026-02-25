@@ -35,16 +35,19 @@ run-master: build
 	@./bin/master -addr 0.0.0.0:50051
 
 # Run chunk server 1
+# Usage: make run-chunk_server1 MASTER_ADDR=<primary:port> [SECONDARY_MASTER_ADDR=<secondary:port>]
 run-chunk_server1: build
-	@./bin/chunkserver -port 9001 -storage chunk_server1 -master $(MASTER_ADDR)
+	@./bin/chunkserver -port 9001 -storage chunk_server1 -master $(MASTER_ADDR) -secondary-master $(SECONDARY_MASTER_ADDR)
 
 # Run chunk server 2
+# Usage: make run-chunk_server2 MASTER_ADDR=<primary:port> [SECONDARY_MASTER_ADDR=<secondary:port>]
 run-chunk_server2: build
-	@./bin/chunkserver -port 9002 -storage chunk_server2 -master $(MASTER_ADDR)
+	@./bin/chunkserver -port 9002 -storage chunk_server2 -master $(MASTER_ADDR) -secondary-master $(SECONDARY_MASTER_ADDR)
 
 # Run chunk server 3
+# Usage: make run-chunk_server3 MASTER_ADDR=<primary:port> [SECONDARY_MASTER_ADDR=<secondary:port>]
 run-chunk_server3: build
-	@./bin/chunkserver -port 9003 -storage chunk_server3 -master $(MASTER_ADDR)
+	@./bin/chunkserver -port 9003 -storage chunk_server3 -master $(MASTER_ADDR) -secondary-master $(SECONDARY_MASTER_ADDR)
 
 # Run primary master (with secondary address)
 # Usage: make run-master-primary SECONDARY_ADDR=192.168.1.20:50052 MY_ADDR=192.168.1.10:50051
@@ -385,3 +388,4 @@ help:
 	@echo "=== Master Failover ==="
 	@echo "  make run-master-primary MY_ADDR=<ip:port> SECONDARY_ADDR=<ip:port>"
 	@echo "  make run-master-secondary MY_ADDR=<ip:port>"
+	@echo "  make run-chunk_server1 MASTER_ADDR=<primary:port> SECONDARY_MASTER_ADDR=<secondary:port>"
