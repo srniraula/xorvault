@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -104,13 +105,12 @@ func upload(localPath string, myID int64) {
 	// This ensures chunk IDs don't include directory paths
 	filename := filepath.Base(localPath)
 
-	// Connect to master server (address can come from .master_addr, env, or config)
-	conn, err := grpc.NewClient(getMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Connect to master server (with auto-failover)
+	conn, master, err := connectToMaster()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Could not connect to any master:", err)
 	}
 	defer conn.Close()
-	master := dfspb.NewMasterServerClient(conn) //grpc client that connects to master server.
 
 	// Step 1: Register file with master and receive chunk allocation plan
 	createResp, err := master.CreateFile(context.Background(), &dfspb.CreateFileRequest{
@@ -220,13 +220,12 @@ func upload(localPath string, myID int64) {
 //  3. Write stripe data to disk incrementally (streaming)
 //  4. Save with "downloaded_" prefix
 func download(filename string, myID int64) {
-	// Connect to master server
-	conn, err := grpc.NewClient(getMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Connect to master server (with auto-failover)
+	conn, master, err := connectToMaster()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Could not connect to any master:", err)
 	}
 	defer conn.Close()
-	master := dfspb.NewMasterServerClient(conn)
 
 	// Step 1: Get file metadata from master (with authentication)
 	meta, err := master.GetFileMetadata(context.Background(), &dfspb.GetFileMetadataRequest{
@@ -325,14 +324,12 @@ func deleteFile(filename string, myID int64) {
 
 	log.Printf("Deleting file: %s (client ID: %d)", filename, myID)
 
-	// Connect to master server
-	conn, err := grpc.NewClient(getMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Connect to master server (with auto-failover)
+	conn, masterClient, err := connectToMaster()
 	if err != nil {
-		log.Fatal("Failed to connect to master:", err)
+		log.Fatal("Could not connect to any master:", err)
 	}
 	defer conn.Close()
-
-	masterClient := dfspb.NewMasterServerClient(conn)
 
 	// Send delete request
 	resp, err := masterClient.DeleteFile(context.Background(), &dfspb.DeleteFileRequest{
@@ -358,14 +355,12 @@ func listFiles(myID int64) {
 		return
 	}
 
-	// Connect to master server
-	conn, err := grpc.NewClient(getMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Connect to master server (with auto-failover)
+	conn, masterClient, err := connectToMaster()
 	if err != nil {
-		log.Fatal("Failed to connect to master:", err)
+		log.Fatal("Could not connect to any master:", err)
 	}
 	defer conn.Close()
-
-	masterClient := dfspb.NewMasterServerClient(conn)
 
 	// Request file list
 	resp, err := masterClient.ListFiles(context.Background(), &dfspb.ListFilesRequest{
@@ -408,4 +403,61 @@ func getMasterAddr() string {
 
 	// 3) Fall back to config (which also checks env and defaults)
 	return config.GetMasterAddr()
+}
+
+// getSecondaryMasterAddr returns the secondary master address for failover.
+func getSecondaryMasterAddr() string {
+	// 1) Prefer explicit environment variable
+	if env := os.Getenv("SECONDARY_MASTER_ADDR"); strings.TrimSpace(env) != "" {
+		return strings.TrimSpace(env)
+	}
+
+	// 2) Then look for local .secondary_master_addr file
+	if data, err := os.ReadFile(".secondary_master_addr"); err == nil {
+		addr := strings.TrimSpace(string(data))
+		if addr != "" {
+			return addr
+		}
+	}
+
+	return ""
+}
+
+// connectToMaster attempts to connect to the primary master. If unreachable,
+// it automatically fails over to the secondary master (if configured).
+func connectToMaster() (*grpc.ClientConn, dfspb.MasterServerClient, error) {
+	primary := getMasterAddr()
+	secondary := getSecondaryMasterAddr()
+
+	// Try primary first
+	conn, err := grpc.NewClient(primary, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to dial primary %s: %v", primary, err)
+	}
+
+	// Probe primary with a short timeout
+	client := dfspb.NewMasterServerClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Use GetActiveMaster as a lightweight connectivity probe
+	_, err = client.GetActiveMaster(ctx, &dfspb.GetActiveMasterRequest{})
+	if err == nil {
+		return conn, client, nil
+	}
+
+	// Primary failed or unreachable — try secondary if configured
+	if secondary != "" && secondary != primary {
+		log.Printf("Primary master %s unreachable, failing over to secondary %s...", primary, secondary)
+		conn.Close()
+
+		conn, err = grpc.NewClient(secondary, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to dial secondary %s: %v", secondary, err)
+		}
+		return conn, dfspb.NewMasterServerClient(conn), nil
+	}
+
+	// No failover possible/configured
+	return conn, client, nil // Return primary connection anyway, subsequent calls will fail with the original error
 }
