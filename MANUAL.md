@@ -81,7 +81,7 @@ XorFS splits files into **1 MB chunks**. For every two data chunks (`D1`, `D2`),
 *   **Throughput (MB/s)**:
     ```bash
     # Measure upload speed
-    time ./bin/client upload big_file.iso
+    time make upload FILE=big_file.iso
     # Calculation: (File Size in MB) / (Total seconds) = MB/s
     ```
 *   **Latency (ms)**:
@@ -108,11 +108,11 @@ XorFS splits files into **1 MB chunks**. For every two data chunks (`D1`, `D2`),
 
 ### 6.3 Using the CLI
 ```bash
-./bin/client register      # Create your 6-digit PIN
-./bin/client ls            # List files
-./bin/client mkdir docs    # Create folder
-./bin/client upload f.txt  # Upload to DFS
-./bin/client cat f.txt     # Preview content
+make register              # Create your 6-digit PIN
+make ls                    # List uploaded files
+make mkdir FOLDER=docs     # Create a folder
+make upload FILE=f.txt     # Upload a file to DFS
+make cat FILE=f.txt        # Preview file content
 ```
 
 ### 6.4 Using the Web UI

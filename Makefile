@@ -260,6 +260,10 @@ delete:
 ls:
 	./bin/client ls
 
+# Register a new client ID
+register:
+	./bin/client register
+
 # List files with details (usage: make ls-detailed [FOLDER=path])
 ls-detailed:
 	@if [ -z "$(FOLDER)" ]; then \
