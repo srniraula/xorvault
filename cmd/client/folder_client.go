@@ -12,9 +12,9 @@ import (
 )
 
 // createFolder creates a new folder on the server
-func createFolder(clientID int64, folderPath string) {
-	if clientID == 0 {
-		log.Fatal("Cannot create folder: no client ID. Please upload a file first.")
+func createFolder(username string, folderPath string) {
+	if username == "" {
+		log.Fatal("Cannot create folder: no username found. Please use -u flag or create .username file.")
 	}
 
 	// Connect to master server
@@ -28,7 +28,7 @@ func createFolder(clientID int64, folderPath string) {
 
 	// Send create folder request
 	resp, err := masterClient.CreateFolder(context.Background(), &dfspb.CreateFolderRequest{
-		ClientId:   clientID,
+		Username:   username,
 		FolderPath: folderPath,
 	})
 
@@ -44,9 +44,9 @@ func createFolder(clientID int64, folderPath string) {
 }
 
 // deleteFolder removes an empty folder from the server
-func deleteFolder(clientID int64, folderPath string) {
-	if clientID == 0 {
-		log.Fatal("Cannot delete folder: no client ID. Please upload a file first.")
+func deleteFolder(username string, folderPath string) {
+	if username == "" {
+		log.Fatal("Cannot delete folder: no username found.")
 	}
 
 	// Connect to master server
@@ -60,7 +60,7 @@ func deleteFolder(clientID int64, folderPath string) {
 
 	// Send delete folder request
 	resp, err := masterClient.DeleteFolder(context.Background(), &dfspb.DeleteFolderRequest{
-		ClientId:   clientID,
+		Username:   username,
 		FolderPath: folderPath,
 	})
 
@@ -76,9 +76,9 @@ func deleteFolder(clientID int64, folderPath string) {
 }
 
 // moveFile moves or renames a file on the server
-func moveFile(clientID int64, sourcePath, destPath string) {
-	if clientID == 0 {
-		log.Fatal("Cannot move file: no client ID. Please upload a file first.")
+func moveFile(username string, sourcePath, destPath string) {
+	if username == "" {
+		log.Fatal("Cannot move file: no username found.")
 	}
 
 	// Connect to master server
@@ -92,7 +92,7 @@ func moveFile(clientID int64, sourcePath, destPath string) {
 
 	// Send move file request
 	resp, err := masterClient.MoveFile(context.Background(), &dfspb.MoveFileRequest{
-		ClientId:        clientID,
+		Username:        username,
 		SourcePath:      sourcePath,
 		DestinationPath: destPath,
 	})
@@ -109,9 +109,9 @@ func moveFile(clientID int64, sourcePath, destPath string) {
 }
 
 // listFilesDetailed shows detailed file listing with sizes, timestamps, and folder structure
-func listFilesDetailed(clientID int64, folderPath string) {
-	if clientID == 0 {
-		log.Println("No files uploaded yet (new client)")
+func listFilesDetailed(username string, folderPath string) {
+	if username == "" {
+		log.Println("No files uploaded yet (new user)")
 		return
 	}
 
@@ -126,8 +126,8 @@ func listFilesDetailed(clientID int64, folderPath string) {
 
 	// Request detailed file list
 	resp, err := masterClient.ListFilesDetailed(context.Background(), &dfspb.ListFilesDetailedRequest{
-		ClientId:   clientID,
-		FolderPath: folderPath,
+		Username: username,
+		Folder:   folderPath,
 	})
 
 	if err != nil {
@@ -172,9 +172,9 @@ func listFilesDetailed(clientID int64, folderPath string) {
 }
 
 // catFile displays file content (for text files) or info (for binary files)
-func catFile(clientID int64, filename string) {
-	if clientID == 0 {
-		log.Fatal("Cannot read file: no client ID. Please upload a file first.")
+func catFile(username string, filename string) {
+	if username == "" {
+		log.Fatal("Cannot read file: no username found.")
 	}
 
 	// Connect to master server
@@ -190,7 +190,7 @@ func catFile(clientID int64, filename string) {
 	const maxPreviewSize = 64 * 1024
 	resp, err := masterClient.ReadFileContent(context.Background(), &dfspb.ReadFileContentRequest{
 		Filename: filename,
-		ClientId: clientID,
+		Username: username,
 		Offset:   0,
 		Length:   maxPreviewSize,
 	})

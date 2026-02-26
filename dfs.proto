@@ -7,12 +7,13 @@ option go_package = "dfs-project/dfspb";
 message CreateFileRequest {
   string filename = 1;
   int64 total_size = 2;
-  int64 client_id = 3;
+  string username = 3;
+  string password = 4;
 }
 
 message CreateFileResponse {
   bool success = 1;
-  int64 client_id = 2;
+  string username = 2;
   map<int32, StripeMetadata> stripes = 3;
 }
 
@@ -37,7 +38,8 @@ message AllocateChunkResponse {
 
 message GetFileMetadataRequest {
   string filename = 1;
-  int64 client_id = 2;
+  string username = 2;
+  string password = 3;
 }
 
 message GetFileMetadataResponse {
@@ -49,7 +51,7 @@ message WriteChunkRequest {
   string chunk_id = 1;
   bytes data = 2;
   string checksum = 3;
-  int64 client_id = 4;
+  string username = 4;
 }
 
 message WriteChunkResponse {
@@ -58,7 +60,7 @@ message WriteChunkResponse {
 
 message ReadChunkRequest {
   string chunk_id = 1;
-  int64 client_id = 2;
+  string username = 2;
 }
 
 message ReadChunkResponse {
@@ -90,7 +92,7 @@ message ReconstructionTask {
   int32 stripe_num = 2;             // Stripe number
   repeated string other_chunk_ids = 3;  // [chunk1, chunk2] - the 2 available chunks
   repeated string other_servers = 4;    // [server1, server2] - where to get them
-  int64 client_id = 5;              // Client ID for physical isolation
+  string username = 5;              // username for physical isolation
 }
 
 message InventoryResponse {
@@ -110,7 +112,8 @@ message ConfirmWriteResponse {
 
 message DeleteFileRequest {
   string filename = 1;
-  int64 client_id = 2;
+  string username = 2;
+  string password = 3;
 }
 
 message DeleteFileResponse {
@@ -120,7 +123,7 @@ message DeleteFileResponse {
 
 message DeleteChunksRequest {
   repeated string chunk_ids = 1;  // All chunks to delete on this server
-  int64 client_id = 2;
+  string username = 2;
 }
 
 message DeleteChunksResponse {
@@ -129,7 +132,8 @@ message DeleteChunksResponse {
 }
 
 message ListFilesRequest {
-  int64 client_id = 1;
+  string username = 1;
+  string password = 2;
 }
 
 message ListFilesResponse {
@@ -138,8 +142,9 @@ message ListFilesResponse {
 
 // New messages for folder operations and detailed listing
 message CreateFolderRequest {
-  int64 client_id = 1;
+  string username = 1;
   string folder_path = 2;  // e.g., "documents/photos"
+  string password = 3;
 }
 
 message CreateFolderResponse {
@@ -148,8 +153,9 @@ message CreateFolderResponse {
 }
 
 message DeleteFolderRequest {
-  int64 client_id = 1;
+  string username = 1;
   string folder_path = 2;
+  string password = 3;
 }
 
 message DeleteFolderResponse {
@@ -158,9 +164,10 @@ message DeleteFolderResponse {
 }
 
 message MoveFileRequest {
-  int64 client_id = 1;
+  string username = 1;
   string source_path = 2;      // e.g., "file.pdf" or "folder1/file.pdf"
   string destination_path = 3; // e.g., "folder2/file.pdf"
+  string password = 4;
 }
 
 message MoveFileResponse {
@@ -176,8 +183,9 @@ message FileMetadata {
 }
 
 message ListFilesDetailedRequest {
-  int64 client_id = 1;
-  string folder_path = 2;    // "" for root, "folder1" for subfolder
+  string username = 1;
+  string folder = 2;    // "" for root, "folder1" for subfolder
+  string password = 3;
 }
 
 message ListFilesDetailedResponse {
@@ -186,9 +194,10 @@ message ListFilesDetailedResponse {
 
 message ReadFileContentRequest {
   string filename = 1;
-  int64 client_id = 2;
+  string username = 2;
   int64 offset = 3;      // Byte offset to start reading from
   int64 length = 4;      // Number of bytes to read (0 = read all)
+  string password = 5;
 }
 
 message ReadFileContentResponse {
@@ -196,7 +205,19 @@ message ReadFileContentResponse {
   int64 total_size = 2;  // Total file size
 }
 
+message AuthenticateRequest {
+  string username = 1;
+  string password = 2;
+  bool is_register = 3;
+}
+
+message AuthenticateResponse {
+  bool success = 1;
+  string message = 2;
+}
+
 service MasterServer {
+  rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse);
   rpc CreateFile(CreateFileRequest) returns (CreateFileResponse);
   rpc AllocateChunk(AllocateChunkRequest) returns (AllocateChunkResponse);
   rpc GetFileMetadata(GetFileMetadataRequest) returns (GetFileMetadataResponse);
@@ -205,14 +226,14 @@ service MasterServer {
   rpc ConfirmWrite(ConfirmWriteRequest) returns (ConfirmWriteResponse);
   rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
   rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
-  
-  // New folder and file operations
+  rpc Ping(PingRequest) returns (PingResponse);
+
+  // Folder Operations
   rpc CreateFolder(CreateFolderRequest) returns (CreateFolderResponse);
   rpc DeleteFolder(DeleteFolderRequest) returns (DeleteFolderResponse);
-  rpc MoveFile(MoveFileRequest) returns (MoveFileResponse);
   rpc ListFilesDetailed(ListFilesDetailedRequest) returns (ListFilesDetailedResponse);
+  rpc MoveFile(MoveFileRequest) returns (MoveFileResponse);
   rpc ReadFileContent(ReadFileContentRequest) returns (ReadFileContentResponse);
-  rpc Ping(PingRequest) returns (PingResponse); // For health check
 }
 
 message PingRequest {}

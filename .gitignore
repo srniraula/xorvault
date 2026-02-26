@@ -76,3 +76,15 @@ Thumbs.db
 !/pkg/
 !/pkg/dfsclient/
 !/pkg/dfsclient/**
+
+# Ignore web-specific node_modules and builds
+node_modules/
+dist/
+
+# Configuration and address files
+cluster.conf
+.master_addr
+.secondary_addr
+
+# More binaries
+/webserver

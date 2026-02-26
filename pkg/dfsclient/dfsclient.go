@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"dfs-project/dfspb"
@@ -21,55 +23,171 @@ const CHUNK_SIZE = 1 * 1024 * 1024
 
 // Interface exposes high-level DFS operations used by HTTP handlers
 type Client interface {
-	ListFiles(ctx context.Context, clientID int64) ([]string, error)
-	DeleteFile(ctx context.Context, clientID int64, filename string) (int, error)
-	UploadFile(ctx context.Context, clientID int64, filename string, data io.Reader, size int64) (int64, error)
-	DownloadFile(ctx context.Context, clientID int64, filename string, destPath string) error
+	Authenticate(ctx context.Context, username, password string, isRegister bool) (bool, string, error)
+	ListFiles(ctx context.Context, username, password string) ([]string, error)
+	DeleteFile(ctx context.Context, username, password string, filename string) (int, error)
+	UploadFile(ctx context.Context, username, password string, filename string, data io.Reader, size int64) (string, error)
+	DownloadFile(ctx context.Context, username, password string, filename string, destPath string) error
 }
 
 // GrpcClient implements Client using the existing gRPC Master/ChunkServer APIs
+// It supports automatic failover between primary and secondary masters.
 type GrpcClient struct {
-	masterAddr string
-	masterConn *grpc.ClientConn
-	masterCli  dfspb.MasterServerClient
+	primaryAddr   string
+	secondaryAddr string
+
+	mu          sync.Mutex
+	currentConn *grpc.ClientConn
+	masterCli   dfspb.MasterServerClient
 }
 
-// NewGrpcClient connects to the configured master address and returns a client
+// NewGrpcClient connects to the configured master addresses and returns a client
 func NewGrpcClient(masterAddr string) (*GrpcClient, error) {
 	if masterAddr == "" {
 		masterAddr = config.GetMasterAddr()
 	}
-	// Use Dial with ConnectParams to control the minimum connect timeout
-	conn, err := grpc.Dial(masterAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithConnectParams(grpc.ConnectParams{MinConnectTimeout: 5 * time.Second}),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to master %s: %w", masterAddr, err)
+	secondary := config.GetSecondaryMasterAddr()
+
+	g := &GrpcClient{
+		primaryAddr:   masterAddr,
+		secondaryAddr: secondary,
 	}
-	cli := dfspb.NewMasterServerClient(conn)
-	return &GrpcClient{masterAddr: masterAddr, masterConn: conn, masterCli: cli}, nil
+
+	// Try to establish initial connection
+	_, err := g.getConn(context.Background())
+	if err != nil {
+		// We return the client anyway; it will try to reconnect on the first real call
+		fmt.Printf("Warning: initial connection to masters failed: %v. Will retry on demand.\n", err)
+	}
+
+	return g, nil
+}
+
+func (g *GrpcClient) getConn(ctx context.Context) (dfspb.MasterServerClient, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.masterCli != nil {
+		return g.masterCli, nil
+	}
+
+	// Try primary then secondary
+	targets := []string{g.primaryAddr}
+	if g.secondaryAddr != "" && g.secondaryAddr != g.primaryAddr {
+		targets = append(targets, g.secondaryAddr)
+	}
+
+	// Also check local .master_addr in case of recent failover
+	if data, err := os.ReadFile(".master_addr"); err == nil {
+		active := strings.TrimSpace(string(data))
+		if active != "" && active != g.primaryAddr && active != g.secondaryAddr {
+			targets = append([]string{active}, targets...)
+		}
+	}
+
+	var lastErr error
+	for _, addr := range targets {
+		if addr == "" {
+			continue
+		}
+		conn, err := grpc.Dial(addr,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithConnectParams(grpc.ConnectParams{MinConnectTimeout: 2 * time.Second}),
+		)
+		if err == nil {
+			g.currentConn = conn
+			g.masterCli = dfspb.NewMasterServerClient(conn)
+			return g.masterCli, nil
+		}
+		lastErr = err
+	}
+
+	return nil, fmt.Errorf("could not connect to any master: %v", lastErr)
+}
+
+func (g *GrpcClient) resetConn() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.currentConn != nil {
+		g.currentConn.Close()
+	}
+	g.currentConn = nil
+	g.masterCli = nil
 }
 
 func (g *GrpcClient) Close() error {
-	if g.masterConn != nil {
-		return g.masterConn.Close()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.currentConn != nil {
+		return g.currentConn.Close()
 	}
 	return nil
 }
 
-func (g *GrpcClient) ListFiles(ctx context.Context, clientID int64) ([]string, error) {
-	resp, err := g.masterCli.ListFiles(ctx, &dfspb.ListFilesRequest{ClientId: clientID})
+func (g *GrpcClient) Authenticate(ctx context.Context, username, password string, isRegister bool) (bool, string, error) {
+	cli, err := g.getConn(ctx)
+	if err != nil {
+		return false, "", err
+	}
+
+	resp, err := cli.Authenticate(ctx, &dfspb.AuthenticateRequest{
+		Username:   username,
+		Password:   password,
+		IsRegister: isRegister,
+	})
+	if err != nil {
+		g.resetConn()
+		// Retry once
+		cli, err = g.getConn(ctx)
+		if err != nil {
+			return false, "", err
+		}
+		resp, err = cli.Authenticate(ctx, &dfspb.AuthenticateRequest{Username: username, Password: password, IsRegister: isRegister})
+		if err != nil {
+			return false, "", err
+		}
+	}
+	return resp.Success, resp.Message, nil
+}
+
+func (g *GrpcClient) ListFiles(ctx context.Context, username, password string) ([]string, error) {
+	cli, err := g.getConn(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	resp, err := cli.ListFiles(ctx, &dfspb.ListFilesRequest{Username: username, Password: password})
+	if err != nil {
+		g.resetConn()
+		cli, err = g.getConn(ctx)
+		if err != nil {
+			return nil, err
+		}
+		resp, err = cli.ListFiles(ctx, &dfspb.ListFilesRequest{Username: username, Password: password})
+		if err != nil {
+			return nil, err
+		}
 	}
 	return resp.Filenames, nil
 }
 
-func (g *GrpcClient) DeleteFile(ctx context.Context, clientID int64, filename string) (int, error) {
-	resp, err := g.masterCli.DeleteFile(ctx, &dfspb.DeleteFileRequest{ClientId: clientID, Filename: filename})
+func (g *GrpcClient) DeleteFile(ctx context.Context, username, password string, filename string) (int, error) {
+	cli, err := g.getConn(ctx)
 	if err != nil {
 		return 0, err
+	}
+
+	resp, err := cli.DeleteFile(ctx, &dfspb.DeleteFileRequest{Username: username, Password: password, Filename: filename})
+	if err != nil {
+		g.resetConn()
+		cli, err = g.getConn(ctx)
+		if err != nil {
+			return 0, err
+		}
+		resp, err = cli.DeleteFile(ctx, &dfspb.DeleteFileRequest{Username: username, Password: password, Filename: filename})
+		if err != nil {
+			return 0, err
+		}
 	}
 	if !resp.Success {
 		return 0, fmt.Errorf("delete failed: %s", resp.Message)
@@ -84,15 +202,28 @@ func (g *GrpcClient) DeleteFile(ctx context.Context, clientID int64, filename st
 	return deleted, nil
 }
 
-// UploadFile uploads content from reader to the DFS and returns the assigned clientID
-func (g *GrpcClient) UploadFile(ctx context.Context, clientID int64, filename string, data io.Reader, size int64) (int64, error) {
-	// Create file (master may assign clientID if 0)
-	createReq := &dfspb.CreateFileRequest{Filename: filename, TotalSize: size, ClientId: clientID}
-	createResp, err := g.masterCli.CreateFile(ctx, createReq)
+// UploadFile uploads content from reader to the DFS and returns the assigned username
+func (g *GrpcClient) UploadFile(ctx context.Context, username, password string, filename string, data io.Reader, size int64) (string, error) {
+	cli, err := g.getConn(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("CreateFile failed: %w", err)
+		return "", err
 	}
-	assignedClient := createResp.ClientId
+
+	// Create file (username must be provided)
+	createReq := &dfspb.CreateFileRequest{Filename: filename, TotalSize: size, Username: username, Password: password}
+	createResp, err := cli.CreateFile(ctx, createReq)
+	if err != nil {
+		g.resetConn()
+		cli, err = g.getConn(ctx)
+		if err != nil {
+			return "", err
+		}
+		createResp, err = cli.CreateFile(ctx, createReq)
+		if err != nil {
+			return "", fmt.Errorf("CreateFile failed: %w", err)
+		}
+	}
+	assignedUser := createResp.Username
 	// Build stripes map
 	stripesMap := createResp.Stripes
 
@@ -106,32 +237,40 @@ func (g *GrpcClient) UploadFile(ctx context.Context, clientID int64, filename st
 	ack := NewAckQueue()
 
 	// start uploading stripes as they arrive
-	successfulChunks, err := g.uploadStripesStreaming(stripeChan, ack, assignedClient)
+	successfulChunks, err := g.uploadStripesStreaming(stripeChan, ack, assignedUser)
 	if err != nil {
-		return assignedClient, err
+		return assignedUser, err
 	}
 
 	// Check producer errors
 	select {
 	case err := <-errChan:
 		if err != nil {
-			return assignedClient, err
+			return assignedUser, err
 		}
 	default:
 	}
 
 	// Confirm write to master
 	if len(successfulChunks) > 0 {
-		_, err := g.masterCli.ConfirmWrite(ctx, &dfspb.ConfirmWriteRequest{Filename: filename, ChunkIds: successfulChunks})
+		_, err := cli.ConfirmWrite(ctx, &dfspb.ConfirmWriteRequest{Filename: filename, ChunkIds: successfulChunks})
 		if err != nil {
-			return assignedClient, fmt.Errorf("confirm write failed: %w", err)
+			// Try once more with fresh connection
+			g.resetConn()
+			cli, _ = g.getConn(ctx)
+			if cli != nil {
+				_, err = cli.ConfirmWrite(ctx, &dfspb.ConfirmWriteRequest{Filename: filename, ChunkIds: successfulChunks})
+			}
+			if err != nil {
+				return assignedUser, fmt.Errorf("confirm write failed: %w", err)
+			}
 		}
 	}
 
-	return assignedClient, nil
+	return assignedUser, nil
 }
 
-func writeChunkToServer(ctx context.Context, serverAddr string, chunkID string, data []byte, clientID int64) error {
+func writeChunkToServer(ctx context.Context, serverAddr string, chunkID string, data []byte, username string) error {
 	if serverAddr == "" {
 		return fmt.Errorf("empty server address")
 	}
@@ -147,7 +286,7 @@ func writeChunkToServer(ctx context.Context, serverAddr string, chunkID string, 
 	checksum := calculateChecksum(data)
 
 	// Use same ctx for RPC; caller should set an appropriate timeout
-	_, err = chunkCli.WriteChunk(ctx, &dfspb.WriteChunkRequest{ChunkId: chunkID, Data: data, Checksum: checksum, ClientId: clientID})
+	_, err = chunkCli.WriteChunk(ctx, &dfspb.WriteChunkRequest{ChunkId: chunkID, Data: data, Checksum: checksum, Username: username})
 	if err != nil {
 		return err
 	}
@@ -158,8 +297,8 @@ func writeChunkToServer(ctx context.Context, serverAddr string, chunkID string, 
 var chunkUploader = writeChunkToServer
 
 // chunkDownloader is a test hook for download; by default calls the real method
-var chunkDownloader = func(g *GrpcClient, chunkID, serverAddr string, clientID int64, isData1, isData2, isParity bool) DownloadedChunk {
-	return g.downloadChunkFromServer(chunkID, serverAddr, clientID, isData1, isData2, isParity)
+var chunkDownloader = func(g *GrpcClient, chunkID, serverAddr string, username string, isData1, isData2, isParity bool) DownloadedChunk {
+	return g.downloadChunkFromServer(chunkID, serverAddr, username, isData1, isData2, isParity)
 }
 
 // checksum implementation moved to checksum.go
@@ -167,11 +306,25 @@ var chunkDownloader = func(g *GrpcClient, chunkID, serverAddr string, clientID i
 // helper functions and types were moved to dedicated files under pkg/dfsclient
 
 // DownloadFile downloads a file and writes to destPath
-func (g *GrpcClient) DownloadFile(ctx context.Context, clientID int64, filename string, destPath string) error {
-	// get metadata
-	meta, err := g.masterCli.GetFileMetadata(ctx, &dfspb.GetFileMetadataRequest{ClientId: clientID, Filename: filename})
+func (g *GrpcClient) DownloadFile(ctx context.Context, username, password string, filename string, destPath string) error {
+	cli, err := g.getConn(ctx)
 	if err != nil {
-		return fmt.Errorf("GetFileMetadata failed: %w", err)
+		return err
+	}
+
+	// get metadata
+	getReq := &dfspb.GetFileMetadataRequest{Username: username, Password: password, Filename: filename}
+	meta, err := cli.GetFileMetadata(ctx, getReq)
+	if err != nil {
+		g.resetConn()
+		cli, err = g.getConn(ctx)
+		if err != nil {
+			return err
+		}
+		meta, err = cli.GetFileMetadata(ctx, getReq)
+		if err != nil {
+			return fmt.Errorf("GetFileMetadata failed: %w", err)
+		}
 	}
 
 	// open dest file
@@ -200,7 +353,7 @@ func (g *GrpcClient) DownloadFile(ctx context.Context, clientID int64, filename 
 			ParityChunk: ChunkServerPair{ChunkID: s.ChunkIds[2], Server: s.Servers[2]},
 		}
 
-		sd := g.downloadStripe(info, clientID)
+		sd := g.downloadStripe(info, username)
 
 		// attempt reconstruction if needed
 		if sd.ChunksOK < 2 {

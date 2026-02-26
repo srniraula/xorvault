@@ -13,9 +13,10 @@ all: build
 
 build:
 	@echo "Building binaries..."
-	@go build -o $(ROOT_DIR)bin/master $(ROOT_DIR)cmd/master
+	@go build -o $(ROOT_DIR)bin/master    $(ROOT_DIR)cmd/master
 	@go build -o $(ROOT_DIR)bin/chunkserver $(ROOT_DIR)cmd/chunkserver
-	@go build -o $(ROOT_DIR)bin/client $(ROOT_DIR)cmd/client
+	@go build -o $(ROOT_DIR)bin/client    $(ROOT_DIR)cmd/client
+	@go build -o $(ROOT_DIR)bin/webserver $(ROOT_DIR)cmd/webserver
 	@echo "Build complete: binaries in bin/"
 
 # Clean build artifacts and data
@@ -29,9 +30,188 @@ clean:
 	@rm -rf clients/
 	@echo "Clean complete"
 
-# Run master server
+# Run master server (local)
 run-master: build
 	@./bin/master
+
+# ========== LAN / Distributed Deployment ==========
+# ─────────────────────────────────────────────────────────────────────
+# Usage: pass the master IP and (optionally) secondary IP on the command
+# line. No need to edit cluster.conf before running.
+#
+# MASTER   = IP:port of the PRIMARY master  (default: 127.0.0.1:50051)
+# SECONDARY= IP:port of the SECONDARY master (optional)
+# SLOT     = chunk server slot number: 1, 2, or 3
+# MY_IP    = this device's LAN IP (auto-detected if not set)
+# WEB_PORT = web API port (default: 8080)
+# UI_PORT  = frontend port (default: 5173)
+#
+# Examples — run each command on the relevant device:
+#
+#   Device A (Primary Master):
+#     make run-master-lan MASTER=192.168.1.100:50051
+#
+#   Device B (Secondary Master):
+#     make run-secondary-lan MASTER=192.168.1.100:50051 SECONDARY=192.168.1.101:50052
+#
+#   Device C (Chunk Server 1):
+#     make run-chunk-lan SLOT=1 MASTER=192.168.1.100:50051 MY_IP=192.168.1.102
+#
+#   Device D (Chunk Server 2):
+#     make run-chunk-lan SLOT=2 MASTER=192.168.1.100:50051 MY_IP=192.168.1.103
+#
+#   Device E (Chunk Server 3):
+#     make run-chunk-lan SLOT=3 MASTER=192.168.1.100:50051 MY_IP=192.168.1.104
+#
+#   Any device (Web API, separate from master):
+#     make run-web-lan MASTER=192.168.1.100:50051
+#
+#   Any device (Frontend only):
+#     make run-ui-lan MASTER_WEB=192.168.1.100:8080
+# ─────────────────────────────────────────────────────────────────────
+
+# Defaults (local dev if user doesn't supply values)
+MASTER    ?= 127.0.0.1:50051
+SECONDARY ?=
+MY_IP     ?=
+WEB_PORT  ?= 8080
+UI_PORT   ?= 5173
+
+# ── Primary Master ────────────────────────────────────────────────────
+# Starts master gRPC + Web API + Frontend all-in-one on this device.
+# Run on Device A.
+run-master-lan: build
+	@if [ -z "$(MASTER)" ]; then echo "Usage: make run-master-lan MASTER=<this-device-ip>:50051"; exit 1; fi
+	@echo ""
+	@echo "════════════════════════════════════════"
+	@echo "  Starting PRIMARY MASTER"
+	@echo "  gRPC  : $(MASTER)"
+	@echo "  WebAPI: http://$(word 1,$(subst :, ,$(MASTER))):$(WEB_PORT)"
+	@echo "  UI    : http://$(word 1,$(subst :, ,$(MASTER))):$(UI_PORT)"
+	@echo "════════════════════════════════════════"
+	@echo ""
+	@mkdir -p log_files
+	@# Write .master_addr so chunkservers on localhost can also find it
+	@echo "$(MASTER)" > .master_addr
+	@# Start master gRPC
+	MASTER_ADDR="$(MASTER)" \
+	  ./bin/master -port "$(word 2,$(subst :, ,$(MASTER)))" -mode active \
+	  > log_files/master_stdout.log 2>&1 & echo $$! >> .sys_pids
+	@sleep 2
+	@# Start Web API
+	MASTER_ADDR="$(MASTER)" SECONDARY_MASTER_ADDR="$(SECONDARY)" WEB_API_PORT="$(WEB_PORT)" \
+	  ./bin/webserver > log_files/webserver_stdout.log 2>&1 & echo $$! >> .sys_pids
+	@sleep 1
+	@# Start frontend
+	@if [ ! -d "web/node_modules" ]; then (cd web && npm install > /dev/null 2>&1); fi
+	VITE_API_BASE="http://$(word 1,$(subst :, ,$(MASTER))):$(WEB_PORT)" \
+	  (cd web && npm run dev -- --port $(UI_PORT) --host 0.0.0.0 \
+	  > ../log_files/frontend_stdout.log 2>&1) & echo $$! >> .sys_pids
+	@echo "All services started. Logs in log_files/. Stop with: make down"
+
+# ── Secondary Master ──────────────────────────────────────────────────
+# Standby that monitors the primary and auto-promotes on failure.
+# Run on Device B.
+# Usage: make run-secondary-lan MASTER=192.168.1.100:50051 SECONDARY=192.168.1.101:50052
+run-secondary-lan: build
+	@if [ -z "$(SECONDARY)" ]; then \
+		echo "Usage: make run-secondary-lan MASTER=<primary-ip>:50051 SECONDARY=<this-device-ip>:50052"; exit 1; \
+	fi
+	@echo ""
+	@echo "════════════════════════════════════════"
+	@echo "  Starting SECONDARY (STANDBY) MASTER"
+	@echo "  Listening : $(SECONDARY)"
+	@echo "  Monitoring: $(MASTER)"
+	@echo "════════════════════════════════════════"
+	@echo ""
+	@mkdir -p log_files
+	@echo "$(SECONDARY)" > .secondary_addr
+	SECONDARY_MASTER_IP="$(word 1,$(subst :, ,$(SECONDARY)))" \
+	  ./bin/master \
+	    -port "$(word 2,$(subst :, ,$(SECONDARY)))" \
+	    -mode standby \
+	    -primary "$(MASTER)" \
+	  > log_files/secondary_stdout.log 2>&1
+
+# ── Chunk Server (explicit IP) ────────────────────────────────────────
+# Run on the chunk server device.
+# Usage: make run-chunk-lan SLOT=1 MASTER=192.168.1.100:50051 MY_IP=192.168.1.102
+run-chunk-lan: build
+	@if [ -z "$(SLOT)" ]; then \
+		echo "Usage: make run-chunk-lan SLOT=<1|2|3> MASTER=<primary-ip>:50051 [MY_IP=<this-device-ip>]"; exit 1; \
+	fi
+	@echo ""
+	@echo "════════════════════════════════════════"
+	@echo "  Starting CHUNK SERVER slot $(SLOT)"
+	@echo "  My IP  : $(MY_IP) (auto if blank)"
+	@echo "  Port   : 900$(SLOT)"
+	@echo "  Master : $(MASTER)"
+	@echo "════════════════════════════════════════"
+	@echo ""
+	@mkdir -p log_files chunk_server$(SLOT)
+	CHUNKSERVER_ADDR="$(MY_IP):900$(SLOT)" \
+	  ./bin/chunkserver \
+	    -port "900$(SLOT)" \
+	    -storage "chunk_server$(SLOT)" \
+	    -master "$(MASTER)" \
+	    -secondary "$(SECONDARY)" \
+	  > log_files/cs$(SLOT)_stdout.log 2>&1
+
+# ── Web API only (on a separate device) ──────────────────────────────
+# Use this when you want the Web API running on a device that is NOT
+# the master device (e.g. a dedicated load balancer or a member's PC).
+# Usage: make run-web-lan MASTER=192.168.1.100:50051 [WEB_PORT=8080]
+run-web-lan: build
+	@echo ""
+	@echo "════════════════════════════════════════"
+	@echo "  Starting WEB API"
+	@echo "  Master : $(MASTER)"
+	@echo "  Port   : $(WEB_PORT)"
+	@echo "════════════════════════════════════════"
+	@echo ""
+	@mkdir -p log_files
+	MASTER_ADDR="$(MASTER)" WEB_API_PORT="$(WEB_PORT)" \
+	  ./bin/webserver
+
+# ── Frontend only (on any LAN device) ────────────────────────────────
+# Lets any device on the LAN run the UI pointed at the web API.
+# MASTER_WEB = IP:port of the web API (default: use MASTER device IP port 8080)
+# Usage: make run-ui-lan MASTER_WEB=192.168.1.100:8080 [UI_PORT=5173]
+MASTER_WEB ?= $(word 1,$(subst :, ,$(MASTER))):$(WEB_PORT)
+run-ui-lan:
+	@echo ""
+	@echo "════════════════════════════════════════"
+	@echo "  Starting FRONTEND"
+	@echo "  API Base: http://$(MASTER_WEB)"
+	@echo "  Port    : $(UI_PORT)"
+	@echo "════════════════════════════════════════"
+	@echo ""
+	@if [ ! -d "web/node_modules" ]; then (cd web && npm install > /dev/null 2>&1); fi
+	@cd web && VITE_API_BASE="http://$(MASTER_WEB)" \
+	  npm run dev -- --port $(UI_PORT) --host 0.0.0.0
+
+# Sync checkpoint+WAL to secondary (run on primary master device)
+lan-sync:
+	@chmod +x scripts/sync_to_secondary.sh
+	@./scripts/sync_to_secondary.sh
+
+# Older script-based targets (still work — reads cluster.conf)
+lan-master: build
+	@chmod +x scripts/start_master.sh
+	@./scripts/start_master.sh
+
+lan-secondary: build
+	@chmod +x scripts/start_secondary.sh
+	@./scripts/start_secondary.sh
+
+lan-chunk: build
+	@if [ -z "$(SLOT)" ]; then \
+		echo "Error: SLOT not specified. Usage: make lan-chunk SLOT=1"; exit 1; \
+	fi
+	@chmod +x scripts/start_chunkserver.sh
+	@./scripts/start_chunkserver.sh $(SLOT)
+
+# ========== End LAN Commands ==========
 
 # Run chunk server 1
 run-chunk_server1: build
@@ -534,7 +714,7 @@ setup-clients:
 		CLIENT_DIR="clients/client$$i"; \
 		mkdir -p "$$CLIENT_DIR"; \
 		ln -sf ../../Makefile "$$CLIENT_DIR/Makefile"; \
-		touch "$$CLIENT_DIR/.client_id"; \
+		touch "$$CLIENT_DIR/.username"; \
 		echo "# Client $$i Workspace" > "$$CLIENT_DIR/README.md"; \
 		echo "This is an isolated workspace for Client $$i." >> "$$CLIENT_DIR/README.md"; \
 		echo "Run 'make upload FILE=...' from here." >> "$$CLIENT_DIR/README.md"; \
@@ -573,46 +753,57 @@ demo:
 	@$(MAKE) ls-detailed
 	@echo "Demo Complete!"
 
-# ========== Local Cluster Management (New) ==========
+# ========== Full System Management ==========
 
-pid_file := .cluster_pids
+pid_file := .sys_pids
 
-start-cluster: build
-	@echo "Starting local cluster..."
+# Start everything: Master, Chunkservers, Web API, and Frontend
+up: build
+	@echo "Starting full XORFS system..."
 	@mkdir -p log_files
-	@# Start Master
+	@# 1. Start Master
 	@./bin/master > log_files/master_stdout.log 2>&1 & echo $$! >> $(pid_file)
-	@echo "Master started (PID $$(tail -n 1 $(pid_file)))"
-	@sleep 1
-	@# Start Chunkservers
-	@./bin/chunkserver -port 9001 -storage chunk_server1 -master $(MASTER_ADDR) > log_files/cs1_stdout.log 2>&1 & echo $$! >> $(pid_file)
-	@echo "Chunkserver 1 started (PID $$(tail -n 1 $(pid_file)))"
-	@./bin/chunkserver -port 9002 -storage chunk_server2 -master $(MASTER_ADDR) > log_files/cs2_stdout.log 2>&1 & echo $$! >> $(pid_file)
-	@echo "Chunkserver 2 started (PID $$(tail -n 1 $(pid_file)))"
-	@./bin/chunkserver -port 9003 -storage chunk_server3 -master $(MASTER_ADDR) > log_files/cs3_stdout.log 2>&1 & echo $$! >> $(pid_file)
-	@echo "Chunkserver 3 started (PID $$(tail -n 1 $(pid_file)))"
+	@echo "Master started."
+	@sleep 2
+	@# 2. Start Chunkservers (auto-detect master)
+	@./bin/chunkserver -port 9001 -storage chunk_server1 > log_files/cs1_stdout.log 2>&1 & echo $$! >> $(pid_file)
+	@./bin/chunkserver -port 9002 -storage chunk_server2 > log_files/cs2_stdout.log 2>&1 & echo $$! >> $(pid_file)
+	@./bin/chunkserver -port 9003 -storage chunk_server3 > log_files/cs3_stdout.log 2>&1 & echo $$! >> $(pid_file)
+	@echo "3 Chunkservers started."
+	@# 3. Start Web API
+	@./bin/webserver > log_files/webserver_stdout.log 2>&1 & echo $$! >> $(pid_file)
+	@echo "Web API started (port 8080)."
+	@# 4. Start Frontend
+	@if [ ! -d "web/node_modules" ]; then (cd web && npm install); fi
+	@cd web && npm run dev -- --port 5173 --host 0.0.0.0 > ../log_files/frontend_stdout.log 2>&1 & echo $$! >> ../$(pid_file)
+	@echo "Frontend started (port 5173)."
 	@echo ""
-	@echo "Cluster is running in the background."
-	@echo "Logs are in log_files/"
-	@echo "Run 'make stop-cluster' to stop all servers."
+	@echo "System is UP! Access UI at http://localhost:5173"
+	@echo "Run 'make down' to stop everything."
 
-stop-cluster:
+# Stop everything started via 'make up'
+down:
 	@if [ -f $(pid_file) ]; then \
-		echo "Stopping cluster..."; \
+		echo "Stopping XORFS system..."; \
 		while read pid; do \
 			if kill -0 $$pid 2>/dev/null; then \
-				kill $$pid; \
+				kill -9 $$pid; \
 				echo "Stopped PID $$pid"; \
 			fi; \
 		done < $(pid_file); \
 		rm $(pid_file); \
-		echo "Cluster stopped."; \
+		echo "All processes stopped."; \
 	else \
-		echo "No PID file found. Cleaning up by process name..."; \
+		echo "No system PID file found. Cleaning up by process name..."; \
 		pkill -f "bin/master" || true; \
 		pkill -f "bin/chunkserver" || true; \
+		pkill -f "webserver/main.go" || true; \
+		pkill -f "vite" || true; \
 		echo "Cleanup complete."; \
 	fi
+
+start-cluster: up
+stop-cluster: down
 
 # View local logs
 logs-local:

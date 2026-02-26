@@ -46,7 +46,7 @@ type StripeDownload struct {
 }
 
 // downloadChunkFromServer downloads a single chunk
-func (g *GrpcClient) downloadChunkFromServer(chunkID, serverAddr string, clientID int64, isData1, isData2, isParity bool) DownloadedChunk {
+func (g *GrpcClient) downloadChunkFromServer(chunkID, serverAddr string, username string, isData1, isData2, isParity bool) DownloadedChunk {
 	res := DownloadedChunk{ChunkID: chunkID, IsData1: isData1, IsData2: isData2, IsParity: isParity}
 	// Use project convention: grpc.NewClient to create connection
 	conn, err := grpc.NewClient(serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -59,7 +59,7 @@ func (g *GrpcClient) downloadChunkFromServer(chunkID, serverAddr string, clientI
 
 	cli := dfspb.NewChunkServerClient(conn)
 	rpcCtx, rpcCancel := context.WithTimeout(context.Background(), 8*time.Second)
-	resp, err := cli.ReadChunk(rpcCtx, &dfspb.ReadChunkRequest{ChunkId: chunkID, ClientId: clientID})
+	resp, err := cli.ReadChunk(rpcCtx, &dfspb.ReadChunkRequest{ChunkId: chunkID, Username: username})
 	rpcCancel()
 	if err != nil {
 		res.Success = false
@@ -81,24 +81,36 @@ func (g *GrpcClient) downloadChunkFromServer(chunkID, serverAddr string, clientI
 }
 
 // downloadStripe downloads 3 chunks in parallel
-func (g *GrpcClient) downloadStripe(info DownloadStripeInfo, clientID int64) StripeDownload {
+func (g *GrpcClient) downloadStripe(info DownloadStripeInfo, username string) StripeDownload {
 	var wg sync.WaitGroup
 	ch := make(chan DownloadedChunk, 3)
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ch <- chunkDownloader(g, info.DataChunk1.ChunkID, info.DataChunk1.Server, clientID, true, false, false)
+		if info.DataChunk1.ChunkID == "" {
+			ch <- DownloadedChunk{Success: true, IsData1: true}
+			return
+		}
+		ch <- chunkDownloader(g, info.DataChunk1.ChunkID, info.DataChunk1.Server, username, true, false, false)
 	}()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ch <- chunkDownloader(g, info.DataChunk2.ChunkID, info.DataChunk2.Server, clientID, false, true, false)
+		if info.DataChunk2.ChunkID == "" {
+			ch <- DownloadedChunk{Success: true, IsData2: true}
+			return
+		}
+		ch <- chunkDownloader(g, info.DataChunk2.ChunkID, info.DataChunk2.Server, username, false, true, false)
 	}()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ch <- chunkDownloader(g, info.ParityChunk.ChunkID, info.ParityChunk.Server, clientID, false, false, true)
+		if info.ParityChunk.ChunkID == "" {
+			ch <- DownloadedChunk{Success: true, IsParity: true}
+			return
+		}
+		ch <- chunkDownloader(g, info.ParityChunk.ChunkID, info.ParityChunk.Server, username, false, false, true)
 	}()
 
 	wg.Wait()

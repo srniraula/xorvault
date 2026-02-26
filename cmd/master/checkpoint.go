@@ -11,11 +11,14 @@ import (
 
 // Checkpoint represents a snapshot of master state at a point in time
 type Checkpoint struct {
-	Timestamp   int64                                              `json:"timestamp"`
-	FileInfo    map[int64]map[string]map[int32]*StripeMetadataJSON `json:"file_info"`
-	ClientIDs   map[int64][]string                                 `json:"client_ids"`
-	FileSizes   map[int64]map[string]int64                         `json:"file_sizes"`
-	ChunkStatus map[string]string                                  `json:"chunk_status"`
+	Timestamp       int64                                               `json:"timestamp"`
+	FileInfo        map[string]map[string]map[int32]*StripeMetadataJSON `json:"file_info"`
+	ClientIDs       map[string][]string                                 `json:"client_ids"`
+	FileSizes       map[string]map[string]int64                         `json:"file_sizes"`
+	ChunkStatus     map[string]string                                   `json:"chunk_status"`
+	UserPasswords   map[string]string                                   `json:"user_passwords"`
+	ClientFolders   map[string]map[string]bool                          `json:"client_folders"`
+	FileUploadTimes map[string]map[string]int64                         `json:"file_upload_times"`
 }
 
 // StripeMetadataJSON is a JSON-serializable version of StripeMetadata
@@ -34,17 +37,17 @@ func (m *MasterServer) CreateCheckpoint(checkpointPath string) error {
 	m.logger.Printf("Creating checkpoint at %s", checkpointPath)
 
 	// Convert protobuf StripeMetadata to JSON-serializable format
-	fileInfoJSON := make(map[int64]map[string]map[int32]*StripeMetadataJSON)
-	for clientID, _ := range m.fileInfo {
+	fileInfoJSON := make(map[string]map[string]map[int32]*StripeMetadataJSON)
+	for username, _ := range m.fileInfo {
 		// initialize per-client entry
-		if _, ok := fileInfoJSON[clientID]; !ok {
-			fileInfoJSON[clientID] = make(map[string]map[int32]*StripeMetadataJSON)
+		if _, ok := fileInfoJSON[username]; !ok {
+			fileInfoJSON[username] = make(map[string]map[int32]*StripeMetadataJSON)
 		}
 
-		for filename, stripes := range m.fileInfo[clientID] {
-			fileInfoJSON[clientID][filename] = make(map[int32]*StripeMetadataJSON)
+		for filename, stripes := range m.fileInfo[username] {
+			fileInfoJSON[username][filename] = make(map[int32]*StripeMetadataJSON)
 			for stripeNum, stripe := range stripes {
-				fileInfoJSON[clientID][filename][stripeNum] = &StripeMetadataJSON{
+				fileInfoJSON[username][filename][stripeNum] = &StripeMetadataJSON{
 					StripeNum: stripe.StripeNum,
 					ChunkIds:  stripe.ChunkIds,
 					Servers:   stripe.Servers,
@@ -55,11 +58,14 @@ func (m *MasterServer) CreateCheckpoint(checkpointPath string) error {
 
 	// Create checkpoint structure
 	checkpoint := Checkpoint{
-		Timestamp:   time.Now().Unix(),
-		FileInfo:    fileInfoJSON,
-		ClientIDs:   m.clientIDs,
-		FileSizes:   m.fileSizes,
-		ChunkStatus: m.chunkStatus,
+		Timestamp:       time.Now().Unix(),
+		FileInfo:        fileInfoJSON,
+		ClientIDs:       m.clientIDs,
+		FileSizes:       m.fileSizes,
+		ChunkStatus:     m.chunkStatus,
+		UserPasswords:   m.userPasswords,
+		ClientFolders:   m.clientFolders,
+		FileUploadTimes: m.fileUploadTimes,
 	}
 
 	// Serialize to JSON
@@ -110,9 +116,21 @@ func (m *MasterServer) LoadCheckpoint(checkpointPath string) error {
 	m.clientIDs = checkpoint.ClientIDs
 	m.fileSizes = checkpoint.FileSizes
 	m.chunkStatus = checkpoint.ChunkStatus
+	m.userPasswords = checkpoint.UserPasswords
+	if m.userPasswords == nil {
+		m.userPasswords = make(map[string]string)
+	}
+	m.clientFolders = checkpoint.ClientFolders
+	if m.clientFolders == nil {
+		m.clientFolders = make(map[string]map[string]bool)
+	}
+	m.fileUploadTimes = checkpoint.FileUploadTimes
+	if m.fileUploadTimes == nil {
+		m.fileUploadTimes = make(map[string]map[string]int64)
+	}
 
 	// Convert JSON format back to protobuf StripeMetadata
-	m.fileInfo = make(map[int64]map[string]map[int32]*dfspb.StripeMetadata)
+	m.fileInfo = make(map[string]map[string]map[int32]*dfspb.StripeMetadata)
 	// 	for filename, stripesJSON := range checkpoint.FileInfo {
 	// 		m.fileInfo[filename] = make(map[int32]*dfspb.StripeMetadata)
 	// 		for stripeNum, stripeJSON := range stripesJSON {
@@ -124,15 +142,15 @@ func (m *MasterServer) LoadCheckpoint(checkpointPath string) error {
 	// 		}
 	// }
 
-	for clientID, _ := range checkpoint.FileInfo {
-		m.fileInfo[clientID] = make(map[string]map[int32]*dfspb.StripeMetadata)
-		for filename, stripesJSON := range checkpoint.FileInfo[clientID] {
+	for username, _ := range checkpoint.FileInfo {
+		m.fileInfo[username] = make(map[string]map[int32]*dfspb.StripeMetadata)
+		for filename, stripesJSON := range checkpoint.FileInfo[username] {
 			// initialize per-file map
-			if _, ok := m.fileInfo[clientID][filename]; !ok {
-				m.fileInfo[clientID][filename] = make(map[int32]*dfspb.StripeMetadata)
+			if _, ok := m.fileInfo[username][filename]; !ok {
+				m.fileInfo[username][filename] = make(map[int32]*dfspb.StripeMetadata)
 			}
 			for stripeNum, stripeJSON := range stripesJSON {
-				m.fileInfo[clientID][filename][stripeNum] = &dfspb.StripeMetadata{
+				m.fileInfo[username][filename][stripeNum] = &dfspb.StripeMetadata{
 					StripeNum: stripeJSON.StripeNum,
 					ChunkIds:  stripeJSON.ChunkIds,
 					Servers:   stripeJSON.Servers,

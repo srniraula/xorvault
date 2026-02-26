@@ -38,8 +38,8 @@ func (c *ChunkServer) scanInventory() []string {
 		}
 
 		// Extract chunk ID from path
-		// Path format: storagePath/client_id/chunk_id
-		// relPath : client_id/chunk_id
+		// Path format: storagePath/username/chunk_id
+		// relPath : username/chunk_id
 		relPath, err := filepath.Rel(c.storagePath, path)
 		if err != nil {
 			return err

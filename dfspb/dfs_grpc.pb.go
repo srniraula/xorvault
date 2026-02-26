@@ -19,6 +19,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	MasterServer_Authenticate_FullMethodName      = "/dfspb.MasterServer/Authenticate"
 	MasterServer_CreateFile_FullMethodName        = "/dfspb.MasterServer/CreateFile"
 	MasterServer_AllocateChunk_FullMethodName     = "/dfspb.MasterServer/AllocateChunk"
 	MasterServer_GetFileMetadata_FullMethodName   = "/dfspb.MasterServer/GetFileMetadata"
@@ -27,18 +28,19 @@ const (
 	MasterServer_ConfirmWrite_FullMethodName      = "/dfspb.MasterServer/ConfirmWrite"
 	MasterServer_DeleteFile_FullMethodName        = "/dfspb.MasterServer/DeleteFile"
 	MasterServer_ListFiles_FullMethodName         = "/dfspb.MasterServer/ListFiles"
+	MasterServer_Ping_FullMethodName              = "/dfspb.MasterServer/Ping"
 	MasterServer_CreateFolder_FullMethodName      = "/dfspb.MasterServer/CreateFolder"
 	MasterServer_DeleteFolder_FullMethodName      = "/dfspb.MasterServer/DeleteFolder"
-	MasterServer_MoveFile_FullMethodName          = "/dfspb.MasterServer/MoveFile"
 	MasterServer_ListFilesDetailed_FullMethodName = "/dfspb.MasterServer/ListFilesDetailed"
+	MasterServer_MoveFile_FullMethodName          = "/dfspb.MasterServer/MoveFile"
 	MasterServer_ReadFileContent_FullMethodName   = "/dfspb.MasterServer/ReadFileContent"
-	MasterServer_Ping_FullMethodName              = "/dfspb.MasterServer/Ping"
 )
 
 // MasterServerClient is the client API for MasterServer service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type MasterServerClient interface {
+	Authenticate(ctx context.Context, in *AuthenticateRequest, opts ...grpc.CallOption) (*AuthenticateResponse, error)
 	CreateFile(ctx context.Context, in *CreateFileRequest, opts ...grpc.CallOption) (*CreateFileResponse, error)
 	AllocateChunk(ctx context.Context, in *AllocateChunkRequest, opts ...grpc.CallOption) (*AllocateChunkResponse, error)
 	GetFileMetadata(ctx context.Context, in *GetFileMetadataRequest, opts ...grpc.CallOption) (*GetFileMetadataResponse, error)
@@ -47,13 +49,13 @@ type MasterServerClient interface {
 	ConfirmWrite(ctx context.Context, in *ConfirmWriteRequest, opts ...grpc.CallOption) (*ConfirmWriteResponse, error)
 	DeleteFile(ctx context.Context, in *DeleteFileRequest, opts ...grpc.CallOption) (*DeleteFileResponse, error)
 	ListFiles(ctx context.Context, in *ListFilesRequest, opts ...grpc.CallOption) (*ListFilesResponse, error)
-	// New folder and file operations
+	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
+	// Folder Operations
 	CreateFolder(ctx context.Context, in *CreateFolderRequest, opts ...grpc.CallOption) (*CreateFolderResponse, error)
 	DeleteFolder(ctx context.Context, in *DeleteFolderRequest, opts ...grpc.CallOption) (*DeleteFolderResponse, error)
-	MoveFile(ctx context.Context, in *MoveFileRequest, opts ...grpc.CallOption) (*MoveFileResponse, error)
 	ListFilesDetailed(ctx context.Context, in *ListFilesDetailedRequest, opts ...grpc.CallOption) (*ListFilesDetailedResponse, error)
+	MoveFile(ctx context.Context, in *MoveFileRequest, opts ...grpc.CallOption) (*MoveFileResponse, error)
 	ReadFileContent(ctx context.Context, in *ReadFileContentRequest, opts ...grpc.CallOption) (*ReadFileContentResponse, error)
-	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
 }
 
 type masterServerClient struct {
@@ -62,6 +64,16 @@ type masterServerClient struct {
 
 func NewMasterServerClient(cc grpc.ClientConnInterface) MasterServerClient {
 	return &masterServerClient{cc}
+}
+
+func (c *masterServerClient) Authenticate(ctx context.Context, in *AuthenticateRequest, opts ...grpc.CallOption) (*AuthenticateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AuthenticateResponse)
+	err := c.cc.Invoke(ctx, MasterServer_Authenticate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *masterServerClient) CreateFile(ctx context.Context, in *CreateFileRequest, opts ...grpc.CallOption) (*CreateFileResponse, error) {
@@ -144,6 +156,16 @@ func (c *masterServerClient) ListFiles(ctx context.Context, in *ListFilesRequest
 	return out, nil
 }
 
+func (c *masterServerClient) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PingResponse)
+	err := c.cc.Invoke(ctx, MasterServer_Ping_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *masterServerClient) CreateFolder(ctx context.Context, in *CreateFolderRequest, opts ...grpc.CallOption) (*CreateFolderResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CreateFolderResponse)
@@ -164,20 +186,20 @@ func (c *masterServerClient) DeleteFolder(ctx context.Context, in *DeleteFolderR
 	return out, nil
 }
 
-func (c *masterServerClient) MoveFile(ctx context.Context, in *MoveFileRequest, opts ...grpc.CallOption) (*MoveFileResponse, error) {
+func (c *masterServerClient) ListFilesDetailed(ctx context.Context, in *ListFilesDetailedRequest, opts ...grpc.CallOption) (*ListFilesDetailedResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(MoveFileResponse)
-	err := c.cc.Invoke(ctx, MasterServer_MoveFile_FullMethodName, in, out, cOpts...)
+	out := new(ListFilesDetailedResponse)
+	err := c.cc.Invoke(ctx, MasterServer_ListFilesDetailed_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *masterServerClient) ListFilesDetailed(ctx context.Context, in *ListFilesDetailedRequest, opts ...grpc.CallOption) (*ListFilesDetailedResponse, error) {
+func (c *masterServerClient) MoveFile(ctx context.Context, in *MoveFileRequest, opts ...grpc.CallOption) (*MoveFileResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListFilesDetailedResponse)
-	err := c.cc.Invoke(ctx, MasterServer_ListFilesDetailed_FullMethodName, in, out, cOpts...)
+	out := new(MoveFileResponse)
+	err := c.cc.Invoke(ctx, MasterServer_MoveFile_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -194,20 +216,11 @@ func (c *masterServerClient) ReadFileContent(ctx context.Context, in *ReadFileCo
 	return out, nil
 }
 
-func (c *masterServerClient) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(PingResponse)
-	err := c.cc.Invoke(ctx, MasterServer_Ping_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // MasterServerServer is the server API for MasterServer service.
 // All implementations must embed UnimplementedMasterServerServer
 // for forward compatibility.
 type MasterServerServer interface {
+	Authenticate(context.Context, *AuthenticateRequest) (*AuthenticateResponse, error)
 	CreateFile(context.Context, *CreateFileRequest) (*CreateFileResponse, error)
 	AllocateChunk(context.Context, *AllocateChunkRequest) (*AllocateChunkResponse, error)
 	GetFileMetadata(context.Context, *GetFileMetadataRequest) (*GetFileMetadataResponse, error)
@@ -216,13 +229,13 @@ type MasterServerServer interface {
 	ConfirmWrite(context.Context, *ConfirmWriteRequest) (*ConfirmWriteResponse, error)
 	DeleteFile(context.Context, *DeleteFileRequest) (*DeleteFileResponse, error)
 	ListFiles(context.Context, *ListFilesRequest) (*ListFilesResponse, error)
-	// New folder and file operations
+	Ping(context.Context, *PingRequest) (*PingResponse, error)
+	// Folder Operations
 	CreateFolder(context.Context, *CreateFolderRequest) (*CreateFolderResponse, error)
 	DeleteFolder(context.Context, *DeleteFolderRequest) (*DeleteFolderResponse, error)
-	MoveFile(context.Context, *MoveFileRequest) (*MoveFileResponse, error)
 	ListFilesDetailed(context.Context, *ListFilesDetailedRequest) (*ListFilesDetailedResponse, error)
+	MoveFile(context.Context, *MoveFileRequest) (*MoveFileResponse, error)
 	ReadFileContent(context.Context, *ReadFileContentRequest) (*ReadFileContentResponse, error)
-	Ping(context.Context, *PingRequest) (*PingResponse, error)
 	mustEmbedUnimplementedMasterServerServer()
 }
 
@@ -233,6 +246,9 @@ type MasterServerServer interface {
 // pointer dereference when methods are called.
 type UnimplementedMasterServerServer struct{}
 
+func (UnimplementedMasterServerServer) Authenticate(context.Context, *AuthenticateRequest) (*AuthenticateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Authenticate not implemented")
+}
 func (UnimplementedMasterServerServer) CreateFile(context.Context, *CreateFileRequest) (*CreateFileResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateFile not implemented")
 }
@@ -257,23 +273,23 @@ func (UnimplementedMasterServerServer) DeleteFile(context.Context, *DeleteFileRe
 func (UnimplementedMasterServerServer) ListFiles(context.Context, *ListFilesRequest) (*ListFilesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListFiles not implemented")
 }
+func (UnimplementedMasterServerServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Ping not implemented")
+}
 func (UnimplementedMasterServerServer) CreateFolder(context.Context, *CreateFolderRequest) (*CreateFolderResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateFolder not implemented")
 }
 func (UnimplementedMasterServerServer) DeleteFolder(context.Context, *DeleteFolderRequest) (*DeleteFolderResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteFolder not implemented")
 }
-func (UnimplementedMasterServerServer) MoveFile(context.Context, *MoveFileRequest) (*MoveFileResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method MoveFile not implemented")
-}
 func (UnimplementedMasterServerServer) ListFilesDetailed(context.Context, *ListFilesDetailedRequest) (*ListFilesDetailedResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListFilesDetailed not implemented")
 }
+func (UnimplementedMasterServerServer) MoveFile(context.Context, *MoveFileRequest) (*MoveFileResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method MoveFile not implemented")
+}
 func (UnimplementedMasterServerServer) ReadFileContent(context.Context, *ReadFileContentRequest) (*ReadFileContentResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReadFileContent not implemented")
-}
-func (UnimplementedMasterServerServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method Ping not implemented")
 }
 func (UnimplementedMasterServerServer) mustEmbedUnimplementedMasterServerServer() {}
 func (UnimplementedMasterServerServer) testEmbeddedByValue()                      {}
@@ -294,6 +310,24 @@ func RegisterMasterServerServer(s grpc.ServiceRegistrar, srv MasterServerServer)
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&MasterServer_ServiceDesc, srv)
+}
+
+func _MasterServer_Authenticate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AuthenticateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MasterServerServer).Authenticate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MasterServer_Authenticate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MasterServerServer).Authenticate(ctx, req.(*AuthenticateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _MasterServer_CreateFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -440,6 +474,24 @@ func _MasterServer_ListFiles_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MasterServer_Ping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MasterServerServer).Ping(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MasterServer_Ping_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MasterServerServer).Ping(ctx, req.(*PingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _MasterServer_CreateFolder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CreateFolderRequest)
 	if err := dec(in); err != nil {
@@ -476,24 +528,6 @@ func _MasterServer_DeleteFolder_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MasterServer_MoveFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MoveFileRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MasterServerServer).MoveFile(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: MasterServer_MoveFile_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MasterServerServer).MoveFile(ctx, req.(*MoveFileRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _MasterServer_ListFilesDetailed_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListFilesDetailedRequest)
 	if err := dec(in); err != nil {
@@ -508,6 +542,24 @@ func _MasterServer_ListFilesDetailed_Handler(srv interface{}, ctx context.Contex
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MasterServerServer).ListFilesDetailed(ctx, req.(*ListFilesDetailedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MasterServer_MoveFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MoveFileRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MasterServerServer).MoveFile(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MasterServer_MoveFile_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MasterServerServer).MoveFile(ctx, req.(*MoveFileRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -530,24 +582,6 @@ func _MasterServer_ReadFileContent_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MasterServer_Ping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PingRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MasterServerServer).Ping(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: MasterServer_Ping_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MasterServerServer).Ping(ctx, req.(*PingRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // MasterServer_ServiceDesc is the grpc.ServiceDesc for MasterServer service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -555,6 +589,10 @@ var MasterServer_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "dfspb.MasterServer",
 	HandlerType: (*MasterServerServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Authenticate",
+			Handler:    _MasterServer_Authenticate_Handler,
+		},
 		{
 			MethodName: "CreateFile",
 			Handler:    _MasterServer_CreateFile_Handler,
@@ -588,6 +626,10 @@ var MasterServer_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _MasterServer_ListFiles_Handler,
 		},
 		{
+			MethodName: "Ping",
+			Handler:    _MasterServer_Ping_Handler,
+		},
+		{
 			MethodName: "CreateFolder",
 			Handler:    _MasterServer_CreateFolder_Handler,
 		},
@@ -596,20 +638,16 @@ var MasterServer_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _MasterServer_DeleteFolder_Handler,
 		},
 		{
-			MethodName: "MoveFile",
-			Handler:    _MasterServer_MoveFile_Handler,
-		},
-		{
 			MethodName: "ListFilesDetailed",
 			Handler:    _MasterServer_ListFilesDetailed_Handler,
 		},
 		{
-			MethodName: "ReadFileContent",
-			Handler:    _MasterServer_ReadFileContent_Handler,
+			MethodName: "MoveFile",
+			Handler:    _MasterServer_MoveFile_Handler,
 		},
 		{
-			MethodName: "Ping",
-			Handler:    _MasterServer_Ping_Handler,
+			MethodName: "ReadFileContent",
+			Handler:    _MasterServer_ReadFileContent_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

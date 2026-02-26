@@ -118,13 +118,13 @@ func (m *MasterServer) buildTaskForChunk(missingChunkID string, recoveringServer
 				// Found it! Build reconstruction task with the other 2 chunks
 				var otherChunkIDs []string
 				var otherServers []string
-				var clientID int64
+				var username string
 
-				// Get client ID from filename
-				for cid, files := range m.clientIDs {
+				// Get username from filename
+				for uname, files := range m.clientIDs {
 					for _, f := range files {
 						if f == filename {
-							clientID = cid
+							username = uname
 							goto found
 						}
 					}
@@ -144,7 +144,7 @@ func (m *MasterServer) buildTaskForChunk(missingChunkID string, recoveringServer
 					StripeNum:     stripeNum,
 					OtherChunkIds: otherChunkIDs,
 					OtherServers:  otherServers,
-					ClientId:      clientID,
+					Username:      username,
 				}
 			}
 		}

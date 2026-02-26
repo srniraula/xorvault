@@ -16,13 +16,13 @@ func TestUploadStripesStreamingSuccess(t *testing.T) {
 
 	// stub uploader
 	orig := chunkUploader
-	chunkUploader = func(ctx context.Context, serverAddr string, chunkID string, data []byte, clientID int64) error {
+	chunkUploader = func(ctx context.Context, serverAddr string, chunkID string, data []byte, username string) error {
 		return nil
 	}
 	defer func() { chunkUploader = orig }()
 
 	g := &GrpcClient{}
-	ok, err := g.uploadStripesStreaming(ch, ack, 42)
+	ok, err := g.uploadStripesStreaming(ch, ack, "user-test")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestUploadStripesStreamingFailure(t *testing.T) {
 	ack := NewAckQueue()
 
 	orig := chunkUploader
-	chunkUploader = func(ctx context.Context, serverAddr string, chunkID string, data []byte, clientID int64) error {
+	chunkUploader = func(ctx context.Context, serverAddr string, chunkID string, data []byte, username string) error {
 		if chunkID == "c2" {
 			return context.Canceled
 		}
@@ -52,7 +52,7 @@ func TestUploadStripesStreamingFailure(t *testing.T) {
 	defer func() { chunkUploader = orig }()
 
 	g := &GrpcClient{}
-	_, err := g.uploadStripesStreaming(ch, ack, 42)
+	_, err := g.uploadStripesStreaming(ch, ack, "user-test")
 	if err == nil {
 		t.Fatalf("expected error due to one failed chunk")
 	}

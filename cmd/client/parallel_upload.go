@@ -17,7 +17,7 @@ type UploadTask struct {
 	ChunkID    string
 	Data       []byte
 	Checksum   string
-	ClientID   int64
+	Username   string
 }
 
 // UploadResult contains the result of a chunk upload
@@ -31,7 +31,7 @@ type UploadResult struct {
 // uploadStripesStreaming consumes stripes from a channel and uploads chunks in parallel
 // Uses pipeline pattern - uploads chunks as stripes arrive, no memory accumulation
 // Returns list of successfully uploaded chunk IDs
-func uploadStripesStreaming(stripeChan <-chan Stripe, ackQueue *AckQueue, clientID int64) ([]string, error) {
+func uploadStripesStreaming(stripeChan <-chan Stripe, ackQueue *AckQueue, username string) ([]string, error) {
 	var wg sync.WaitGroup
 
 	// Result channel - buffered to prevent upload goroutines from blocking
@@ -82,21 +82,21 @@ func uploadStripesStreaming(stripeChan <-chan Stripe, ackQueue *AckQueue, client
 				ChunkID:    stripe.ChunkIDs[0],
 				Data:       stripe.DataChunk1,
 				Checksum:   stripe.Checksums[0],
-				ClientID:   clientID,
+				Username:   username,
 			},
 			{
 				ServerAddr: stripe.Servers[1],
 				ChunkID:    stripe.ChunkIDs[1],
 				Data:       stripe.DataChunk2,
 				Checksum:   stripe.Checksums[1],
-				ClientID:   clientID,
+				Username:   username,
 			},
 			{
 				ServerAddr: stripe.Servers[2],
 				ChunkID:    stripe.ChunkIDs[2],
 				Data:       stripe.ParityChunk,
 				Checksum:   stripe.Checksums[2],
-				ClientID:   clientID,
+				Username:   username,
 			},
 		}
 
@@ -158,7 +158,7 @@ func uploadChunk(task UploadTask, wg *sync.WaitGroup, resultChan chan<- UploadRe
 		ChunkId:  task.ChunkID,
 		Data:     task.Data,
 		Checksum: task.Checksum,
-		ClientId: task.ClientID,
+		Username: task.Username,
 	})
 
 	if err != nil {

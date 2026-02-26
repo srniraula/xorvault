@@ -3,16 +3,18 @@ package main
 import (
 	"dfs-project/dfspb"
 	"flag"
-	"google.golang.org/grpc"
 	"log"
 	"net"
 	"os"
+
+	"google.golang.org/grpc"
 )
 
 func main() {
 	port := flag.String("port", "9001", "server port")
 	storage := flag.String("storage", "chunks", "storage directory")
 	master := flag.String("master", "", "master server address (host:port)")
+	secondary := flag.String("secondary", "", "secondary master server address (host:port)")
 	flag.Parse()
 
 	// Setup logging
@@ -44,8 +46,8 @@ func main() {
 	// Perform inventory check on startup
 	go PerformInventoryCheck(server, *port, chunkLogger)
 
-	// Start heartbeat goroutine (pass configured master address or use default)
-	go SendHeartbeats(*port, *master, chunkLogger)
+	// Start heartbeat goroutine (pass configured master addresses)
+	go SendHeartbeats(*port, *master, *secondary, chunkLogger)
 
 	log.Printf("ChunkServer running on 0.0.0.0:%s (storage: %s)", *port, *storage)
 

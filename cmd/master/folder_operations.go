@@ -17,7 +17,12 @@ func (m *MasterServer) CreateFolder(ctx context.Context, req *dfspb.CreateFolder
 	defer m.mu.Unlock()
 
 	// Ensure client maps exist
-	m.ensureClientMaps(req.ClientId)
+	m.ensureClientMaps(req.Username)
+
+	// Verify password
+	if pass, exists := m.userPasswords[req.Username]; !exists || pass != req.Password {
+		return nil, fmt.Errorf("authentication failed")
+	}
 
 	// Clean the folder path (remove trailing slashes, etc.)
 	folderPath := filepath.Clean(req.FolderPath)
@@ -29,7 +34,7 @@ func (m *MasterServer) CreateFolder(ctx context.Context, req *dfspb.CreateFolder
 	}
 
 	// Check if folder already exists
-	if m.clientFolders[req.ClientId][folderPath] {
+	if m.clientFolders[req.Username][folderPath] {
 		return &dfspb.CreateFolderResponse{
 			Success: false,
 			Message: fmt.Sprintf("folder '%s' already exists", folderPath),
@@ -48,10 +53,10 @@ func (m *MasterServer) CreateFolder(ctx context.Context, req *dfspb.CreateFolder
 		} else {
 			currentPath = filepath.Join(currentPath, part)
 		}
-		m.clientFolders[req.ClientId][currentPath] = true
+		m.clientFolders[req.Username][currentPath] = true
 	}
 
-	m.logger.Printf("Client %d created folder: %s", req.ClientId, folderPath)
+	m.logger.Printf("User %s created folder: %s", req.Username, folderPath)
 
 	return &dfspb.CreateFolderResponse{
 		Success: true,
@@ -64,6 +69,11 @@ func (m *MasterServer) DeleteFolder(ctx context.Context, req *dfspb.DeleteFolder
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Verify password
+	if pass, exists := m.userPasswords[req.Username]; !exists || pass != req.Password {
+		return nil, fmt.Errorf("authentication failed")
+	}
+
 	folderPath := filepath.Clean(req.FolderPath)
 	if folderPath == "." || folderPath == "/" {
 		return &dfspb.DeleteFolderResponse{
@@ -73,7 +83,7 @@ func (m *MasterServer) DeleteFolder(ctx context.Context, req *dfspb.DeleteFolder
 	}
 
 	// Check if folder exists
-	if !m.clientFolders[req.ClientId][folderPath] {
+	if !m.clientFolders[req.Username][folderPath] {
 		return &dfspb.DeleteFolderResponse{
 			Success: false,
 			Message: fmt.Sprintf("folder '%s' not found", folderPath),
@@ -82,7 +92,7 @@ func (m *MasterServer) DeleteFolder(ctx context.Context, req *dfspb.DeleteFolder
 
 	// Check if folder contains files
 	prefix := folderPath + "/"
-	for filename := range m.fileInfo[req.ClientId] {
+	for filename := range m.fileInfo[req.Username] {
 		if strings.HasPrefix(filename, prefix) || filename == folderPath {
 			return &dfspb.DeleteFolderResponse{
 				Success: false,
@@ -92,7 +102,7 @@ func (m *MasterServer) DeleteFolder(ctx context.Context, req *dfspb.DeleteFolder
 	}
 
 	// Check if folder contains subfolders
-	for subfolderPath := range m.clientFolders[req.ClientId] {
+	for subfolderPath := range m.clientFolders[req.Username] {
 		if subfolderPath != folderPath && strings.HasPrefix(subfolderPath, prefix) {
 			return &dfspb.DeleteFolderResponse{
 				Success: false,
@@ -102,9 +112,9 @@ func (m *MasterServer) DeleteFolder(ctx context.Context, req *dfspb.DeleteFolder
 	}
 
 	// Delete the folder
-	delete(m.clientFolders[req.ClientId], folderPath)
+	delete(m.clientFolders[req.Username], folderPath)
 
-	m.logger.Printf("Client %d deleted folder: %s", req.ClientId, folderPath)
+	m.logger.Printf("User %s deleted folder: %s", req.Username, folderPath)
 
 	return &dfspb.DeleteFolderResponse{
 		Success: true,
@@ -117,11 +127,16 @@ func (m *MasterServer) MoveFile(ctx context.Context, req *dfspb.MoveFileRequest)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Verify password
+	if pass, exists := m.userPasswords[req.Username]; !exists || pass != req.Password {
+		return nil, fmt.Errorf("authentication failed")
+	}
+
 	sourcePath := filepath.Clean(req.SourcePath)
 	destPath := filepath.Clean(req.DestinationPath)
 
 	// Check if source file exists
-	stripes, exists := m.fileInfo[req.ClientId][sourcePath]
+	stripes, exists := m.fileInfo[req.Username][sourcePath]
 	if !exists {
 		return &dfspb.MoveFileResponse{
 			Success: false,
@@ -130,7 +145,7 @@ func (m *MasterServer) MoveFile(ctx context.Context, req *dfspb.MoveFileRequest)
 	}
 
 	// Check if destination already exists
-	if _, exists := m.fileInfo[req.ClientId][destPath]; exists {
+	if _, exists := m.fileInfo[req.Username][destPath]; exists {
 		return &dfspb.MoveFileResponse{
 			Success: false,
 			Message: fmt.Sprintf("destination file '%s' already exists", destPath),
@@ -140,7 +155,7 @@ func (m *MasterServer) MoveFile(ctx context.Context, req *dfspb.MoveFileRequest)
 	// Check if destination folder exists (if not root)
 	destDir := filepath.Dir(destPath)
 	if destDir != "." && destDir != "/" {
-		if !m.clientFolders[req.ClientId][destDir] {
+		if !m.clientFolders[req.Username][destDir] {
 			return &dfspb.MoveFileResponse{
 				Success: false,
 				Message: fmt.Sprintf("destination folder '%s' does not exist", destDir),
@@ -149,30 +164,30 @@ func (m *MasterServer) MoveFile(ctx context.Context, req *dfspb.MoveFileRequest)
 	}
 
 	// Move file metadata
-	m.fileInfo[req.ClientId][destPath] = stripes
-	delete(m.fileInfo[req.ClientId], sourcePath)
+	m.fileInfo[req.Username][destPath] = stripes
+	delete(m.fileInfo[req.Username], sourcePath)
 
 	// Move file size
-	if size, ok := m.fileSizes[req.ClientId][sourcePath]; ok {
-		m.fileSizes[req.ClientId][destPath] = size
-		delete(m.fileSizes[req.ClientId], sourcePath)
+	if size, ok := m.fileSizes[req.Username][sourcePath]; ok {
+		m.fileSizes[req.Username][destPath] = size
+		delete(m.fileSizes[req.Username], sourcePath)
 	}
 
 	// Move upload time
-	if uploadTime, ok := m.fileUploadTimes[req.ClientId][sourcePath]; ok {
-		m.fileUploadTimes[req.ClientId][destPath] = uploadTime
-		delete(m.fileUploadTimes[req.ClientId], sourcePath)
+	if uploadTime, ok := m.fileUploadTimes[req.Username][sourcePath]; ok {
+		m.fileUploadTimes[req.Username][destPath] = uploadTime
+		delete(m.fileUploadTimes[req.Username], sourcePath)
 	}
 
 	// Update clientIDs list
-	for i, filename := range m.clientIDs[req.ClientId] {
+	for i, filename := range m.clientIDs[req.Username] {
 		if filename == sourcePath {
-			m.clientIDs[req.ClientId][i] = destPath
+			m.clientIDs[req.Username][i] = destPath
 			break
 		}
 	}
 
-	m.logger.Printf("Client %d moved file: %s -> %s", req.ClientId, sourcePath, destPath)
+	m.logger.Printf("User %s moved file: %s -> %s", req.Username, sourcePath, destPath)
 
 	return &dfspb.MoveFileResponse{
 		Success: true,
@@ -185,15 +200,20 @@ func (m *MasterServer) ListFilesDetailed(ctx context.Context, req *dfspb.ListFil
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Verify password
+	if pass, exists := m.userPasswords[req.Username]; !exists || pass != req.Password {
+		return nil, fmt.Errorf("authentication failed")
+	}
+
 	items := []*dfspb.FileMetadata{}
 
-	folderPath := filepath.Clean(req.FolderPath)
+	folderPath := filepath.Clean(req.Folder)
 	if folderPath == "." {
 		folderPath = ""
 	}
 
 	// Add folders
-	for folder := range m.clientFolders[req.ClientId] {
+	for folder := range m.clientFolders[req.Username] {
 		// Filter by requested folder path
 		if folderPath != "" {
 			prefix := folderPath + "/"
@@ -221,7 +241,7 @@ func (m *MasterServer) ListFilesDetailed(ctx context.Context, req *dfspb.ListFil
 	}
 
 	// Add files
-	for filename, size := range m.fileSizes[req.ClientId] {
+	for filename, size := range m.fileSizes[req.Username] {
 		// Filter by requested folder path
 		if folderPath != "" {
 			prefix := folderPath + "/"
@@ -241,7 +261,7 @@ func (m *MasterServer) ListFilesDetailed(ctx context.Context, req *dfspb.ListFil
 		}
 
 		uploadTime := int64(0)
-		if t, ok := m.fileUploadTimes[req.ClientId][filename]; ok {
+		if t, ok := m.fileUploadTimes[req.Username][filename]; ok {
 			uploadTime = t
 		}
 
@@ -262,15 +282,21 @@ func (m *MasterServer) ListFilesDetailed(ctx context.Context, req *dfspb.ListFil
 func (m *MasterServer) ReadFileContent(ctx context.Context, req *dfspb.ReadFileContentRequest) (*dfspb.ReadFileContentResponse, error) {
 	m.mu.Lock()
 
+	// Verify password
+	if pass, exists := m.userPasswords[req.Username]; !exists || pass != req.Password {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("authentication failed")
+	}
+
 	// Get file metadata
-	stripes, exists := m.fileInfo[req.ClientId][req.Filename]
+	stripes, exists := m.fileInfo[req.Username][req.Filename]
 	if !exists {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("file not found: %s", req.Filename)
 	}
 
 	totalSize := int64(0)
-	if size, ok := m.fileSizes[req.ClientId][req.Filename]; ok {
+	if size, ok := m.fileSizes[req.Username][req.Filename]; ok {
 		totalSize = size
 	}
 
@@ -304,7 +330,7 @@ func (m *MasterServer) ReadFileContent(ctx context.Context, req *dfspb.ReadFileC
 		}
 
 		// Download chunks for this stripe
-		stripeData := m.downloadStripeData(stripe, req.ClientId)
+		stripeData := m.downloadStripeData(stripe, req.Username)
 		if stripeData == nil {
 			return nil, fmt.Errorf("failed to read stripe %d", stripeNum)
 		}
@@ -330,7 +356,7 @@ func (m *MasterServer) ReadFileContent(ctx context.Context, req *dfspb.ReadFileC
 }
 
 // downloadStripeData downloads and reconstructs a stripe's data
-func (m *MasterServer) downloadStripeData(stripe *dfspb.StripeMetadata, clientID int64) []byte {
+func (m *MasterServer) downloadStripeData(stripe *dfspb.StripeMetadata, username string) []byte {
 	const CHUNK_SIZE = 1 * 1024 * 1024
 
 	// Try to download data chunks
@@ -338,12 +364,12 @@ func (m *MasterServer) downloadStripeData(stripe *dfspb.StripeMetadata, clientID
 
 	// Download first data chunk
 	if len(stripe.ChunkIds) > 0 && len(stripe.Servers) > 0 {
-		data1 = m.downloadChunk(stripe.Servers[0], stripe.ChunkIds[0], clientID)
+		data1 = m.downloadChunk(stripe.Servers[0], stripe.ChunkIds[0], username)
 	}
 
 	// Download second data chunk (if exists)
 	if len(stripe.ChunkIds) > 1 && len(stripe.Servers) > 1 {
-		data2 = m.downloadChunk(stripe.Servers[1], stripe.ChunkIds[1], clientID)
+		data2 = m.downloadChunk(stripe.Servers[1], stripe.ChunkIds[1], username)
 	}
 
 	// Combine data chunks
@@ -359,7 +385,7 @@ func (m *MasterServer) downloadStripeData(stripe *dfspb.StripeMetadata, clientID
 }
 
 // downloadChunk downloads a single chunk from a chunk server
-func (m *MasterServer) downloadChunk(serverAddr, chunkID string, clientID int64) []byte {
+func (m *MasterServer) downloadChunk(serverAddr, chunkID string, username string) []byte {
 	conn, err := grpc.NewClient(serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		m.logger.Printf("Failed to connect to %s: %v", serverAddr, err)
@@ -370,7 +396,7 @@ func (m *MasterServer) downloadChunk(serverAddr, chunkID string, clientID int64)
 	client := dfspb.NewChunkServerClient(conn)
 	resp, err := client.ReadChunk(context.Background(), &dfspb.ReadChunkRequest{
 		ChunkId:  chunkID,
-		ClientId: clientID,
+		Username: username,
 	})
 
 	if err != nil {

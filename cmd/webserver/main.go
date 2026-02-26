@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"dfs-project/pkg/config"
@@ -27,8 +26,9 @@ func main() {
 
 	r = NewRouter(cli)
 
-	// Start server
-	_ = r.Run(":8080")
+	// Listen on port from cluster.conf (or env WEB_API_PORT, default 8080)
+	port := config.GetWebAPIPort()
+	_ = r.Run("0.0.0.0:" + port)
 }
 
 // NewRouter constructs the Gin engine with handlers using provided DFS client
@@ -39,7 +39,7 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 	r.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-DFS-Password")
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
 			return
@@ -47,17 +47,35 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 		c.Next()
 	})
 
+	r.POST("/auth", func(c *gin.Context) {
+		var req struct {
+			Username   string `json:"username"`
+			Password   string `json:"password"`
+			IsRegister bool   `json:"is_register"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid request body"})
+			return
+		}
+		if req.Username == "" || req.Password == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Username and password required"})
+			return
+		}
+		success, msg, err := cli.Authenticate(cRequestContext(c), req.Username, req.Password, req.IsRegister)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": success, "message": msg})
+	})
+
 	r.POST("/files", func(c *gin.Context) {
 		// Request validation
-		clientIDStr := c.PostForm("clientId")
-		clientID := int64(0)
-		if clientIDStr != "" {
-			id, err := strconv.ParseInt(clientIDStr, 10, 64)
-			if err != nil || id < 0 {
-				c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid clientId"})
-				return
-			}
-			clientID = id
+		username := c.PostForm("username")
+		password := c.GetHeader("X-DFS-Password")
+		if username == "" || password == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "username and password required"})
+			return
 		}
 
 		filename := c.PostForm("filename")
@@ -84,7 +102,7 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 		uctx, cancel := context.WithTimeout(cRequestContext(c), 10*time.Minute)
 		defer cancel()
 
-		assignedClient, err := cli.UploadFile(uctx, clientID, filename, f, size)
+		assignedUser, err := cli.UploadFile(uctx, username, password, filename, f, size)
 		if err != nil {
 			// Map common errors to HTTP status
 			if err.Error() == "no healthy chunkservers" {
@@ -96,9 +114,9 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 		}
 
 		// Verify file shows up in listing (sanity check)
-		files, err := cli.ListFiles(cRequestContext(c), assignedClient)
+		files, err := cli.ListFiles(cRequestContext(c), assignedUser, password)
 		if err != nil {
-			c.JSON(http.StatusCreated, gin.H{"success": true, "clientId": assignedClient, "filename": filename, "warning": "uploaded but verification failed"})
+			c.JSON(http.StatusCreated, gin.H{"success": true, "username": assignedUser, "filename": filename, "warning": "uploaded but verification failed"})
 			return
 		}
 		found := false
@@ -110,36 +128,28 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 		}
 
 		if !found {
-			c.JSON(http.StatusCreated, gin.H{"success": true, "clientId": assignedClient, "filename": filename, "warning": "uploaded but file not listed yet"})
+			c.JSON(http.StatusCreated, gin.H{"success": true, "username": assignedUser, "filename": filename, "warning": "uploaded but file not listed yet"})
 			return
 		}
 
-		c.JSON(http.StatusCreated, gin.H{"success": true, "clientId": assignedClient, "filename": filename})
+		c.JSON(http.StatusCreated, gin.H{"success": true, "username": assignedUser, "filename": filename})
 	})
 
 	r.GET("/files", func(c *gin.Context) {
-		// Accept multiple query param spellings for client id (case-insensitive)
-		clientIDStr := c.Query("clientId")
-		if clientIDStr == "" {
-			clientIDStr = c.Query("clientid")
+		username := c.Query("username")
+		if username == "" {
+			username = c.Query("user")
 		}
-		if clientIDStr == "" {
-			clientIDStr = c.Query("client_id")
-		}
-		if clientIDStr == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "clientId required"})
+		password := c.GetHeader("X-DFS-Password")
+		if username == "" || password == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "username and password required"})
 			return
 		}
-		id, err := strconv.ParseInt(clientIDStr, 10, 64)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid clientId"})
-			return
-		}
-		// add timeout
+
 		lctx, cancel := context.WithTimeout(cRequestContext(c), 30*time.Second)
 		defer cancel()
 
-		files, err := cli.ListFiles(lctx, id)
+		files, err := cli.ListFiles(lctx, username, password)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
 			return
@@ -147,20 +157,16 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"filenames": files})
 	})
 
-	r.GET("/files/:clientId/:filename", func(c *gin.Context) {
-		clientIDStr := c.Param("clientId")
-		id, err := strconv.ParseInt(clientIDStr, 10, 64)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid clientId"})
-			return
-		}
+	r.GET("/files/:username/:filename", func(c *gin.Context) {
+		username := c.Param("username")
 		filename := c.Param("filename")
-		// Sanity check: verify file exists in listing
+		password := c.GetHeader("X-DFS-Password")
+
 		lctx, lcancel := context.WithTimeout(cRequestContext(c), 15*time.Second)
 		defer lcancel()
-		files, err := cli.ListFiles(lctx, id)
+		files, err := cli.ListFiles(lctx, username, password)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to validate file existence: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
 			return
 		}
 		found := false
@@ -175,41 +181,31 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 			return
 		}
 
-		tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("download_%d_%s", id, filename))
-		_ = os.Remove(tmpPath)
-
+		tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("download_%s_%s", username, filename))
 		dctx, dcancel := context.WithTimeout(cRequestContext(c), 5*time.Minute)
 		defer dcancel()
-		if err := cli.DownloadFile(dctx, id, filename, tmpPath); err != nil {
-			if err.Error() == "file not found" {
-				c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "file not found"})
-				return
-			}
+
+		if err := cli.DownloadFile(dctx, username, password, filename, tmpPath); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
 			return
 		}
 
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 		c.File(tmpPath)
-		// remove temp file after a short delay to allow transfer to finish
 		go func() {
-			time.Sleep(1 * time.Second)
+			time.Sleep(2 * time.Second)
 			_ = os.Remove(tmpPath)
 		}()
 	})
 
-	r.DELETE("/files/:clientId/:filename", func(c *gin.Context) {
-		clientIDStr := c.Param("clientId")
-		id, err := strconv.ParseInt(clientIDStr, 10, 64)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid clientId"})
-			return
-		}
+	r.DELETE("/files/:username/:filename", func(c *gin.Context) {
+		username := c.Param("username")
 		filename := c.Param("filename")
+		password := c.GetHeader("X-DFS-Password")
 		dctx, dcancel := context.WithTimeout(cRequestContext(c), 30*time.Second)
 		defer dcancel()
 
-		deleted, err := cli.DeleteFile(dctx, id, filename)
+		deleted, err := cli.DeleteFile(dctx, username, password, filename)
 		if err != nil {
 			// Map not found
 			if err.Error() == "file not found" {

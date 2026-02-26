@@ -166,29 +166,29 @@ func (m *MasterServer) replayCreateFile(data json.RawMessage) error {
 
 	// Restore clientID mapping (Check for duplicates to ensure idempotency)
 	exists := false
-	for _, f := range m.clientIDs[createData.ClientID] {
+	for _, f := range m.clientIDs[createData.Username] {
 		if f == createData.Filename {
 			exists = true
 			break
 		}
 	}
 	if !exists {
-		m.clientIDs[createData.ClientID] = append(m.clientIDs[createData.ClientID], createData.Filename)
+		m.clientIDs[createData.Username] = append(m.clientIDs[createData.Username], createData.Filename)
 	}
 
 	// Ensure per-client maps exist before assigning
-	m.ensureClientMaps(createData.ClientID)
+	m.ensureClientMaps(createData.Username)
 
 	// Initialize fileInfo map for this file
-	if _, ok := m.fileInfo[createData.ClientID][createData.Filename]; !ok {
-		m.fileInfo[createData.ClientID][createData.Filename] = make(map[int32]*dfspb.StripeMetadata)
+	if _, ok := m.fileInfo[createData.Username][createData.Filename]; !ok {
+		m.fileInfo[createData.Username][createData.Filename] = make(map[int32]*dfspb.StripeMetadata)
 	}
 
 	// Restore file size
-	m.fileSizes[createData.ClientID][createData.Filename] = createData.TotalSize
+	m.fileSizes[createData.Username][createData.Filename] = createData.TotalSize
 
 	// Only log if verbose or separate logger?
-	// m.logger.Printf("Recovered CREATE_FILE: client=%d, file=%s, size=%d", createData.ClientID, createData.Filename, createData.TotalSize)
+	// m.logger.Printf("Recovered CREATE_FILE: user=%s, file=%s, size=%d", createData.Username, createData.Filename, createData.TotalSize)
 
 	return nil
 }
@@ -201,14 +201,14 @@ func (m *MasterServer) replayAllocateChunk(data json.RawMessage) error {
 	}
 
 	// Ensure per-client and per-file maps exist
-	m.ensureClientMaps(allocData.ClientID)
-	if _, ok := m.fileInfo[allocData.ClientID][allocData.Filename]; !ok {
-		m.fileInfo[allocData.ClientID][allocData.Filename] = make(map[int32]*dfspb.StripeMetadata)
+	m.ensureClientMaps(allocData.Username)
+	if _, ok := m.fileInfo[allocData.Username][allocData.Filename]; !ok {
+		m.fileInfo[allocData.Username][allocData.Filename] = make(map[int32]*dfspb.StripeMetadata)
 	}
 
 	// Restore stripe metadata
 	for stripeNum, stripe := range allocData.Stripes {
-		m.fileInfo[allocData.ClientID][allocData.Filename][stripeNum] = stripe
+		m.fileInfo[allocData.Username][allocData.Filename][stripeNum] = stripe
 
 		// Restore chunk status (initially PENDING)
 		for _, chunkID := range stripe.ChunkIds {
@@ -248,11 +248,11 @@ func (m *MasterServer) replayDeleteFile(data json.RawMessage) error {
 	}
 
 	filename := deleteData.Filename
-	clientID := deleteData.ClientID
+	username := deleteData.Username
 
 	// Collect all chunk IDs before deletion (guard for missing client/file)
 	allChunkIDs := []string{}
-	if clientFiles, clientExists := m.fileInfo[clientID]; clientExists {
+	if clientFiles, clientExists := m.fileInfo[username]; clientExists {
 		if stripes, exists := clientFiles[filename]; exists {
 			for _, stripe := range stripes {
 				allChunkIDs = append(allChunkIDs, stripe.ChunkIds...)
@@ -261,11 +261,11 @@ func (m *MasterServer) replayDeleteFile(data json.RawMessage) error {
 	}
 
 	// Remove file metadata
-	delete(m.fileInfo[clientID], filename)
-	delete(m.fileSizes[clientID], filename)
+	delete(m.fileInfo[username], filename)
+	delete(m.fileSizes[username], filename)
 
 	// Remove from clientIDs
-	if ownedFiles, exists := m.clientIDs[clientID]; exists {
+	if ownedFiles, exists := m.clientIDs[username]; exists {
 		updatedFiles := []string{}
 		for _, f := range ownedFiles {
 			if f != filename {
@@ -273,9 +273,9 @@ func (m *MasterServer) replayDeleteFile(data json.RawMessage) error {
 			}
 		}
 		if len(updatedFiles) > 0 {
-			m.clientIDs[clientID] = updatedFiles
+			m.clientIDs[username] = updatedFiles
 		} else {
-			delete(m.clientIDs, clientID)
+			delete(m.clientIDs, username)
 		}
 	}
 
@@ -284,8 +284,8 @@ func (m *MasterServer) replayDeleteFile(data json.RawMessage) error {
 		delete(m.chunkStatus, chunkID)
 	}
 
-	m.logger.Printf("Recovered DELETE_FILE: client=%d, file=%s, chunks_removed=%d",
-		clientID, filename, len(allChunkIDs))
+	m.logger.Printf("Recovered DELETE_FILE: user=%s, file=%s, chunks_removed=%d",
+		username, filename, len(allChunkIDs))
 
 	return nil
 }

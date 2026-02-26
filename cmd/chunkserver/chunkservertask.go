@@ -38,11 +38,11 @@ func (c *ChunkServer) WriteChunk(ctx context.Context, req *dfspb.WriteChunkReque
 		c.logger.Printf("Checksum verified for %s: %s", req.ChunkId, calculatedChecksum)
 	}
 
-	// Create client subdirectory: storagePath/client_id/
-	clientDir := filepath.Join(c.storagePath, fmt.Sprintf("%d", req.ClientId))
+	// Create client subdirectory: storagePath/username/
+	clientDir := filepath.Join(c.storagePath, req.Username)
 	err := os.MkdirAll(clientDir, 0755)
 	if err != nil {
-		c.logger.Printf("Failed to create client directory for %d: %v", req.ClientId, err)
+		c.logger.Printf("Failed to create client directory for %s: %v", req.Username, err)
 		return &dfspb.WriteChunkResponse{Success: false}, err
 	}
 
@@ -65,21 +65,21 @@ func (c *ChunkServer) WriteChunk(ctx context.Context, req *dfspb.WriteChunkReque
 		}
 	}
 
-	c.logger.Printf("Stored %s for client %d (%d bytes)", req.ChunkId, req.ClientId, len(req.Data))
+	c.logger.Printf("Stored %s for user %s (%d bytes)", req.ChunkId, req.Username, len(req.Data))
 	return &dfspb.WriteChunkResponse{Success: true}, nil
 }
 
 // ReadChunk retrieves a chunk and its checksum from disk
 // Reads from client-specific subdirectory
 func (c *ChunkServer) ReadChunk(ctx context.Context, req *dfspb.ReadChunkRequest) (*dfspb.ReadChunkResponse, error) {
-	// Read from client subdirectory: storagePath/client_id/chunk_id
-	clientDir := filepath.Join(c.storagePath, fmt.Sprintf("%d", req.ClientId))
+	// Read from client subdirectory: storagePath/username/chunk_id
+	clientDir := filepath.Join(c.storagePath, req.Username)
 	path := filepath.Join(clientDir, req.ChunkId)
 
 	// Read chunk data
 	data, err := os.ReadFile(path)
 	if err != nil {
-		c.logger.Printf("ReadChunk failed for %s (client %d): %v", req.ChunkId, req.ClientId, err)
+		c.logger.Printf("ReadChunk failed for %s (user %s): %v", req.ChunkId, req.Username, err)
 		return nil, err
 	}
 
@@ -92,7 +92,7 @@ func (c *ChunkServer) ReadChunk(ctx context.Context, req *dfspb.ReadChunkRequest
 		c.logger.Printf("Warning: checksum not found for %s", req.ChunkId)
 	}
 
-	c.logger.Printf("Sent %s for client %d (%d bytes, checksum: %s)", req.ChunkId, req.ClientId, len(data), checksum)
+	c.logger.Printf("Sent %s for user %s (%d bytes, checksum: %s)", req.ChunkId, req.Username, len(data), checksum)
 	return &dfspb.ReadChunkResponse{Data: data, Checksum: checksum}, nil
 }
 
@@ -103,8 +103,8 @@ func (c *ChunkServer) DeleteChunks(ctx context.Context, req *dfspb.DeleteChunksR
 
 	// Delete each chunk in the batch
 	for _, chunkID := range req.ChunkIds {
-		// Construct path: storagePath/client_id/chunk_id
-		clientDir := filepath.Join(c.storagePath, fmt.Sprintf("%d", req.ClientId))
+		// Construct path: storagePath/username/chunk_id
+		clientDir := filepath.Join(c.storagePath, req.Username)
 		chunkPath := filepath.Join(clientDir, chunkID)
 		checksumPath := chunkPath + ".checksum"
 
@@ -129,7 +129,7 @@ func (c *ChunkServer) DeleteChunks(ctx context.Context, req *dfspb.DeleteChunksR
 		}
 	}
 
-	c.logger.Printf("Deleted %d/%d chunks for client %d", deletedCount, len(req.ChunkIds), req.ClientId)
+	c.logger.Printf("Deleted %d/%d chunks for user %s", deletedCount, len(req.ChunkIds), req.Username)
 	return &dfspb.DeleteChunksResponse{
 		Success:      true,
 		DeletedCount: deletedCount,
@@ -137,74 +137,95 @@ func (c *ChunkServer) DeleteChunks(ctx context.Context, req *dfspb.DeleteChunksR
 }
 
 // resolveActiveMaster returns the current active master address.
-// It reads .master_addr first (updated by the secondary on promotion),
-// falling back to the initially configured address.
-func resolveActiveMaster(configuredAddr string) string {
+// resolveActiveMaster returns the best known master address.
+func resolveActiveMaster(configuredPrimary, configuredSecondary string) string {
+	// 1. Try dynamic .master_addr (written locally if this node ever promoted itself)
 	if data, err := os.ReadFile(".master_addr"); err == nil {
 		if addr := strings.TrimSpace(string(data)); addr != "" {
 			return addr
 		}
 	}
-	if configuredAddr != "" {
-		return configuredAddr
+	// 2. Fall back to the initially provided primary
+	if configuredPrimary != "" {
+		return configuredPrimary
 	}
+	// 3. Try global config
 	return config.GetMasterAddr()
 }
 
-// SendHeartbeats periodically pings the master to announce this chunk server.
-// It re-reads .master_addr on every tick so that after a master failover the
-// chunk server automatically follows the new primary without a restart.
-func SendHeartbeats(port string, masterAddr string, logger *log.Logger) {
+// SendHeartbeats periodically pings the master. If the primary is unreachable,
+// it attempts to find an active master by checking the secondary address.
+func SendHeartbeats(port string, masterAddr string, secondaryAddr string, logger *log.Logger) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	myAddr := config.GetMyAddr(port)
+	if secondaryAddr == "" {
+		secondaryAddr = config.GetSecondaryMasterAddr()
+	}
 
 	var conn *grpc.ClientConn
 	var masterClient dfspb.MasterServerClient
 	currentTarget := ""
 
-	for range ticker.C {
-		// Re-resolve the active master on every heartbeat
-		target := resolveActiveMaster(masterAddr)
+	// We'll alternate between primary and secondary if one fails
+	targets := []string{masterAddr}
+	if secondaryAddr != "" && secondaryAddr != masterAddr {
+		targets = append(targets, secondaryAddr)
+	}
 
-		// Reconnect if the address has changed (or first iteration)
-		if target != currentTarget {
+	for range ticker.C {
+		// If we don't have a working connection, resolve a target
+		if masterClient == nil {
+			// Always check .master_addr first in case a failover occurred
+			target := resolveActiveMaster(masterAddr, secondaryAddr)
+
+			// Try targets until one works
+			success := false
+			trialTargets := []string{target}
+			for _, t := range targets {
+				if t != target {
+					trialTargets = append(trialTargets, t)
+				}
+			}
+
+			for _, t := range trialTargets {
+				if t == "" {
+					continue
+				}
+				c, err := grpc.NewClient(t, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithTimeout(2*time.Second))
+				if err == nil {
+					conn = c
+					masterClient = dfspb.NewMasterServerClient(conn)
+					currentTarget = t
+					logger.Printf("Connected to master: %s", t)
+					success = true
+					break
+				}
+			}
+			if !success {
+				logger.Printf("Waiting for an active master (tried: %v)", trialTargets)
+				continue
+			}
+		}
+
+		// Send heartbeat
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, err := masterClient.ReceiveHeartbeat(ctx, &dfspb.HeartbeatRequest{
+			Address: myAddr,
+		})
+		cancel()
+
+		if err != nil {
+			logger.Printf("Heartbeat failed to %s: %v. Re-discovering...", currentTarget, err)
 			if conn != nil {
 				conn.Close()
 			}
-			var err error
-			conn, err = grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
-			if err != nil {
-				logger.Printf("Failed to connect to master %s: %v", target, err)
-				conn = nil
-				masterClient = nil
-				continue
-			}
-			masterClient = dfspb.NewMasterServerClient(conn)
-			logger.Printf("Heartbeat target changed: %s → %s", currentTarget, target)
-			currentTarget = target
-		}
-
-		if masterClient == nil {
-			continue
-		}
-
-		_, err := masterClient.ReceiveHeartbeat(context.Background(), &dfspb.HeartbeatRequest{
-			Address: myAddr,
-		})
-		if err != nil {
-			logger.Printf("Heartbeat failed to %s: %v", currentTarget, err)
-			// Force reconnect on next tick in case the address file was just updated
-			conn.Close()
 			conn = nil
 			masterClient = nil
 			currentTarget = ""
 		} else {
 			logger.Printf("Heartbeat sent to %s from %s", currentTarget, myAddr)
 		}
-	}
-	if conn != nil {
-		conn.Close()
 	}
 }

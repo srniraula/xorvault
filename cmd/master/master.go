@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"dfs-project/dfspb"
+	"dfs-project/pkg/config"
 	"fmt"
 	"log"
 	"os"
@@ -35,20 +36,20 @@ type ServerInfo struct {
 //   - Provide chunk locations to clients for reads/writes
 //   - Log all operations to master.log file
 type MasterServer struct {
-	dfspb.UnimplementedMasterServerServer                                                      // Embedded type required by gRPC
-	mu                                    sync.Mutex                                           // Protects fileChunks and fileSizes maps
-	fileInfo                              map[int64]map[string]map[int32]*dfspb.StripeMetadata // Maps filename -> stripe_num -> StripeMetadata
-	clientIDs                             map[int64][]string                                   //client_id to filename map
-	fileSizes                             map[int64]map[string]int64                           // Maps filename -> total file size in bytes
-	chunkStatus                           map[string]string                                    // Maps chunk_id -> "PENDING"/"SUCCESS"
-	chunkServers                          []string                                             // List of all known chunk server addresses
-	servers                               map[string]*ServerInfo                               // Maps server address -> health status
-	serversMu                             sync.RWMutex                                         // Protects servers map (RWMutex allows multiple readers)
-	logger                                *log.Logger                                          // Custom logger for file output (logs to master.log)
+	dfspb.UnimplementedMasterServerServer                                                       // Embedded type required by gRPC
+	mu                                    sync.Mutex                                            // Protects fileChunks and fileSizes maps
+	fileInfo                              map[string]map[string]map[int32]*dfspb.StripeMetadata // Maps username -> filename -> stripe_num -> StripeMetadata
+	clientIDs                             map[string][]string                                   // username to filename map
+	fileSizes                             map[string]map[string]int64                           // Maps username -> filename -> total file size in bytes
+	chunkStatus                           map[string]string                                     // Maps chunk_id -> "PENDING"/"SUCCESS"
+	chunkServers                          []string                                              // List of all known chunk server addresses
+	servers                               map[string]*ServerInfo                                // Maps server address -> health status
+	serversMu                             sync.RWMutex                                          // Protects servers map (RWMutex allows multiple readers)
+	logger                                *log.Logger                                           // Custom logger for file output (logs to master.log)
 
 	// Folder support
-	clientFolders   map[int64]map[string]bool  // Maps client_id -> folder_path -> exists
-	fileUploadTimes map[int64]map[string]int64 // Maps client_id -> filename -> unix_timestamp
+	clientFolders   map[string]map[string]bool  // Maps username -> folder_path -> exists
+	fileUploadTimes map[string]map[string]int64 // Maps username -> filename -> unix_timestamp
 
 	// WAL fields
 	walFile   *os.File      // WAL file handle
@@ -60,21 +61,23 @@ type MasterServer struct {
 	standbyMu  sync.Mutex // Protects startup/failover transition
 	walOffset  int64      // Byte offset into WAL that standby has already replayed
 	listenAddr string     // Own gRPC listen address (e.g. "0.0.0.0:50052") – written to .master_addr on promotion
+
+	userPasswords map[string]string // Maps username -> password (simple 6-digit string)
 }
 
 // ensureClientMaps makes sure the per-client nested maps exist to avoid nil-map panics
-func (m *MasterServer) ensureClientMaps(clientID int64) {
-	if _, ok := m.fileInfo[clientID]; !ok {
-		m.fileInfo[clientID] = make(map[string]map[int32]*dfspb.StripeMetadata)
+func (m *MasterServer) ensureClientMaps(username string) {
+	if _, ok := m.fileInfo[username]; !ok {
+		m.fileInfo[username] = make(map[string]map[int32]*dfspb.StripeMetadata)
 	}
-	if _, ok := m.fileSizes[clientID]; !ok {
-		m.fileSizes[clientID] = make(map[string]int64)
+	if _, ok := m.fileSizes[username]; !ok {
+		m.fileSizes[username] = make(map[string]int64)
 	}
-	if _, ok := m.clientFolders[clientID]; !ok {
-		m.clientFolders[clientID] = make(map[string]bool)
+	if _, ok := m.clientFolders[username]; !ok {
+		m.clientFolders[username] = make(map[string]bool)
 	}
-	if _, ok := m.fileUploadTimes[clientID]; !ok {
-		m.fileUploadTimes[clientID] = make(map[string]int64)
+	if _, ok := m.fileUploadTimes[username]; !ok {
+		m.fileUploadTimes[username] = make(map[string]int64)
 	}
 	// clientIDs uses slices; append on nil is OK so no init required
 }
@@ -92,46 +95,51 @@ func (m *MasterServer) CreateFile(ctx context.Context, req *dfspb.CreateFileRequ
 	m.mu.Lock()         // Lock to prevent concurrent modifications
 	defer m.mu.Unlock() // Unlock when function returns
 
-	if req.ClientId == 0 {
-		req.ClientId = RandomID()
+	if req.Username == "" {
+		return nil, fmt.Errorf("username is required")
 	}
 
 	// ensure nested maps for this client exist
-	m.ensureClientMaps(req.ClientId)
+	m.ensureClientMaps(req.Username)
+
+	// Verify password
+	if pass, exists := m.userPasswords[req.Username]; !exists || pass != req.Password {
+		return nil, fmt.Errorf("authentication failed: invalid username or password")
+	}
 
 	// Check if file already exists
-	if _, ok := m.fileInfo[req.ClientId][req.Filename]; ok {
+	if _, ok := m.fileInfo[req.Username][req.Filename]; ok {
 		return nil, fmt.Errorf("file %s already exists.", req.Filename)
 	}
 
 	// Log to WAL before updating in-memory state with benefit of data durability
-	if err := m.LogCreateFileToWAL(req.ClientId, req.Filename, req.TotalSize); err != nil {
+	if err := m.LogCreateFileToWAL(req.Username, req.Filename, req.TotalSize); err != nil {
 		return nil, err
 	}
 
 	//map client id with filename
-	m.clientIDs[req.ClientId] = append(m.clientIDs[req.ClientId], req.Filename)
+	m.clientIDs[req.Username] = append(m.clientIDs[req.Username], req.Filename)
 
 	// Initialize empty map for this filename
-	m.fileInfo[req.ClientId][req.Filename] = make(map[int32]*dfspb.StripeMetadata)
+	m.fileInfo[req.Username][req.Filename] = make(map[int32]*dfspb.StripeMetadata)
 
-	m.fileSizes[req.ClientId][req.Filename] = req.TotalSize
+	m.fileSizes[req.Username][req.Filename] = req.TotalSize
 
 	// Track upload time
-	m.fileUploadTimes[req.ClientId][req.Filename] = time.Now().Unix()
+	m.fileUploadTimes[req.Username][req.Filename] = time.Now().Unix()
 
 	// Allocate chunks and get the chunk-to-server mapping
-	allocResp, err := m.allocateChunksInternal(int64(req.ClientId), int(req.TotalSize), req.Filename)
+	allocResp, err := m.allocateChunksInternal(req.Username, int(req.TotalSize), req.Filename)
 
 	if err != nil {
 		log.Printf("failed to allocate chunks: %v", err)
 		return nil, err
 	}
 
-	m.logger.Printf("Created %s (%d bytes)", req.Filename, req.TotalSize)
+	m.logger.Printf("Created %s for user %s (%d bytes)", req.Filename, req.Username, req.TotalSize)
 	return &dfspb.CreateFileResponse{
 		Success:  true,
-		ClientId: req.ClientId,
+		Username: req.Username,
 		Stripes:  allocResp.Stripes,
 	}, nil
 }
@@ -150,7 +158,7 @@ func (m *MasterServer) AllocateChunk(ctx context.Context, req *dfspb.AllocateChu
 // NOTE: Caller must hold m.mu lock
 // Returns:
 //   - chunk allocation map: which chunks go to which servers
-func (m *MasterServer) allocateChunksInternal(clientID int64, totalSize int, fileName string) (*dfspb.AllocateChunkResponse, error) {
+func (m *MasterServer) allocateChunksInternal(username string, totalSize int, fileName string) (*dfspb.AllocateChunkResponse, error) {
 	// Calculate how many chunks we'll need ==> (a+b-1)/b == ceil(a/b)
 	// Formula: (fileSize + chunkSize - 1) / chunkSize handles partial last chunk
 	totalChunks := (int(totalSize) + CHUNK_SIZE - 1) / CHUNK_SIZE
@@ -162,9 +170,9 @@ func (m *MasterServer) allocateChunksInternal(clientID int64, totalSize int, fil
 	filename := fileName
 
 	// Ensure client/map exists for storing stripe info
-	m.ensureClientMaps(clientID)
-	if _, ok := m.fileInfo[clientID][fileName]; !ok {
-		m.fileInfo[clientID][fileName] = make(map[int32]*dfspb.StripeMetadata)
+	m.ensureClientMaps(username)
+	if _, ok := m.fileInfo[username][fileName]; !ok {
+		m.fileInfo[username][fileName] = make(map[int32]*dfspb.StripeMetadata)
 	}
 
 	// Find all healthy (alive) chunk servers
@@ -224,15 +232,15 @@ func (m *MasterServer) allocateChunksInternal(clientID int64, totalSize int, fil
 		m.chunkStatus[parityID] = "PENDING"
 
 		// Store stripe metadata
-		m.fileInfo[clientID][filename][int32(stripeNum)] = stripe
+		m.fileInfo[username][filename][int32(stripeNum)] = stripe
 	}
 
 	// Log chunk allocation to WAL with PENDING status
 	// Store full stripe metadata for ]recovery
 	walData := AllocateChunkData{
-		ClientID: clientID,
+		Username: username,
 		Filename: filename,
-		Stripes:  m.fileInfo[clientID][filename],
+		Stripes:  m.fileInfo[username][filename],
 		Status:   "PENDING",
 	}
 
@@ -241,14 +249,14 @@ func (m *MasterServer) allocateChunksInternal(clientID int64, totalSize int, fil
 		return nil, fmt.Errorf("failed to log to WAL: %v", err)
 	}
 
-	m.logger.Printf("Allocated chunks for %s (status: PENDING):", filename)
-	for stripeNum, stripe := range m.fileInfo[clientID][filename] {
+	m.logger.Printf("Allocated chunks for %s (user: %s, status: PENDING):", filename, username)
+	for stripeNum, stripe := range m.fileInfo[username][filename] {
 		m.logger.Printf("  Stripe %d: chunks=%v, servers=%v", stripeNum, stripe.ChunkIds, stripe.Servers)
 	}
 
 	// Return stripe metadata directly
 	return &dfspb.AllocateChunkResponse{
-		Stripes: m.fileInfo[clientID][filename],
+		Stripes: m.fileInfo[username][filename],
 	}, nil
 }
 
@@ -258,8 +266,13 @@ func (m *MasterServer) GetFileMetadata(ctx context.Context, req *dfspb.GetFileMe
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Verify password
+	if pass, exists := m.userPasswords[req.Username]; !exists || pass != req.Password {
+		return nil, fmt.Errorf("authentication failed: invalid username or password")
+	}
+
 	// Guard against missing client or file maps
-	clientFiles, clientExists := m.fileInfo[req.ClientId]
+	clientFiles, clientExists := m.fileInfo[req.Username]
 	if !clientExists {
 		return nil, fmt.Errorf("file not found: %s", req.Filename)
 	}
@@ -269,16 +282,14 @@ func (m *MasterServer) GetFileMetadata(ctx context.Context, req *dfspb.GetFileMe
 	}
 
 	size := int64(0)
-	if fs, ok := m.fileSizes[req.ClientId]; ok {
+	if fs, ok := m.fileSizes[req.Username]; ok {
 		size = fs[req.Filename]
 	}
 
-	// Already validated above that stripes exist
-
-	// Check ownership: does this client own the file?
-	ownedFiles, exists := m.clientIDs[req.ClientId]
+	// Check ownership: does this user own the file?
+	ownedFiles, exists := m.clientIDs[req.Username]
 	if !exists {
-		return nil, fmt.Errorf("access denied: unknown client ID %d", req.ClientId)
+		return nil, fmt.Errorf("access denied: unknown username %s", req.Username)
 	}
 
 	// Check if filename is in client's owned files
@@ -291,7 +302,7 @@ func (m *MasterServer) GetFileMetadata(ctx context.Context, req *dfspb.GetFileMe
 	}
 
 	if !fileOwned {
-		return nil, fmt.Errorf("access denied: client %d does not own file %s", req.ClientId, req.Filename)
+		return nil, fmt.Errorf("access denied: user %s does not own file %s", req.Username, req.Filename)
 	}
 
 	// Return stripe metadata directly
@@ -382,10 +393,16 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 	// Note: manually unlocking before checkpoint, no defer
 
 	filename := req.Filename
-	clientID := req.ClientId
+	username := req.Username
+
+	// Verify password
+	if pass, exists := m.userPasswords[username]; !exists || pass != req.Password {
+		m.mu.Unlock()
+		return &dfspb.DeleteFileResponse{Success: false, Message: "authentication failed"}, nil
+	}
 
 	// Check if file exists (guard for missing client)
-	clientFiles, clientExists := m.fileInfo[clientID]
+	clientFiles, clientExists := m.fileInfo[username]
 	if !clientExists {
 		m.mu.Unlock()
 		return &dfspb.DeleteFileResponse{
@@ -404,7 +421,7 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 	}
 
 	// Verify client ownership
-	ownedFiles, clientExists := m.clientIDs[clientID]
+	ownedFiles, clientExists := m.clientIDs[username]
 	if !clientExists {
 		m.mu.Unlock()
 		return &dfspb.DeleteFileResponse{
@@ -441,13 +458,13 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 		}
 	}
 
-	m.logger.Printf("Deleting %s for client %d: %d chunks across %d servers",
-		filename, clientID, len(allChunkIDs), len(serverChunks))
+	m.logger.Printf("Deleting %s for user %s: %d chunks across %d servers",
+		filename, username, len(allChunkIDs), len(serverChunks))
 
 	// Send DeleteChunks RPC to each chunk server
 	totalDeleted := int32(0)
 	for serverAddr, chunkIDs := range serverChunks {
-		deleted, err := m.deleteChunksFromServer(serverAddr, chunkIDs, clientID)
+		deleted, err := m.deleteChunksFromServer(serverAddr, chunkIDs, username)
 		if err != nil {
 			m.logger.Printf("Failed to delete chunks from %s: %v", serverAddr, err)
 			// Continue with other servers even if one fails
@@ -458,8 +475,8 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 	}
 
 	// Update metadata - remove file info :: change logic here
-	delete(m.fileInfo[clientID], filename)
-	delete(m.fileSizes[clientID], filename)
+	delete(m.fileInfo[username], filename)
+	delete(m.fileSizes[username], filename)
 
 	// Remove filename from clientIDs (but keep the client ID entry)
 	updatedFiles := []string{}
@@ -468,7 +485,7 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 			updatedFiles = append(updatedFiles, f)
 		}
 	}
-	m.clientIDs[clientID] = updatedFiles
+	m.clientIDs[username] = updatedFiles
 
 	// Remove chunk statuses
 	for _, chunkID := range allChunkIDs {
@@ -478,7 +495,7 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 	// Log to WAL
 	walData := DeleteFileData{
 		Filename: filename,
-		ClientID: clientID,
+		Username: username,
 	}
 
 	if err := m.AppendWAL(OpDeleteFile, walData); err != nil {
@@ -503,7 +520,7 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 }
 
 // deleteChunksFromServer sends DeleteChunks RPC to a specific chunk server
-func (m *MasterServer) deleteChunksFromServer(serverAddr string, chunkIDs []string, clientID int64) (int32, error) {
+func (m *MasterServer) deleteChunksFromServer(serverAddr string, chunkIDs []string, username string) (int32, error) {
 	// Connect to chunk server
 	conn, err := grpc.NewClient(serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -516,7 +533,7 @@ func (m *MasterServer) deleteChunksFromServer(serverAddr string, chunkIDs []stri
 	// Send delete request
 	resp, err := chunkClient.DeleteChunks(context.Background(), &dfspb.DeleteChunksRequest{
 		ChunkIds: chunkIDs,
-		ClientId: clientID,
+		Username: username,
 	})
 
 	if err != nil {
@@ -531,7 +548,12 @@ func (m *MasterServer) ListFiles(ctx context.Context, req *dfspb.ListFilesReques
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	files, exists := m.clientIDs[req.ClientId]
+	// Verify password
+	if pass, exists := m.userPasswords[req.Username]; !exists || pass != req.Password {
+		return nil, fmt.Errorf("authentication failed")
+	}
+
+	files, exists := m.clientIDs[req.Username]
 	if !exists {
 		return &dfspb.ListFilesResponse{
 			Filenames: []string{},
@@ -541,6 +563,36 @@ func (m *MasterServer) ListFiles(ctx context.Context, req *dfspb.ListFilesReques
 	return &dfspb.ListFilesResponse{
 		Filenames: files,
 	}, nil
+}
+
+// Authenticate verifies user credentials or registers a new user
+func (m *MasterServer) Authenticate(ctx context.Context, req *dfspb.AuthenticateRequest) (*dfspb.AuthenticateResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if req.IsRegister {
+		if _, exists := m.userPasswords[req.Username]; exists {
+			return &dfspb.AuthenticateResponse{Success: false, Message: "Username already exists"}, nil
+		}
+		if len(req.Password) != 6 {
+			return &dfspb.AuthenticateResponse{Success: false, Message: "Password must be exactly 6 digits"}, nil
+		}
+		m.userPasswords[req.Username] = req.Password
+		m.ensureClientMaps(req.Username)
+		m.logger.Printf("New user registered: %s", req.Username)
+		return &dfspb.AuthenticateResponse{Success: true, Message: "Registered successfully"}, nil
+	}
+
+	pass, exists := m.userPasswords[req.Username]
+	if !exists {
+		return &dfspb.AuthenticateResponse{Success: false, Message: "User does not exist"}, nil
+	}
+	if pass != req.Password {
+		return &dfspb.AuthenticateResponse{Success: false, Message: "Incorrect password"}, nil
+	}
+
+	m.logger.Printf("User authenticated: %s", req.Username)
+	return &dfspb.AuthenticateResponse{Success: true, Message: "Authenticated successfully"}, nil
 }
 
 // Ping is used by the secondary master (or others) to check health
@@ -598,7 +650,7 @@ func (m *MasterServer) MonitorPrimary(primaryAddr string) {
 // PromoteToActive switches the server from Standby to Active mode.
 // Before accepting writes it performs one final incremental WAL catch-up so
 // no committed operation is lost, then advertises itself as the new primary
-// by rewriting the ".master_addr" file.
+// by rewriting the ".master_addr" file with this device's real LAN IP.
 func (m *MasterServer) PromoteToActive() {
 	m.standbyMu.Lock()
 	defer m.standbyMu.Unlock()
@@ -610,8 +662,6 @@ func (m *MasterServer) PromoteToActive() {
 	m.logger.Println("!!! PRIMARY FAILURE DETECTED - PROMOTING TO ACTIVE !!!")
 
 	// --- Final incremental WAL catch-up ---
-	// Read any WAL entries that arrived after our last poll so we are
-	// fully up-to-date before we start serving writes.
 	walName := "master.wal"
 	if m.walFile != nil {
 		walName = m.walFile.Name()
@@ -623,23 +673,39 @@ func (m *MasterServer) PromoteToActive() {
 	// --- Switch mode ---
 	m.IsStandby = false
 
-	// --- Advertise self as primary ---
-	// Rewrite .master_addr so clients that re-read the file find us.
-	if m.listenAddr != "" {
-		// Convert a listen addr like "0.0.0.0:50052" to a routable address.
-		// We use the port from listenAddr but 127.0.0.1 as host for local deployments.
-		// In a real multi-host setup you would substitute the actual hostname/IP here.
-		host := "127.0.0.1"
-		portSuffix := "" // e.g. ":50052"
-		if idx := strings.LastIndex(m.listenAddr, ":"); idx >= 0 {
-			portSuffix = m.listenAddr[idx:] // includes the ':'
+	// --- Advertise self as primary via .master_addr ---
+	// Extract the port from our listenAddr (e.g. "0.0.0.0:50052" → ":50052")
+	portSuffix := ":50052"
+	if idx := strings.LastIndex(m.listenAddr, ":"); idx >= 0 {
+		portSuffix = m.listenAddr[idx:]
+	}
+
+	// Prefer explicit env var (set by start_secondary.sh via MASTER_ADDR),
+	// then the .secondary_addr file, then auto-detect the LAN IP.
+	var publicHost string
+	if v := os.Getenv("SECONDARY_MASTER_IP"); v != "" {
+		publicHost = v
+	} else if data, err := os.ReadFile(".secondary_addr"); err == nil {
+		// .secondary_addr contains "IP:port" — extract just the IP
+		parts := strings.SplitN(strings.TrimSpace(string(data)), ":", 2)
+		if len(parts) > 0 {
+			publicHost = parts[0]
 		}
-		publicAddr := host + portSuffix
-		if err := os.WriteFile(".master_addr", []byte(publicAddr+"\n"), 0644); err != nil {
-			m.logger.Printf("Warning: could not update .master_addr: %v", err)
+	}
+	if publicHost == "" {
+		// Auto-detect LAN IP (works when all nodes are on the same machine for dev)
+		if ip, err := config.GetLocalIP(); err == nil {
+			publicHost = ip
 		} else {
-			m.logger.Printf("Updated .master_addr → %s", publicAddr)
+			publicHost = "127.0.0.1"
 		}
+	}
+
+	publicAddr := publicHost + portSuffix
+	if err := os.WriteFile(".master_addr", []byte(publicAddr+"\n"), 0644); err != nil {
+		m.logger.Printf("Warning: could not update .master_addr: %v", err)
+	} else {
+		m.logger.Printf("Updated .master_addr → %s (chunk servers will follow on next heartbeat)", publicAddr)
 	}
 
 	m.logger.Println("Server is now ACTIVE and accepting write requests.")

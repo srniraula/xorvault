@@ -8,7 +8,7 @@ import (
 )
 
 // uploadStripesStreaming uploads stripes read from stripeChan using parallel chunk uploads
-func (g *GrpcClient) uploadStripesStreaming(stripeChan <-chan Stripe, ack *AckQueue, clientID int64) ([]string, error) {
+func (g *GrpcClient) uploadStripesStreaming(stripeChan <-chan Stripe, ack *AckQueue, username string) ([]string, error) {
 	var successful []string
 
 	for stripe := range stripeChan {
@@ -50,7 +50,7 @@ func (g *GrpcClient) uploadStripesStreaming(stripeChan <-chan Stripe, ack *AckQu
 				defer wg.Done()
 				cctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 				defer cancel()
-				if err := chunkUploader(cctx, server, cid, payload, clientID); err != nil {
+				if err := chunkUploader(cctx, server, cid, payload, username); err != nil {
 					resCh <- res{chunkID: cid, err: err}
 					return
 				}

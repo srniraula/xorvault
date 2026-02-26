@@ -47,7 +47,7 @@ type ChunkServerPair struct {
 
 // downloadChunkFromServer downloads a single chunk from its designated server
 // Returns DownloadedChunk with success status and data (or error)
-func downloadChunkFromServer(chunkID, serverAddr string, clientID int64, isData1, isData2, isParity bool) DownloadedChunk {
+func downloadChunkFromServer(chunkID, serverAddr string, username string, isData1, isData2, isParity bool) DownloadedChunk {
 	result := DownloadedChunk{
 		ChunkID:  chunkID,
 		IsData1:  isData1,
@@ -66,10 +66,10 @@ func downloadChunkFromServer(chunkID, serverAddr string, clientID int64, isData1
 
 	client := dfspb.NewChunkServerClient(conn)
 
-	// Request chunk data with client ID for physical isolation
+	// Request chunk data with username for physical isolation
 	resp, err := client.ReadChunk(context.Background(), &dfspb.ReadChunkRequest{
 		ChunkId:  chunkID,
-		ClientId: clientID,
+		Username: username,
 	})
 
 	if err != nil {
@@ -96,7 +96,7 @@ func downloadChunkFromServer(chunkID, serverAddr string, clientID int64, isData1
 
 // downloadStripe downloads all 3 chunks of a stripe in parallel
 // Returns StripeDownload with downloaded chunks and success count
-func downloadStripe(stripeInfo DownloadStripeInfo, clientID int64) StripeDownload {
+func downloadStripe(stripeInfo DownloadStripeInfo, username string) StripeDownload {
 	var wg sync.WaitGroup
 	resultChan := make(chan DownloadedChunk, 3)
 
@@ -112,7 +112,7 @@ func downloadStripe(stripeInfo DownloadStripeInfo, clientID int64) StripeDownloa
 			result := downloadChunkFromServer(
 				stripeInfo.DataChunk1.ChunkID,
 				stripeInfo.DataChunk1.Server,
-				clientID,
+				username,
 				true, false, false, // isData1
 			)
 			resultChan <- result
@@ -128,7 +128,7 @@ func downloadStripe(stripeInfo DownloadStripeInfo, clientID int64) StripeDownloa
 			result := downloadChunkFromServer(
 				stripeInfo.DataChunk2.ChunkID,
 				stripeInfo.DataChunk2.Server,
-				clientID,
+				username,
 				false, true, false, // isData2
 			)
 			resultChan <- result
@@ -144,7 +144,7 @@ func downloadStripe(stripeInfo DownloadStripeInfo, clientID int64) StripeDownloa
 			result := downloadChunkFromServer(
 				stripeInfo.ParityChunk.ChunkID,
 				stripeInfo.ParityChunk.Server,
-				clientID,
+				username,
 				false, false, true, // isParity
 			)
 			resultChan <- result

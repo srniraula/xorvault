@@ -53,45 +53,46 @@ func main() {
 		log.Fatal("Usage: go run cmd/client/main.go <upload|download|delete|ls|mkdir|rmdir|mv|cat|ls-detailed> <args...>")
 	}
 
-	// Load client ID from .client_id file (0 if new client)
-	myID := loadClientID()
-	if myID == 0 {
-		log.Println("New client - will receive ID from master")
+	// Load username from .username file (empty if new user)
+	myUsername := loadUsername()
+	if myUsername == "" {
+		log.Println("New user - please specify username or it will be assigned (not supported yet in CLI, using 'default')")
+		myUsername = "default"
 	} else {
-		log.Printf("Using existing client ID: %d", myID)
+		log.Printf("Using existing username: %s", myUsername)
 	}
 
 	cmd := os.Args[1] // command name
 
 	switch cmd {
 	case "ls":
-		listFiles(myID)
+		listFiles(myUsername)
 	case "ls-detailed":
 		folderPath := ""
 		if len(os.Args) > 2 {
 			folderPath = os.Args[2]
 		}
-		listFilesDetailed(myID, folderPath)
+		listFilesDetailed(myUsername, folderPath)
 	case "mkdir":
 		if len(os.Args) < 3 {
 			log.Fatal("Usage: client mkdir <folder_path>")
 		}
-		createFolder(myID, os.Args[2])
+		createFolder(myUsername, os.Args[2])
 	case "rmdir":
 		if len(os.Args) < 3 {
 			log.Fatal("Usage: client rmdir <folder_path>")
 		}
-		deleteFolder(myID, os.Args[2])
+		deleteFolder(myUsername, os.Args[2])
 	case "mv":
 		if len(os.Args) < 4 {
 			log.Fatal("Usage: client mv <source_path> <destination_path>")
 		}
-		moveFile(myID, os.Args[2], os.Args[3])
+		moveFile(myUsername, os.Args[2], os.Args[3])
 	case "cat":
 		if len(os.Args) < 3 {
 			log.Fatal("Usage: client cat <filename>")
 		}
-		catFile(myID, os.Args[2])
+		catFile(myUsername, os.Args[2])
 	case "upload", "download", "delete":
 		if len(os.Args) < 3 {
 			log.Fatalf("Usage: go run cmd/client/main.go %s <filename>", cmd)
@@ -101,11 +102,11 @@ func main() {
 		if cmd == "upload" {
 			// Resolve file path (check files/ directory)
 			filePath := resolveFilePath(file, true)
-			upload(filePath, myID)
+			upload(filePath, myUsername)
 		} else if cmd == "download" {
-			download(file, myID)
+			download(file, myUsername)
 		} else if cmd == "delete" {
-			deleteFile(file, myID)
+			deleteFile(file, myUsername)
 		}
 	default:
 		log.Fatalf("Unknown command: %s. Use upload, download, delete, ls, mkdir, rmdir, mv, cat, or ls-detailed", cmd)
@@ -118,7 +119,7 @@ func main() {
 //  2. Register file with master server
 //  3. For each chunk: ask master where to store it, then send to chunk servers
 //  4. Uses chain replication - sends to primary, which forwards to replicas
-func upload(localPath string, myID int64) {
+func upload(localPath string, username string) {
 	// Get file info to determine file size
 	fileInfo, err := os.Stat(localPath)
 	if err != nil {
@@ -145,7 +146,7 @@ func upload(localPath string, myID int64) {
 	createResp, err := master.CreateFile(context.Background(), &dfspb.CreateFileRequest{
 		Filename:  filename, // Use just filename, not full path
 		TotalSize: fileSize,
-		ClientId:  myID,
+		Username:  username,
 	})
 	if err != nil {
 		// Check if it's an "already uploaded" error and print it cleanly
@@ -158,11 +159,9 @@ func upload(localPath string, myID int64) {
 		log.Fatal("CreateFile failed:", err)
 	}
 
-	// Save client ID for future use (if new client)
-	if myID == 0 {
-		if err := saveClientID(createResp.ClientId); err != nil {
-			log.Printf("Warning: Failed to save client ID: %v", err)
-		}
+	// Save username for future use
+	if err := saveUsername(createResp.Username); err != nil {
+		log.Printf("Warning: Failed to save username: %v", err)
 	}
 
 	// Calculate total chunks for progress tracking
@@ -193,7 +192,7 @@ func upload(localPath string, myID int64) {
 
 	// Start uploading stripes as they arrive from channel
 	// This blocks until all stripes are consumed and uploaded
-	successfulChunks, err := uploadStripesStreaming(stripeChan, ackQueue, createResp.ClientId)
+	successfulChunks, err := uploadStripesStreaming(stripeChan, ackQueue, createResp.Username)
 	if err != nil {
 		log.Fatal("Streaming upload failed:", err)
 	}
@@ -233,12 +232,7 @@ func upload(localPath string, myID int64) {
 }
 
 // download retrieves a file from the DFS using streaming with parity recovery
-// Process:
-//  1. Get file metadata from master (chunk IDs, servers, file size)
-//  2. For each stripe: download 3 chunks in parallel, reconstruct if needed
-//  3. Write stripe data to disk incrementally (streaming)
-//  4. Save with "downloaded_" prefix
-func download(filename string, myID int64) {
+func download(filename string, username string) {
 	// Connect to master server
 	conn, err := grpc.NewClient(getMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -250,7 +244,7 @@ func download(filename string, myID int64) {
 	// Step 1: Get file metadata from master (with authentication)
 	meta, err := master.GetFileMetadata(context.Background(), &dfspb.GetFileMetadataRequest{
 		Filename: filename,
-		ClientId: myID,
+		Username: username,
 	})
 	if err != nil {
 		log.Fatal("File not found")
@@ -289,7 +283,7 @@ func download(filename string, myID int64) {
 		}
 
 		// Download all 3 chunks of this stripe in parallel
-		stripe := downloadStripe(downloadInfo, myID)
+		stripe := downloadStripe(downloadInfo, username)
 
 		// Attempt reconstruction if needed
 		err := reconstructMissingChunk(&stripe, downloadInfo)
@@ -322,16 +316,12 @@ func download(filename string, myID int64) {
 }
 
 // deleteFile removes a file from the DFS
-// Process:
-//  1. Connect to master server
-//  2. Send DeleteFile RPC with filename and client ID
-//  3. Master verifies ownership and deletes all chunks from chunk servers
-func deleteFile(filename string, myID int64) {
-	if myID == 0 {
-		log.Fatal("Cannot delete file: no client ID. Please upload a file first.")
+func deleteFile(filename string, username string) {
+	if username == "" {
+		log.Fatal("Cannot delete file: no username found.")
 	}
 
-	log.Printf("Deleting file: %s (client ID: %d)", filename, myID)
+	log.Printf("Deleting file: %s (user: %s)", filename, username)
 
 	// Connect to master server
 	conn, err := grpc.NewClient(getMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -345,7 +335,7 @@ func deleteFile(filename string, myID int64) {
 	// Send delete request
 	resp, err := masterClient.DeleteFile(context.Background(), &dfspb.DeleteFileRequest{
 		Filename: filename,
-		ClientId: myID,
+		Username: username,
 	})
 
 	if err != nil {
@@ -359,10 +349,10 @@ func deleteFile(filename string, myID int64) {
 	log.Printf("Successfully deleted %s: %s", filename, resp.Message)
 }
 
-// listFiles displays all files uploaded by this client
-func listFiles(myID int64) {
-	if myID == 0 {
-		log.Println("No files uploaded yet (new client)")
+// listFiles displays all files uploaded by this user
+func listFiles(username string) {
+	if username == "" {
+		log.Println("No files uploaded yet (new user)")
 		return
 	}
 
@@ -377,7 +367,7 @@ func listFiles(myID int64) {
 
 	// Request file list
 	resp, err := masterClient.ListFiles(context.Background(), &dfspb.ListFilesRequest{
-		ClientId: myID,
+		Username: username,
 	})
 
 	if err != nil {
@@ -389,7 +379,7 @@ func listFiles(myID int64) {
 		return
 	}
 
-	log.Printf("Files uploaded by client %d:", myID)
+	log.Printf("Files uploaded by user %s:", username)
 	for i, filename := range resp.Filenames {
 		log.Printf("  %d. %s", i+1, filename)
 	}

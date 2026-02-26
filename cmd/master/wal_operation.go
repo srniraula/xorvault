@@ -24,14 +24,14 @@ type WALEntry struct {
 
 // CreateFileData stores the data for CreateFile operation
 type CreateFileData struct {
-	ClientID  int64  `json:"client_id"`
+	Username  string `json:"username"`
 	Filename  string `json:"filename"`
 	TotalSize int64  `json:"total_size"`
 }
 
 // AllocateChunkData stores the data for AllocateChunk operation with status tracking
 type AllocateChunkData struct {
-	ClientID int64                           `json:"cliendID"`
+	Username string                          `json:"username"`
 	Filename string                          `json:"filename"`
 	Stripes  map[int32]*dfspb.StripeMetadata `json:"stripes"` //store full stripe info
 	Status   string                          `json:"status"`  // "PENDING" or "SUCCESS"
@@ -47,7 +47,7 @@ type ConfirmWriteData struct {
 // DeleteFileData stores the data for DeleteFile operation
 type DeleteFileData struct {
 	Filename string `json:"filename"`
-	ClientID int64  `json:"client_id"`
+	Username string `json:"username"`
 }
 
 // appendWAL writes an entry to the Write-Ahead Log with durability guarantees
@@ -95,9 +95,9 @@ func (m *MasterServer) AppendWAL(operation string, data interface{}) error {
 }
 
 // logCreateFileToWAL logs a CreateFile operation to the WAL
-func (m *MasterServer) LogCreateFileToWAL(clientID int64, filename string, totalSize int64) error {
+func (m *MasterServer) LogCreateFileToWAL(username string, filename string, totalSize int64) error {
 	walData := CreateFileData{
-		ClientID:  clientID,
+		Username:  username,
 		Filename:  filename,
 		TotalSize: totalSize,
 	}

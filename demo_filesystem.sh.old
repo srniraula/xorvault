@@ -1,0 +1,104 @@
+#!/bin/bash
+
+# XorFS File System Operations Demo Script
+# This script demonstrates all new folder and file management features
+
+echo "=================================================="
+echo "XorFS File System Operations Demo"
+echo "=================================================="
+echo ""
+
+# Colors for output
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+demo_step() {
+    echo -e "${BLUE}>>> $1${NC}"
+    echo ""
+}
+
+demo_command() {
+    echo -e "${GREEN}$ $1${NC}"
+    eval $1
+    echo ""
+}
+
+# Demo 1: Basic Folder Operations
+demo_step "Demo 1: Create Folder Structure"
+demo_command "make mkdir FOLDER=documents"
+demo_command "make mkdir FOLDER=documents/reports"
+demo_command "make mkdir FOLDER=documents/reports/2024"
+demo_command "make mkdir FOLDER=photos"
+demo_command "make mkdir FOLDER=photos/vacation"
+
+# Demo 2: View Structure
+demo_step "Demo 2: View Folder Structure"
+demo_command "make ls-detailed"
+
+# Demo 3: Upload Files (assuming files exist)
+demo_step "Demo 3: Upload Some Files"
+echo "Note: Make sure you have test files in the files/ directory"
+echo "For example: files/test1.txt, files/test2.pdf, files/photo.jpg"
+echo ""
+read -p "Press Enter to continue (or Ctrl+C to stop)..."
+
+# Uncomment these if you have test files
+# demo_command "make upload FILE=test1.txt"
+# demo_command "make upload FILE=test2.pdf"
+# demo_command "make upload FILE=photo.jpg"
+
+# Demo 4: Move Files to Folders
+demo_step "Demo 4: Organize Files into Folders"
+# Uncomment these if you uploaded files
+# demo_command "make mv SRC=test1.txt DEST=documents/test1.txt"
+# demo_command "make mv SRC=test2.pdf DEST=documents/reports/2024/annual_report.pdf"
+# demo_command "make mv SRC=photo.jpg DEST=photos/vacation/beach.jpg"
+
+# Demo 5: View Organized Structure
+demo_step "Demo 5: View Organized Files"
+demo_command "make ls-detailed"
+demo_command "make ls-detailed FOLDER=documents"
+demo_command "make ls-detailed FOLDER=documents/reports"
+demo_command "make ls-detailed FOLDER=photos"
+
+# Demo 6: Rename a File
+demo_step "Demo 6: Rename a File"
+# Uncomment if you have the file
+# demo_command "make mv SRC=documents/test1.txt DEST=documents/readme.txt"
+
+# Demo 7: Preview File Content
+demo_step "Demo 7: Preview File Content"
+# Uncomment if you have a text file
+# demo_command "make cat FILE=documents/readme.txt"
+
+# Demo 8: Detailed Listing with Metadata
+demo_step "Demo 8: View File Details (sizes, timestamps)"
+demo_command "make ls-detailed FOLDER=documents"
+
+# Demo 9: Clean Up Empty Folders
+demo_step "Demo 9: Remove Empty Folders"
+echo "First, let's try to remove a non-empty folder (should fail):"
+# Uncomment to test
+# demo_command "make rmdir FOLDER=documents"
+echo ""
+echo "Now remove an empty folder:"
+# demo_command "make rmdir FOLDER=photos/vacation"
+
+# Demo 10: Summary
+demo_step "Demo 10: Final Structure"
+demo_command "make ls-detailed"
+
+echo "=================================================="
+echo "Demo Complete!"
+echo "=================================================="
+echo ""
+echo "New Commands Available:"
+echo "  make mkdir FOLDER=path              - Create folder"
+echo "  make rmdir FOLDER=path              - Remove empty folder"
+echo "  make mv SRC=from DEST=to            - Move/rename file"
+echo "  make cat FILE=name                  - Preview file"
+echo "  make ls-detailed [FOLDER=path]      - Detailed listing"
+echo ""
+echo "See FILESYSTEM_OPERATIONS.md for complete guide"
+echo ""

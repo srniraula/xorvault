@@ -1,0 +1,229 @@
+#!/bin/bash
+
+# Integration Test for XorFS File System Operations
+# Tests all new folder and file management features
+
+set -e  # Exit on error
+
+echo "=========================================="
+echo "XorFS File System Operations Test Suite"
+echo "=========================================="
+echo ""
+
+PASSED=0
+FAILED=0
+
+# Colors
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+pass() {
+    echo -e "${GREEN}✓ PASS${NC}: $1"
+    ((PASSED++))
+}
+
+fail() {
+    echo -e "${RED}✗ FAIL${NC}: $1"
+    ((FAILED++))
+}
+
+test_section() {
+    echo ""
+    echo -e "${BLUE}==================${NC}"
+    echo -e "${BLUE}$1${NC}"
+    echo -e "${BLUE}==================${NC}"
+}
+
+# Cleanup function
+cleanup() {
+    echo ""
+    echo "Cleaning up test files..."
+    rm -f test_file.txt test_file2.txt
+    echo "Cleanup complete"
+}
+
+trap cleanup EXIT
+
+# Create test files
+echo "Creating test files..."
+echo "This is a test file for XorFS operations" > test_file.txt
+echo "This is another test file" > test_file2.txt
+
+# Test 1: mkdir - Create folders
+test_section "Test 1: Folder Creation (mkdir)"
+if make mkdir FOLDER=test_docs >/dev/null 2>&1; then
+    pass "Create single folder"
+else
+    fail "Create single folder"
+fi
+
+if make mkdir FOLDER=test_docs/reports/2024 >/dev/null 2>&1; then
+    pass "Create nested folders"
+else
+    fail "Create nested folders"
+fi
+
+if make mkdir FOLDER=test_photos >/dev/null 2>&1; then
+    pass "Create another folder"
+else
+    fail "Create another folder"
+fi
+
+# Test 2: ls-detailed - View structure
+test_section "Test 2: View Folder Structure (ls-detailed)"
+if make ls-detailed >/dev/null 2>&1; then
+    pass "List all items"
+else
+    fail "List all items"
+fi
+
+if make ls-detailed FOLDER=test_docs >/dev/null 2>&1; then
+    pass "List specific folder"
+else
+    fail "List specific folder"
+fi
+
+# Test 3: Upload files (if in files/ directory)
+test_section "Test 3: File Upload"
+# Copy test files to files/ directory
+mkdir -p files
+cp test_file.txt files/
+cp test_file2.txt files/
+
+if make upload FILE=test_file.txt >/dev/null 2>&1; then
+    pass "Upload file 1"
+else
+    fail "Upload file 1"
+fi
+
+if make upload FILE=test_file2.txt >/dev/null 2>&1; then
+    pass "Upload file 2"
+else
+    fail "Upload file 2"
+fi
+
+# Test 4: mv - Move files
+test_section "Test 4: Move/Rename Files (mv)"
+if make mv SRC=test_file.txt DEST=test_docs/test_file.txt >/dev/null 2>&1; then
+    pass "Move file to folder"
+else
+    fail "Move file to folder"
+fi
+
+if make mv SRC=test_file2.txt DEST=renamed_file.txt >/dev/null 2>&1; then
+    pass "Rename file"
+else
+    fail "Rename file"
+fi
+
+if make mv SRC=renamed_file.txt DEST=test_docs/reports/2024/report.txt >/dev/null 2>&1; then
+    pass "Move file to nested folder"
+else
+    fail "Move file to nested folder"
+fi
+
+# Test 5: ls-detailed - Verify organization
+test_section "Test 5: Verify File Organization"
+if make ls-detailed FOLDER=test_docs >/dev/null 2>&1; then
+    pass "View organized folder"
+else
+    fail "View organized folder"
+fi
+
+if make ls-detailed FOLDER=test_docs/reports/2024 >/dev/null 2>&1; then
+    pass "View nested folder"
+else
+    fail "View nested folder"
+fi
+
+# Test 6: cat - Preview file
+test_section "Test 6: Preview File Content (cat)"
+if make cat FILE=test_docs/test_file.txt >/dev/null 2>&1; then
+    pass "Preview file content"
+else
+    fail "Preview file content"
+fi
+
+# Test 7: Error handling - Try forbidden operations
+test_section "Test 7: Error Handling"
+
+# Try to create existing folder (should fail gracefully)
+if make mkdir FOLDER=test_docs 2>&1 | grep -q "already exists"; then
+    pass "Reject duplicate folder creation"
+else
+    fail "Reject duplicate folder creation"
+fi
+
+# Try to delete non-empty folder (should fail)
+if make rmdir FOLDER=test_docs 2>&1 | grep -q "not empty"; then
+    pass "Reject deletion of non-empty folder"
+else
+    fail "Reject deletion of non-empty folder"
+fi
+
+# Test 8: rmdir - Delete empty folder
+test_section "Test 8: Delete Empty Folder (rmdir)"
+if make rmdir FOLDER=test_photos >/dev/null 2>&1; then
+    pass "Delete empty folder"
+else
+    fail "Delete empty folder"
+fi
+
+# Test 9: Cleanup - Delete files and folders
+test_section "Test 9: Cleanup Operations"
+if make delete FILE=test_docs/test_file.txt >/dev/null 2>&1; then
+    pass "Delete file from folder"
+else
+    fail "Delete file from folder"
+fi
+
+if make delete FILE=test_docs/reports/2024/report.txt >/dev/null 2>&1; then
+    pass "Delete file from nested folder"
+else
+    fail "Delete file from nested folder"
+fi
+
+if make rmdir FOLDER=test_docs/reports/2024 >/dev/null 2>&1; then
+    pass "Delete empty nested folder"
+else
+    fail "Delete empty nested folder"
+fi
+
+if make rmdir FOLDER=test_docs/reports >/dev/null 2>&1; then
+    pass "Delete empty parent folder"
+else
+    fail "Delete empty parent folder"
+fi
+
+if make rmdir FOLDER=test_docs >/dev/null 2>&1; then
+    pass "Delete empty root folder"
+else
+    fail "Delete empty root folder"
+fi
+
+# Test 10: Final verification
+test_section "Test 10: Final Verification"
+if make ls-detailed >/dev/null 2>&1; then
+    pass "Final listing works"
+else
+    fail "Final listing works"
+fi
+
+# Summary
+echo ""
+echo "=========================================="
+echo "Test Summary"
+echo "=========================================="
+echo -e "${GREEN}Passed: $PASSED${NC}"
+echo -e "${RED}Failed: $FAILED${NC}"
+echo "=========================================="
+
+if [ $FAILED -eq 0 ]; then
+    echo -e "${GREEN}All tests passed!${NC}"
+    exit 0
+else
+    echo -e "${RED}Some tests failed!${NC}"
+    exit 1
+fi

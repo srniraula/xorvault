@@ -57,19 +57,20 @@ func main() {
 
 	// Initialize the MasterServer with empty maps
 	server := &MasterServer{
-		fileInfo:        make(map[int64]map[string]map[int32]*dfspb.StripeMetadata),
-		clientIDs:       make(map[int64][]string),
-		fileSizes:       make(map[int64]map[string]int64),
-		chunkStatus:     make(map[string]string),          // Empty chunk status map
-		chunkServers:    make([]string, 0),                // Start empty, discover via heartbeats
-		servers:         make(map[string]*ServerInfo),     // Empty server health map
-		logger:          masterLogger,                     // Custom logger for file output
-		walFile:         walFile,                          // WAL file handle
-		walWriter:       bufio.NewWriter(walFile),         // Buffered WAL writer
-		clientFolders:   make(map[int64]map[string]bool),  // Folder hierarchy support
-		fileUploadTimes: make(map[int64]map[string]int64), // Upload timestamps
-		IsStandby:       *mode == "standby",               // Set mode
-		listenAddr:      "0.0.0.0:" + *port,               // Own listen address (for .master_addr update on promotion)
+		fileInfo:        make(map[string]map[string]map[int32]*dfspb.StripeMetadata),
+		clientIDs:       make(map[string][]string),
+		fileSizes:       make(map[string]map[string]int64),
+		chunkStatus:     make(map[string]string),           // Empty chunk status map
+		chunkServers:    make([]string, 0),                 // Start empty, discover via heartbeats
+		servers:         make(map[string]*ServerInfo),      // Empty server health map
+		logger:          masterLogger,                      // Custom logger for file output
+		walFile:         walFile,                           // WAL file handle
+		walWriter:       bufio.NewWriter(walFile),          // Buffered WAL writer
+		clientFolders:   make(map[string]map[string]bool),  // Folder hierarchy support
+		fileUploadTimes: make(map[string]map[string]int64), // Upload timestamps
+		IsStandby:       *mode == "standby",                // Set mode
+		listenAddr:      "0.0.0.0:" + *port,                // Own listen address (for .master_addr update on promotion)
+		userPasswords:   make(map[string]string),
 	}
 
 	// Restore from checkpoint first (if exists)
@@ -96,6 +97,15 @@ func main() {
 			log.Printf("Warning: could not write .secondary_addr: %v", err)
 		} else {
 			log.Printf("Standby: wrote .secondary_addr = %s", secondaryPublicAddr)
+		}
+	} else {
+		// If we are active (Primary), write our address to .master_addr so
+		// chunkservers and clients can discover us automatically without flags.
+		masterPublicAddr := "127.0.0.1:" + *port
+		if err := os.WriteFile(".master_addr", []byte(masterPublicAddr+"\n"), 0644); err != nil {
+			log.Printf("Warning: could not write .master_addr: %v", err)
+		} else {
+			log.Printf("Primary: wrote .master_addr = %s", masterPublicAddr)
 		}
 	}
 	// Register our MasterServer to handle gRPC requests
