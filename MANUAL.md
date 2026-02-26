@@ -93,20 +93,61 @@ XorFS splits files into **1 MB chunks**. For every two data chunks (`D1`, `D2`),
 
 ---
 
-## 6. 🏁 User Guide: Running the System
+## 6. 🏁 User Guide: Step-by-Step Deployment
+
+This section walks you through deploying XORFS across **three separate devices** for full high availability.
 
 ### 6.1 Prerequisites
-*   Go 1.21 or higher installed.
-*   All devices on the same Wi-Fi/LAN.
+1.  **Go 1.21+**: Installed on all devices.
+2.  **Network**: All devices connected to the same LAN/Wi-Fi.
+3.  **Identify IPs**: Find the LAN IP of each device (e.g., `hostname -I`).
+    *   *Device A (Master)*: `192.168.1.10`
+    *   *Device B (Secondary)*: `192.168.1.11`
+    *   *Device C (ChunkServer)*: `192.168.1.12`
 
-### 6.2 Multi-Device (LAN) Setup
-1.  **Configure IPs**: Edit `cluster.conf` and input the LAN IPs of your devices.
-2.  **Build**: Run `make build` on all devices.
-3.  **Start Primary (Device 1)**: `make run-master-lan MASTER=192.168.1.10:50051 SECONDARY=192.168.1.11:50052`
-4.  **Start Secondary (Device 2)**: `make run-secondary-lan MASTER=192.168.1.10:50051 SECONDARY=192.168.1.11:50052`
-5.  **Start ChunkServers (Device 3+)**: `make run-chunk-lan SLOT=1 MASTER=192.168.1.10:50051 SECONDARY=192.168.1.11:50052`
+---
 
-### 6.3 Using the CLI
+### 6.2 Step 1: Start the Primary Master (Device A)
+The Primary Master oversees the entire system and hosts the Web Dashboard.
+```bash
+# On Device A:
+make run-master-lan MASTER=192.168.1.10:50051 SECONDARY=192.168.1.11:50052
+```
+*Starts: Master Node (50051), Web API (8080), and Frontend UI (5173).*
+
+---
+
+### 6.3 Step 2: Start the Secondary Master (Device B)
+The Secondary Master stays in standby mode and waits to take over if Device A fails.
+```bash
+# On Device B:
+make run-secondary-lan MASTER=192.168.1.10:50051 SECONDARY=192.168.1.11:50052
+```
+*Note: This terminal will show "Monitoring Primary" heartbeats.*
+
+---
+
+### 6.4 Step 3: Start the ChunkServers (Distributed)
+We need 3 total storage slots. We will distribute them across your devices.
+
+**On Device A (Open a New Terminal):**
+```bash
+make run-chunk-lan SLOT=1 MASTER=192.168.1.10:50051 SECONDARY=192.168.1.11:50052
+```
+
+**On Device B (Open a New Terminal):**
+```bash
+make run-chunk-lan SLOT=2 MASTER=192.168.1.10:50051 SECONDARY=192.168.1.11:50052
+```
+
+**On Device C:**
+```bash
+make run-chunk-lan SLOT=3 MASTER=192.168.1.10:50051 SECONDARY=192.168.1.11:50052
+```
+
+---
+
+### 6.5 CLI & Web Interaction
 ```bash
 make register              # Create your 6-digit PIN
 make ls                    # List uploaded files
