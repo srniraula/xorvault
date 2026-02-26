@@ -101,6 +101,7 @@ This section walks you through deploying XORFS across **three separate devices**
 1.  **Go 1.21+**: Installed on all devices.
 2.  **Network**: All devices connected to the same LAN/Wi-Fi.
 3.  **Identify IPs**: Find the LAN IP of each device (e.g., `hostname -I`).
+4.  eg 
     *   *Device A (Master)*: `192.168.1.10`
     *   *Device B (Secondary)*: `192.168.1.11`
     *   *Device C (ChunkServer)*: `192.168.1.12`
