@@ -165,7 +165,7 @@ func main() {
 		// --- NEW failover fields ---
 		secondaryAddr: *secondaryAddr,
 		myAddr:        *myAddr,
-		isPrimary:     true,
+		isPrimary:     (*secondaryAddr != ""), // If we have a secondary to talk to, we are primary
 	}
 
 	// Restore from checkpoint first (if exists)
@@ -246,6 +246,7 @@ func (m *MasterServer) SendHeartbeatsToSecondary(secondaryAddr string) {
 
 		if err != nil {
 			m.logger.Printf("Heartbeat to secondary failed: %v", err)
+			log.Printf("WARNING: Heartbeat to secondary at %s failed: %v", secondaryAddr, err)
 		} else {
 			m.logger.Printf("Heartbeat sent to secondary at %s (wal_seq=%d)", secondaryAddr, m.walSeq)
 		}
