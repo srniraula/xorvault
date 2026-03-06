@@ -144,6 +144,40 @@ services:
     
     restart: unless-stopped
 
+  # Web API server – exposes REST endpoints for upload / download / delete
+  webserver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: dfs-webserver
+    hostname: webserver
+
+    command: sh -c "exec webserver"
+
+    ports:
+      - "8080:8080"
+
+    networks:
+      - dfs-network
+
+    environment:
+      - DFS_ROLE=webserver
+      - MASTER_ADDR=master:50051
+      - WEB_API_PORT=8080
+
+    depends_on:
+      master:
+        condition: service_healthy
+      chunkserver1:
+        condition: service_started
+      chunkserver2:
+        condition: service_started
+      chunkserver3:
+        condition: service_started
+
+    restart: unless-stopped
+
   # Client container (for running one-off commands)
   client:
     build:

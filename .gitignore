@@ -88,3 +88,5 @@ cluster.conf
 
 # More binaries
 /webserver
+
+.master_addr

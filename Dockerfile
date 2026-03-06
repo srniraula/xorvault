@@ -33,6 +33,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /bin/master ./cmd/master
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /bin/chunkserver ./cmd/chunkserver
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /bin/client ./cmd/client
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /bin/webserver ./cmd/webserver
 
 # Stage 2: Runtime stage - minimal image with just the binaries
 # alpine is a tiny Linux distribution (~5MB vs hundreds of MB)
@@ -48,6 +49,7 @@ RUN addgroup -g 1000 dfs && adduser -D -u 1000 -G dfs dfs
 COPY --from=builder /bin/master /usr/local/bin/master
 COPY --from=builder /bin/chunkserver /usr/local/bin/chunkserver
 COPY --from=builder /bin/client /usr/local/bin/client
+COPY --from=builder /bin/webserver /usr/local/bin/webserver
 
 # Create directories for data storage and logs
 RUN mkdir -p /data /data/log_files /data/files && chown -R dfs:dfs /data
