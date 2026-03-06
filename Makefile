@@ -150,8 +150,7 @@ run-chunk-lan: build
 	@echo "════════════════════════════════════════"
 	@echo ""
 	@mkdir -p log_files chunk_server$(SLOT)
-	$(if $(MY_IP),CHUNKSERVER_ADDR="$(MY_IP):900$(SLOT)") \
-	  MASTER_ADDR="$(MASTER)" \
+	MASTER_ADDR="$(MASTER)" $(if $(MY_IP),CHUNKSERVER_ADDR="$(MY_IP):900$(SLOT)") \
 	  ./bin/chunkserver \
 	    -port "900$(SLOT)" \
 	    -storage "chunk_server$(SLOT)" \
