@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"dfs-project/dfspb"
+	"dfs-project/pkg/config"
 	"flag"
 	"fmt"
 	"log"
@@ -92,16 +93,33 @@ func main() {
 	// If we are a standby, write our own address to .secondary_addr so clients
 	// have a fallback address to discover us after the primary dies.
 	if server.IsStandby {
-		secondaryPublicAddr := "127.0.0.1:" + *port
+		// Prefer the explicit env var passed by the Makefile (SECONDARY is the
+		// full "IP:port" string), otherwise auto-detect the LAN IP.
+		secondaryPublicAddr := os.Getenv("SECONDARY_MASTER_ADDR")
+		if secondaryPublicAddr == "" {
+			if ip, err := config.GetLocalIP(); err == nil {
+				secondaryPublicAddr = ip + ":" + *port
+			} else {
+				secondaryPublicAddr = "127.0.0.1:" + *port
+			}
+		}
 		if err := os.WriteFile(".secondary_addr", []byte(secondaryPublicAddr+"\n"), 0644); err != nil {
 			log.Printf("Warning: could not write .secondary_addr: %v", err)
 		} else {
 			log.Printf("Standby: wrote .secondary_addr = %s", secondaryPublicAddr)
 		}
 	} else {
-		// If we are active (Primary), write our address to .master_addr so
-		// chunkservers and clients can discover us automatically without flags.
-		masterPublicAddr := "127.0.0.1:" + *port
+		// If we are active (Primary), write our LAN address to .master_addr so
+		// chunkservers and clients can discover us without needing flags.
+		// Use MASTER_ADDR env var (set by Makefile run-master-lan), else auto-detect.
+		masterPublicAddr := os.Getenv("MASTER_ADDR")
+		if masterPublicAddr == "" {
+			if ip, err := config.GetLocalIP(); err == nil {
+				masterPublicAddr = ip + ":" + *port
+			} else {
+				masterPublicAddr = "127.0.0.1:" + *port
+			}
+		}
 		if err := os.WriteFile(".master_addr", []byte(masterPublicAddr+"\n"), 0644); err != nil {
 			log.Printf("Warning: could not write .master_addr: %v", err)
 		} else {

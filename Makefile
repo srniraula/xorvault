@@ -104,9 +104,9 @@ run-master-lan: build
 	@sleep 1
 	@# Start frontend
 	@if [ ! -d "web/node_modules" ]; then (cd web && npm install > /dev/null 2>&1); fi
-	VITE_API_BASE="http://$(word 1,$(subst :, ,$(MASTER))):$(WEB_PORT)" \
-	  (cd web && npm run dev -- --port $(UI_PORT) --host 0.0.0.0 \
-	  > ../log_files/frontend_stdout.log 2>&1) & echo $$! >> .sys_pids
+	cd web && VITE_API_BASE="http://$(word 1,$(subst :, ,$(MASTER))):$(WEB_PORT)" \
+	  npm run dev -- --port $(UI_PORT) --host 0.0.0.0 \
+	  > ../log_files/frontend_stdout.log 2>&1 & echo $$! >> ../.sys_pids
 	@echo "All services started. Logs in log_files/. Stop with: make down"
 
 # ── Secondary Master ──────────────────────────────────────────────────
@@ -126,7 +126,8 @@ run-secondary-lan: build
 	@echo ""
 	@mkdir -p log_files
 	@echo "$(SECONDARY)" > .secondary_addr
-	SECONDARY_MASTER_IP="$(word 1,$(subst :, ,$(SECONDARY)))" \
+	MASTER_ADDR="$(MASTER)" \
+	  SECONDARY_MASTER_ADDR="$(SECONDARY)" \
 	  ./bin/master \
 	    -port "$(word 2,$(subst :, ,$(SECONDARY)))" \
 	    -mode standby \
@@ -149,7 +150,8 @@ run-chunk-lan: build
 	@echo "════════════════════════════════════════"
 	@echo ""
 	@mkdir -p log_files chunk_server$(SLOT)
-	CHUNKSERVER_ADDR="$(MY_IP):900$(SLOT)" \
+	$(if $(MY_IP),CHUNKSERVER_ADDR="$(MY_IP):900$(SLOT)") \
+	  MASTER_ADDR="$(MASTER)" \
 	  ./bin/chunkserver \
 	    -port "900$(SLOT)" \
 	    -storage "chunk_server$(SLOT)" \

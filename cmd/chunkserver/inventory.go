@@ -111,12 +111,19 @@ func (c *ChunkServer) scanInventory() []string {
 
 // reportInventoryToMaster sends the current inventory to the master
 // Returns lists of missing and extra chunks
-func (c *ChunkServer) reportInventoryToMaster(port string) (*dfspb.InventoryResponse, error) {
+// masterAddr is the explicitly configured master address (from -master flag)
+func (c *ChunkServer) reportInventoryToMaster(port string, masterAddr string) (*dfspb.InventoryResponse, error) {
 	// Scan local inventory
 	inventory := c.scanInventory()
 
+	// Use the explicitly configured master address so we don't rely on a
+	// potentially stale .master_addr file on remote (LAN) devices.
+	if masterAddr == "" {
+		masterAddr = config.GetMasterAddr()
+	}
+
 	// Connect to master
-	conn, err := grpc.NewClient(config.GetMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(masterAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to master: %v", err)
 	}
@@ -179,11 +186,12 @@ func (c *ChunkServer) cleanupExtraChunks(extraChunks []string) {
 }
 
 // PerformInventoryCheck scans inventory and reports to master on startup
-// Called once when chunk server starts
-func PerformInventoryCheck(server *ChunkServer, port string, logger *log.Logger) {
+// Called once when chunk server starts.
+// masterAddr is the explicit master address from the -master flag.
+func PerformInventoryCheck(server *ChunkServer, port string, masterAddr string, logger *log.Logger) {
 	logger.Printf("Starting inventory check...")
 
-	resp, err := server.reportInventoryToMaster(port)
+	resp, err := server.reportInventoryToMaster(port, masterAddr)
 	if err != nil {
 		logger.Printf("Inventory check failed: %v", err)
 		return

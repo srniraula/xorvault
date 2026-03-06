@@ -44,7 +44,7 @@ func main() {
 	dfspb.RegisterChunkServerServer(s, server)
 
 	// Perform inventory check on startup
-	go PerformInventoryCheck(server, *port, chunkLogger)
+	go PerformInventoryCheck(server, *port, *master, chunkLogger)
 
 	// Start heartbeat goroutine (pass configured master addresses)
 	go SendHeartbeats(*port, *master, *secondary, chunkLogger)
