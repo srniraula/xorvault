@@ -5,8 +5,8 @@
 # Get the directory where this Makefile is located (project root)
 ROOT_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-# Default master address for local development (can be overridden)
-MASTER_ADDR ?= 127.0.0.1:50051
+# Default master address (use $(MASTER) if supplied, else fallback)
+MASTER_ADDR ?= $(if $(MASTER),$(MASTER),127.0.0.1:50051)
 
 # Build all binaries
 all: build
@@ -237,9 +237,9 @@ upload:
 	fi; \
 	# Prefer running from project root (./files), otherwise try client workspace relative path
 	@if [ -f files/$(FILE) ]; then \
-		./bin/client upload files/$(FILE); \
+		MASTER_ADDR="$(MASTER_ADDR)" ./bin/client upload files/$(FILE); \
 	elif [ -f ../../files/$(FILE) ]; then \
-		../../bin/client upload ../../files/$(FILE); \
+		MASTER_ADDR="$(MASTER_ADDR)" ../../bin/client upload ../../files/$(FILE); \
 	else \
 		echo "Error: file not found: files/$(FILE)"; exit 1; \
 	fi
@@ -249,29 +249,29 @@ download:
 	@if [ -z "$(FILE)" ]; then \
 		echo "Error: FILE not specified. Usage: make download FILE=myfile.pdf"; exit 1; \
 	fi
-	@./bin/client download "$(FILE)"
+	@MASTER_ADDR="$(MASTER_ADDR)" ./bin/client download "$(FILE)"
 
 # Delete a file (usage: make delete FILE=myfile.pdf)
 delete:
 	@if [ -z "$(FILE)" ]; then \
 		echo "Error: FILE not specified. Usage: make delete FILE=myfile.pdf"; exit 1; \
 	fi
-	@./bin/client delete "$(FILE)"
+	@MASTER_ADDR="$(MASTER_ADDR)" ./bin/client delete "$(FILE)"
 
 # List all files uploaded by this client (usage: cd clients/client1 && make ls)
 ls:
-	./bin/client ls
+	@MASTER_ADDR="$(MASTER_ADDR)" ./bin/client ls
 
 # Register a new client ID
 register:
-	./bin/client register
+	@MASTER_ADDR="$(MASTER_ADDR)" ./bin/client register
 
 # List files with details (usage: make ls-detailed [FOLDER=path])
 ls-detailed:
 	@if [ -z "$(FOLDER)" ]; then \
-		./bin/client ls-detailed; \
+		MASTER_ADDR="$(MASTER_ADDR)" ./bin/client ls-detailed; \
 	else \
-		./bin/client ls-detailed $(FOLDER); \
+		MASTER_ADDR="$(MASTER_ADDR)" ./bin/client ls-detailed $(FOLDER); \
 	fi
 
 # Create a folder (usage: make mkdir FOLDER=documents/photos)
@@ -279,7 +279,7 @@ mkdir:
 	@if [ -z "$(FOLDER)" ]; then \
 		echo "Error: FOLDER not specified. Usage: make mkdir FOLDER=path"; exit 1; \
 	else \
-		./bin/client mkdir "$(FOLDER)"; \
+		MASTER_ADDR="$(MASTER_ADDR)" ./bin/client mkdir "$(FOLDER)"; \
 	fi
 
 # Remove an empty folder (usage: make rmdir FOLDER=documents/photos)
@@ -287,7 +287,7 @@ rmdir:
 	@if [ -z "$(FOLDER)" ]; then \
 		echo "Error: FOLDER not specified. Usage: make rmdir FOLDER=path"; exit 1; \
 	else \
-		./bin/client rmdir "$(FOLDER)"; \
+		MASTER_ADDR="$(MASTER_ADDR)" ./bin/client rmdir "$(FOLDER)"; \
 	fi
 
 # Move/rename a file (usage: make mv SRC=file.pdf DEST=folder/file.pdf)
@@ -295,7 +295,7 @@ mv:
 	@if [ -z "$(SRC)" ] || [ -z "$(DEST)" ]; then \
 		echo "Error: SRC and DEST required. Usage: make mv SRC=source DEST=destination"; exit 1; \
 	else \
-		./bin/client mv "$(SRC)" "$(DEST)"; \
+		MASTER_ADDR="$(MASTER_ADDR)" ./bin/client mv "$(SRC)" "$(DEST)"; \
 	fi
 
 # Preview file content (usage: make cat FILE=readme.txt)
@@ -303,7 +303,7 @@ cat:
 	@if [ -z "$(FILE)" ]; then \
 		echo "Error: FILE not specified. Usage: make cat FILE=filename"; exit 1; \
 	else \
-		./bin/client cat "$(FILE)"; \
+		MASTER_ADDR="$(MASTER_ADDR)" ./bin/client cat "$(FILE)"; \
 	fi
 
 # Set the master address for this client workspace

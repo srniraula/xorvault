@@ -204,16 +204,52 @@ func GetWebAPIPort() string {
 	return "8080"
 }
 
-// GetLocalIP returns the first non-loopback IPv4 address found on the machine.
+// GetLocalIP returns the first non-loopback, non-virtual IPv4 address found on the machine.
+// It explicitly skips common virtual interfaces like docker, veth and bridge interfaces.
 func GetLocalIP() (string, error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return "", err
 	}
+
+	// Priority 1: Look for physical-looking interfaces (eth*, wlan*, en*, wl*)
+	for _, iface := range ifaces {
+		name := strings.ToLower(iface.Name)
+		if strings.HasPrefix(name, "docker") || strings.HasPrefix(name, "veth") || strings.HasPrefix(name, "br-") || strings.HasPrefix(name, "lo") {
+			continue
+		}
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.IsLoopback() {
+				continue
+			}
+			ip = ip.To4()
+			if ip == nil {
+				continue
+			}
+			return ip.String(), nil
+		}
+	}
+
+	// Fallback: Just get any non-loopback IPv4 if the above didn't find anything
 	for _, iface := range ifaces {
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
 		}
+		// ... (rest of old code ...)
 		addrs, err := iface.Addrs()
 		if err != nil {
 			continue
