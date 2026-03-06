@@ -32,17 +32,22 @@ func (g *GrpcClient) streamFileInStripes(r io.Reader, stripes map[int32]*dfspb.S
 			errChan <- fmt.Errorf("error reading chunk2: %v", err2)
 			return
 		}
-		if err2 == io.EOF || (err2 == io.ErrUnexpectedEOF && n2 == 0) {
+		buf2HasData := n2 > 0
+		if !buf2HasData {
+			// Truly empty – last stripe has only one data chunk.
+			// Don't upload a fake zero chunk; leave ChunkIds[1] empty.
 			buf2 = []byte{}
 		} else {
 			buf2 = buf2[:n2]
 		}
 
-		// pad
+		// pad buf1 if it is a short read (partial last chunk)
 		if len(buf1) < CHUNK_SIZE {
 			buf1 = padChunk(buf1, CHUNK_SIZE)
 		}
-		if len(buf2) < CHUNK_SIZE {
+		// Only pad buf2 when it is a *partial* read (0 < n2 < CHUNK_SIZE).
+		// When buf2 is empty we leave it as []byte{} so parity = XOR(buf1, []) = buf1.
+		if buf2HasData && len(buf2) < CHUNK_SIZE {
 			buf2 = padChunk(buf2, CHUNK_SIZE)
 		}
 
@@ -56,13 +61,22 @@ func (g *GrpcClient) streamFileInStripes(r io.Reader, stripes map[int32]*dfspb.S
 			return
 		}
 
+		// Build the stripe. When buf2 is empty, clear the second slot so the
+		// uploader goroutine skips writing a zero-filled chunk to the server.
+		data2ChunkID := sm.ChunkIds[1]
+		data2Server := sm.Servers[1]
+		if !buf2HasData {
+			data2ChunkID = ""
+			data2Server = ""
+		}
+
 		s := Stripe{
 			StripeNum:   int(stripeNum),
 			DataChunk1:  buf1,
 			DataChunk2:  buf2,
 			ParityChunk: parity,
-			ChunkIDs:    [3]string{sm.ChunkIds[0], sm.ChunkIds[1], sm.ChunkIds[2]},
-			Servers:     [3]string{sm.Servers[0], sm.Servers[1], sm.Servers[2]},
+			ChunkIDs:    [3]string{sm.ChunkIds[0], data2ChunkID, sm.ChunkIds[2]},
+			Servers:     [3]string{sm.Servers[0], data2Server, sm.Servers[2]},
 			Checksums:   [3]string{calculateChecksum(buf1), calculateChecksum(buf2), calculateChecksum(parity)},
 		}
 

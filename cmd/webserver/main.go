@@ -63,10 +63,16 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 		}
 		success, msg, err := cli.Authenticate(cRequestContext(c), req.Username, req.Password, req.IsRegister)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
+			// Hide raw gRPC transport details from the browser
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Service unavailable. Please try again."})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"success": success, "message": msg})
+		if !success {
+			// Friendly auth failure (wrong password, unknown user, etc.)
+			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": msg})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": msg})
 	})
 
 	r.POST("/files", func(c *gin.Context) {

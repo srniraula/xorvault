@@ -59,6 +59,7 @@ func TestListHandler(t *testing.T) {
 
 	r := NewRouter(mc)
 	req := httptest.NewRequest("GET", "/files?username=user1", nil)
+	req.Header.Set("X-DFS-Password", "123456")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -68,6 +69,7 @@ func TestListHandler(t *testing.T) {
 
 	// Also accept 'user' query param
 	req2 := httptest.NewRequest("GET", "/files?user=user1", nil)
+	req2.Header.Set("X-DFS-Password", "123456")
 	rec2 := httptest.NewRecorder()
 	r.ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusOK {
@@ -96,6 +98,7 @@ func TestUploadHandler(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/files", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("X-DFS-Password", "123456")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 

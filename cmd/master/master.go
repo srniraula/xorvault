@@ -192,9 +192,20 @@ func (m *MasterServer) allocateChunksInternal(username string, totalSize int, fi
 
 	totalStripe := (totalChunks + 2 - 1) / 2
 	chunkCounter := 1 // Global chunk counter
+	n := len(healthy) // Number of available healthy servers
 
-	// Generate chunk IDs and parity IDs for each stripe
+	// Generate chunk IDs and parity IDs for each stripe.
+	// We use RAID-5 distributed parity: the parity server rotates by one
+	// position each stripe so load is balanced across all chunk servers.
+	//
+	//   Stripe 1: data1→healthy[0], data2→healthy[1], parity→healthy[2]
+	//   Stripe 2: data1→healthy[1], data2→healthy[2], parity→healthy[0]
+	//   Stripe 3: data1→healthy[2], data2→healthy[0], parity→healthy[1]
+	//   ...etc (offset = (stripeNum-1) % n)
 	for stripeNum := 1; stripeNum <= totalStripe; stripeNum++ {
+		// Rotation offset for this stripe
+		offset := (stripeNum - 1) % n
+
 		// Build StripeMetadata for this stripe
 		stripe := &dfspb.StripeMetadata{
 			StripeNum: int32(stripeNum),
@@ -202,31 +213,29 @@ func (m *MasterServer) allocateChunksInternal(username string, totalSize int, fi
 			Servers:   make([]string, 3), // [server1, server2, server3]
 		}
 
-		// Create 2 data chunks per stripe (or less for last stripe)
-		chunkIdx := 0
+		// Assign data chunks with rotated server indices
 		for chunkInStripe := 1; chunkInStripe <= 2 && chunkCounter <= totalChunks; chunkInStripe++ {
 			chunkID := fmt.Sprintf("%s_chunk%d_%04d", filename, stripeNum, chunkCounter)
+			serverIdx := (offset + chunkInStripe - 1) % n
 
-			// Alternate between chunkserver1 and chunkserver2
 			if chunkInStripe == 1 {
 				stripe.ChunkIds[0] = chunkID
-				stripe.Servers[0] = healthy[0]
+				stripe.Servers[0] = healthy[serverIdx]
 			} else {
 				stripe.ChunkIds[1] = chunkID
-				stripe.Servers[1] = healthy[1]
+				stripe.Servers[1] = healthy[serverIdx]
 			}
 
 			// Mark chunk as PENDING
 			m.chunkStatus[chunkID] = "PENDING"
-
 			chunkCounter++
-			chunkIdx++
 		}
 
-		// Create parity for this stripe
+		// Parity server is the 3rd slot in the rotation
+		parityServerIdx := (offset + 2) % n
 		parityID := fmt.Sprintf("%s_parity%d_%04d", filename, stripeNum, stripeNum)
 		stripe.ChunkIds[2] = parityID
-		stripe.Servers[2] = healthy[2]
+		stripe.Servers[2] = healthy[parityServerIdx]
 
 		// Mark parity as PENDING
 		m.chunkStatus[parityID] = "PENDING"
