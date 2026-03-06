@@ -185,47 +185,35 @@ func SendHeartbeats(port string, masterAddr string, secondaryAddr string, logger
 	for range ticker.C {
 		// If we don't have a working connection, resolve a target
 		if masterClient == nil {
-			// Always check .master_addr first in case a failover occurred
 			target := resolveActiveMaster(masterAddr, secondaryAddr)
-
-			// Try targets until one works
-			success := false
-			trialTargets := []string{target}
-			for _, t := range targets {
-				if t != target {
-					trialTargets = append(trialTargets, t)
-				}
-			}
-
-			for _, t := range trialTargets {
-				if t == "" {
-					continue
-				}
-				c, err := grpc.NewClient(t, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithTimeout(2*time.Second))
-				if err == nil {
-					conn = c
-					masterClient = dfspb.NewMasterServerClient(conn)
-					currentTarget = t
-					logger.Printf("Connected to master: %s", t)
-					success = true
-					break
-				}
-			}
-			if !success {
-				logger.Printf("Waiting for an active master (tried: %v)", trialTargets)
+			if target == "" {
+				logger.Printf("ERROR: No master address available for heartbeats")
 				continue
 			}
+
+			// Try to connect (non-blocking, but the first RPC will fail if unreachable)
+			c, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if err != nil {
+				logger.Printf("CRITICAL: Failed to create gRPC client for %s: %v", target, err)
+				continue
+			}
+
+			conn = c
+			masterClient = dfspb.NewMasterServerClient(conn)
+			currentTarget = target
+			logger.Printf("Attempting heartbeat connection to: %s", target)
 		}
 
 		// Send heartbeat
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		_, err := masterClient.ReceiveHeartbeat(ctx, &dfspb.HeartbeatRequest{
 			Address: myAddr,
 		})
 		cancel()
 
 		if err != nil {
-			logger.Printf("Heartbeat failed to %s: %v. Re-discovering...", currentTarget, err)
+			logger.Printf("Heartbeat RPC failed to %s: %v. (MyAddr: %s)", currentTarget, err, myAddr)
+			// Close and reset so we re-resolve master next time
 			if conn != nil {
 				conn.Close()
 			}
@@ -233,7 +221,8 @@ func SendHeartbeats(port string, masterAddr string, secondaryAddr string, logger
 			masterClient = nil
 			currentTarget = ""
 		} else {
-			logger.Printf("Heartbeat sent to %s from %s", currentTarget, myAddr)
+			// Success! Don't be too verbose unless debugging, but keep a record.
+			// logger.Printf("Heartbeat Success: %s -> %s", myAddr, currentTarget)
 		}
 	}
 }

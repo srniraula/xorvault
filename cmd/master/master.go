@@ -315,15 +315,14 @@ func (m *MasterServer) GetFileMetadata(ctx context.Context, req *dfspb.GetFileMe
 // SendHeartbeat receives periodic "I'm alive" messages from chunk servers
 // This is how the master knows which chunk servers are still running
 // Chunk servers send heartbeats every 5 seconds
-func (m *MasterServer) ReceiveHeartbeat(ctx context.Context, req *dfspb.HeartbeatRequest) (*dfspb.HeartbeatResponse, error) {
-	addr := req.Address
+// RegisterServerFromInventory is a helper to mark a chunkserver as alive
+// when its inventory report is received.
+func (m *MasterServer) RegisterServerFromInventory(addr string) {
+	m.serversMu.Lock()
+	defer m.serversMu.Unlock()
 
-	m.serversMu.Lock() // Write lock - only one goroutine can modify at a time
-	// If this is a new chunk server we haven't seen before, register it
 	if _, exists := m.servers[addr]; !exists {
 		m.servers[addr] = &ServerInfo{}
-
-		// Check if really new to chunkServers slice (avoid duplicates)
 		found := false
 		for _, s := range m.chunkServers {
 			if s == addr {
@@ -334,15 +333,15 @@ func (m *MasterServer) ReceiveHeartbeat(ctx context.Context, req *dfspb.Heartbea
 		if !found {
 			m.chunkServers = append(m.chunkServers, addr)
 		}
-
-		m.logger.Printf("New chunkserver registered: %s", addr)
+		m.logger.Printf("New chunkserver registered from inventory: %s", addr)
 	}
-	// Update the heartbeat timestamp and mark server as alive
 	m.servers[addr].LastHeartbeat = time.Now()
 	m.servers[addr].Alive = true
-	m.serversMu.Unlock()
+}
 
-	m.logger.Printf("Heartbeat received from %s", addr)
+func (m *MasterServer) ReceiveHeartbeat(ctx context.Context, req *dfspb.HeartbeatRequest) (*dfspb.HeartbeatResponse, error) {
+	m.RegisterServerFromInventory(req.Address)
+	m.logger.Printf("Heartbeat received from %s", req.Address)
 	return &dfspb.HeartbeatResponse{Success: true}, nil
 }
 

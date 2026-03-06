@@ -18,6 +18,7 @@ func (m *MasterServer) ReportInventory(ctx context.Context, req *dfspb.Inventory
 	}
 
 	m.logger.Printf("Received inventory from %s: %d chunks reported", addr, len(req.ChunkIds))
+	m.RegisterServerFromInventory(addr)
 
 	// Build expected chunks for this server from fileInfo
 	expectedChunks := make(map[string]bool)
