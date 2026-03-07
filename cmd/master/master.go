@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -190,6 +191,13 @@ func (m *MasterServer) allocateChunksInternal(clientID int64, totalSize int, fil
 	if len(healthy) < 3 {
 		return nil, fmt.Errorf("insufficient healthy chunkservers: need 3, got %d", len(healthy))
 	}
+
+	// Sort healthy servers by address so assignment is deterministic regardless of
+	// heartbeat arrival order. With ports 9001 < 9002 < 9003, this ensures:
+	//   healthy[0] = chunkserver1 (data chunks)
+	//   healthy[1] = chunkserver2 (data chunks)
+	//   healthy[2] = chunkserver3 (dedicated parity — RAID-4)
+	sort.Strings(healthy)
 
 	totalStripe := (totalChunks + 2 - 1) / 2
 	chunkCounter := 1 // Global chunk counter

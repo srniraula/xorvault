@@ -1,6 +1,6 @@
 package main
 
-// Stripe represents a RAID-5 stripe with 2 data chunks and 1 parity chunk
+// Stripe represents a RAID-4 stripe with 2 data chunks and 1 parity chunk
 type Stripe struct {
 	StripeNum   int
 	DataChunk1  []byte
