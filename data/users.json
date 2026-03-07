@@ -1,9 +1,19 @@
 {
   "users": {
+    "Sanim_27": {
+      "password": "$2a$10$A.F16Tt6ZYfzStAVc/Ze6ee44RE69ckqcUuPqC0V2IUTuvzqBTrAy",
+      "clientId": 3183087543,
+      "createdAt": "2026-03-07T22:06:04.038264855+05:45"
+    },
     "nis23": {
       "password": "$2a$10$m9WJTZdG6GulV1lqhemfE.mgnifBDIv3DVN218gFd90.eJTxlvZNu",
       "clientId": 978379566,
       "createdAt": "2026-03-07T21:46:02.235600917+05:45"
+    },
+    "shantiram": {
+      "password": "$2a$10$/K/3upNjrcDoAoP8U.tmWOpT51pbfiunrmgbS9D.lNhzUTVuG8bMO",
+      "clientId": 1637538018,
+      "createdAt": "2026-03-07T22:04:06.383446867+05:45"
     },
     "srniraula": {
       "password": "$2a$10$wDaWg8sGW92pbBM/FR8Gwe91fso/2VlFPWP4hHjjypKXDzN22A/5u",
