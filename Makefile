@@ -94,8 +94,8 @@ run-master-lan: build
 	@# Write .master_addr so chunkservers on localhost can also find it
 	@echo "$(MASTER)" > .master_addr
 	@# Start master gRPC
-	MASTER_ADDR="$(MASTER)" \
-	  ./bin/master -port "$(word 2,$(subst :, ,$(MASTER)))" -mode active \
+	MASTER_ADDR="$(MASTER)" SECONDARY_MASTER_ADDR="$(SECONDARY)" \
+	  ./bin/master -port "$(word 2,$(subst :, ,$(MASTER)))" -mode active -secondary "$(SECONDARY)" \
 	  > log_files/master_stdout.log 2>&1 & echo $$! >> .sys_pids
 	@sleep 2
 	@# Start Web API

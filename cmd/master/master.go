@@ -596,6 +596,91 @@ func (m *MasterServer) Authenticate(ctx context.Context, req *dfspb.Authenticate
 	return &dfspb.AuthenticateResponse{Success: true, Message: "Authenticated successfully"}, nil
 }
 
+// SyncMetadata is called by the Primary Master to push WAL and Checkpoint files 
+// to the Secondary Master over the network (LAN).
+func (m *MasterServer) SyncMetadata(ctx context.Context, req *dfspb.SyncMetadataRequest) (*dfspb.SyncMetadataResponse, error) {
+	if !m.IsStandby {
+		return &dfspb.SyncMetadataResponse{Success: false}, nil
+	}
+
+	m.standbyMu.Lock()
+	defer m.standbyMu.Unlock()
+
+	// Persist checkpoint to disk
+	if len(req.CheckpointData) > 0 {
+		if err := os.WriteFile("master.checkpoint", req.CheckpointData, 0644); err != nil {
+			m.logger.Printf("SyncMetadata: Failed to write checkpoint: %v", err)
+			return nil, err
+		}
+	}
+
+	// Persist WAL to disk
+	if len(req.WalData) > 0 {
+		// We overwrite the local WAL with the one from the primary
+		if err := os.WriteFile("master.wal", req.WalData, 0644); err != nil {
+			m.logger.Printf("SyncMetadata: Failed to write WAL: %v", err)
+			return nil, err
+		}
+	}
+
+	m.logger.Printf("SyncMetadata: Successfully synced state from primary (%d bytes WAL)", len(req.WalData))
+	return &dfspb.SyncMetadataResponse{Success: true}, nil
+}
+
+// StartBackupSync runs on the Primary Master and pushes metadata to the Secondary
+func (m *MasterServer) StartBackupSync(secondaryAddr string) {
+	if secondaryAddr == "" {
+		m.logger.Println("No secondary master configured, skipping automatic backup sync.")
+		return
+	}
+
+	m.logger.Printf("Starting automatic backup sync to secondary at %s every 40s", secondaryAddr)
+	ticker := time.NewTicker(40 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if m.IsStandby {
+			return // Standby doesn't sync to another standby
+		}
+
+		// Read WAL
+		walData, err := os.ReadFile("master.wal")
+		if err != nil && !os.IsNotExist(err) {
+			m.logger.Printf("Backup sync error reading WAL: %v", err)
+			continue
+		}
+
+		// Read Checkpoint
+		checkpointData, err := os.ReadFile("master.checkpoint")
+		if err != nil && !os.IsNotExist(err) {
+			m.logger.Printf("Backup sync error reading checkpoint: %v", err)
+			continue
+		}
+
+		// Connect to secondary
+		conn, err := grpc.NewClient(secondaryAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			m.logger.Printf("Backup sync error connecting to secondary: %v", err)
+			continue
+		}
+
+		client := dfspb.NewMasterServerClient(conn)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_, err = client.SyncMetadata(ctx, &dfspb.SyncMetadataRequest{
+			WalData:        walData,
+			CheckpointData: checkpointData,
+		})
+		cancel()
+		conn.Close()
+
+		if err != nil {
+			m.logger.Printf("Backup sync RPC failed: %v", err)
+		} else {
+			m.logger.Printf("Backup sync complete: metadata pushed to %s", secondaryAddr)
+		}
+	}
+}
+
 // Ping is used by the secondary master (or others) to check health
 func (m *MasterServer) Ping(ctx context.Context, req *dfspb.PingRequest) (*dfspb.PingResponse, error) {
 	return &dfspb.PingResponse{Active: !m.IsStandby}, nil

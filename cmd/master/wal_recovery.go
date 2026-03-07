@@ -84,8 +84,29 @@ func (m *MasterServer) RecoverFromWALIncremental(walPath string) error {
 
 	// Seek to where we left off
 	if startOffset > 0 {
-		if _, err := file.Seek(startOffset, io.SeekStart); err != nil {
-			return fmt.Errorf("WAL seek failed: %v", err)
+		// Check for file truncation (offset larger than file size)
+		if fi, err := file.Stat(); err == nil {
+			if startOffset > fi.Size() {
+				m.logger.Printf("Standby: WAL truncated (offset %d > size %d) - resetting to 0", startOffset, fi.Size())
+				// Reset offset
+				m.walMu.Lock()
+				m.walOffset = 0
+				m.walMu.Unlock()
+				startOffset = 0
+
+				// Since WAL was truncated, the primary must have created a checkpoint.
+				// We should reload the checkpoint to ensure state is consistent.
+				// Note: LoadCheckpoint doesn't hold m.mu, which is good.
+				if cpErr := m.LoadCheckpoint("master.checkpoint"); cpErr != nil {
+					m.logger.Printf("Standby truncation reload error: %v", cpErr)
+				}
+			}
+		}
+
+		if startOffset > 0 {
+			if _, err := file.Seek(startOffset, io.SeekStart); err != nil {
+				return fmt.Errorf("WAL seek failed: %v", err)
+			}
 		}
 	}
 

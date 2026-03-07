@@ -16,10 +16,10 @@ import (
 
 // main starts the master server and background health monitoring
 func main() {
-	// Parse command line flags
 	port := flag.String("port", "50051", "port to listen on")
 	mode := flag.String("mode", "active", "server mode: active or standby")
 	primaryAddr := flag.String("primary", "127.0.0.1:50051", "address of primary master to monitor (only for standby)")
+	secondaryAddr := flag.String("secondary", "", "address of secondary master to sync metadata to (only for active)")
 	flag.Parse()
 
 	// Setup log file for Master - all logs will be written to master.log
@@ -155,6 +155,9 @@ func main() {
 	// Start monitoring Primary if we are Standby
 	if server.IsStandby {
 		go server.MonitorPrimary(*primaryAddr)
+	} else {
+		// If we are Active, start syncing our data to the Secondary
+		go server.StartBackupSync(*secondaryAddr)
 	}
 
 	log.Printf("Master running on :%s (Mode: %s) – Logs to %s", *port, *mode, logFile.Name())

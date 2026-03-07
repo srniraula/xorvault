@@ -234,6 +234,16 @@ service MasterServer {
   rpc ListFilesDetailed(ListFilesDetailedRequest) returns (ListFilesDetailedResponse);
   rpc MoveFile(MoveFileRequest) returns (MoveFileResponse);
   rpc ReadFileContent(ReadFileContentRequest) returns (ReadFileContentResponse);
+  rpc SyncMetadata(SyncMetadataRequest) returns (SyncMetadataResponse);
+}
+
+message SyncMetadataRequest {
+  bytes wal_data = 1;
+  bytes checkpoint_data = 2;
+}
+
+message SyncMetadataResponse {
+  bool success = 1;
 }
 
 message PingRequest {}

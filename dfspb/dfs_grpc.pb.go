@@ -34,6 +34,7 @@ const (
 	MasterServer_ListFilesDetailed_FullMethodName = "/dfspb.MasterServer/ListFilesDetailed"
 	MasterServer_MoveFile_FullMethodName          = "/dfspb.MasterServer/MoveFile"
 	MasterServer_ReadFileContent_FullMethodName   = "/dfspb.MasterServer/ReadFileContent"
+	MasterServer_SyncMetadata_FullMethodName      = "/dfspb.MasterServer/SyncMetadata"
 )
 
 // MasterServerClient is the client API for MasterServer service.
@@ -56,6 +57,7 @@ type MasterServerClient interface {
 	ListFilesDetailed(ctx context.Context, in *ListFilesDetailedRequest, opts ...grpc.CallOption) (*ListFilesDetailedResponse, error)
 	MoveFile(ctx context.Context, in *MoveFileRequest, opts ...grpc.CallOption) (*MoveFileResponse, error)
 	ReadFileContent(ctx context.Context, in *ReadFileContentRequest, opts ...grpc.CallOption) (*ReadFileContentResponse, error)
+	SyncMetadata(ctx context.Context, in *SyncMetadataRequest, opts ...grpc.CallOption) (*SyncMetadataResponse, error)
 }
 
 type masterServerClient struct {
@@ -216,6 +218,16 @@ func (c *masterServerClient) ReadFileContent(ctx context.Context, in *ReadFileCo
 	return out, nil
 }
 
+func (c *masterServerClient) SyncMetadata(ctx context.Context, in *SyncMetadataRequest, opts ...grpc.CallOption) (*SyncMetadataResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SyncMetadataResponse)
+	err := c.cc.Invoke(ctx, MasterServer_SyncMetadata_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MasterServerServer is the server API for MasterServer service.
 // All implementations must embed UnimplementedMasterServerServer
 // for forward compatibility.
@@ -236,6 +248,7 @@ type MasterServerServer interface {
 	ListFilesDetailed(context.Context, *ListFilesDetailedRequest) (*ListFilesDetailedResponse, error)
 	MoveFile(context.Context, *MoveFileRequest) (*MoveFileResponse, error)
 	ReadFileContent(context.Context, *ReadFileContentRequest) (*ReadFileContentResponse, error)
+	SyncMetadata(context.Context, *SyncMetadataRequest) (*SyncMetadataResponse, error)
 	mustEmbedUnimplementedMasterServerServer()
 }
 
@@ -290,6 +303,9 @@ func (UnimplementedMasterServerServer) MoveFile(context.Context, *MoveFileReques
 }
 func (UnimplementedMasterServerServer) ReadFileContent(context.Context, *ReadFileContentRequest) (*ReadFileContentResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReadFileContent not implemented")
+}
+func (UnimplementedMasterServerServer) SyncMetadata(context.Context, *SyncMetadataRequest) (*SyncMetadataResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SyncMetadata not implemented")
 }
 func (UnimplementedMasterServerServer) mustEmbedUnimplementedMasterServerServer() {}
 func (UnimplementedMasterServerServer) testEmbeddedByValue()                      {}
@@ -582,6 +598,24 @@ func _MasterServer_ReadFileContent_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MasterServer_SyncMetadata_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SyncMetadataRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MasterServerServer).SyncMetadata(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MasterServer_SyncMetadata_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MasterServerServer).SyncMetadata(ctx, req.(*SyncMetadataRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MasterServer_ServiceDesc is the grpc.ServiceDesc for MasterServer service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -648,6 +682,10 @@ var MasterServer_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReadFileContent",
 			Handler:    _MasterServer_ReadFileContent_Handler,
+		},
+		{
+			MethodName: "SyncMetadata",
+			Handler:    _MasterServer_SyncMetadata_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
