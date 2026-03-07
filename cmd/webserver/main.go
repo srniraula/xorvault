@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"dfs-project/pkg/auth"
-	"dfs-project/pkg/config"
 	"dfs-project/pkg/dfsclient"
 
 	"github.com/gin-gonic/gin"
@@ -33,8 +32,11 @@ func main() {
 
 	r := gin.Default()
 
-	// Create a DFS client (gRPC)
-	cli, err := dfsclient.NewGrpcClient(config.GetMasterAddr())
+	// Create a DFS client with automatic master failover.
+	// All known master addresses are read from MASTER_ADDRS env var
+	// (comma-separated, e.g. "192.168.1.10:50051,192.168.1.20:50051").
+	// Falls back to MASTER_ADDR / .master_addr file / local defaults.
+	cli, err := dfsclient.NewFailoverClient(nil)
 	if err != nil {
 		panic(err)
 	}
