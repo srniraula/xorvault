@@ -147,13 +147,15 @@ func SendHeartbeats(port string, masterAddr string, secondaryAddr string, logger
 	defer ticker.Stop()
 
 	myAddr := config.GetMyAddr(port)
-	
-	// Resolve secondary from config if not provided in flags
 	if secondaryAddr == "" {
 		secondaryAddr = config.GetSecondaryMasterAddr()
 	}
 
-	// Prepare the priority list of targets for this chunkserver
+	var conn *grpc.ClientConn
+	var masterClient dfspb.MasterServerClient
+	currentTarget := ""
+
+	// Build fallback targets
 	var targets []string
 	if masterAddr != "" {
 		targets = append(targets, masterAddr)
@@ -161,66 +163,45 @@ func SendHeartbeats(port string, masterAddr string, secondaryAddr string, logger
 	if secondaryAddr != "" && secondaryAddr != masterAddr {
 		targets = append(targets, secondaryAddr)
 	}
-
-	var conn *grpc.ClientConn
-	var masterClient dfspb.MasterServerClient
-	currentTarget := ""
 	targetIdx := 0
 
 	for range ticker.C {
-		// If we are not connected, try to establish a connection
-		retryCount := 0
-		for masterClient == nil && retryCount < len(targets)+1 {
-			retryCount++
+		// If we don't have a working connection, resolve a target
+		if masterClient == nil {
 			target := ""
 
-			// 1. Try dynamic .master_addr (effective for same-host or shared FS failover)
+			// 1. Try dynamic .master_addr first (failover detection)
 			if data, err := os.ReadFile(".master_addr"); err == nil {
-				addr := strings.TrimSpace(string(data))
-				if addr != "" && addr != currentTarget {
+				if addr := strings.TrimSpace(string(data)); addr != "" {
 					target = addr
 				}
 			}
 
-			// 2. Cycle through the permanent primary and secondary LAN addresses
+			// 2. Otherwise cycle through explicitly defined primary and secondary
 			if target == "" && len(targets) > 0 {
 				target = targets[targetIdx]
-				targetIdx = (targetIdx + 1) % len(targets)
 			}
 
-			// 3. Last resort fallback
+			// 3. Fallback to cluster default
 			if target == "" {
 				target = config.GetMasterAddr()
 			}
 
 			if target == "" {
 				logger.Printf("ERROR: No master address available")
-				break
+				continue
 			}
 
-			logger.Printf("Attempting heartbeat connection to Master: %s", target)
-			
-			// Use a blocking dial with a short timeout to verify connection immediately
-			dialCtx, dialCancel := context.WithTimeout(context.Background(), 2*time.Second)
-			c, err := grpc.DialContext(dialCtx, target, 
-				grpc.WithTransportCredentials(insecure.NewCredentials()), 
-				grpc.WithBlock())
-			dialCancel()
-
+			// grpc.NewClient is non-blocking
+			c, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 			if err != nil {
-				logger.Printf("Failed to connect to %s: %v", target, err)
-				currentTarget = target // Mark as tried/failed
+				logger.Printf("Failed to create client for %s: %v", target, err)
 				continue
 			}
 
 			conn = c
 			masterClient = dfspb.NewMasterServerClient(conn)
 			currentTarget = target
-			logger.Printf("Successfully connected to Master: %s", target)
-		}
-
-		if masterClient == nil {
-			continue
 		}
 
 		// Send heartbeat
@@ -237,7 +218,12 @@ func SendHeartbeats(port string, masterAddr string, secondaryAddr string, logger
 			}
 			conn = nil
 			masterClient = nil
-			// The next iteration of the loop will immediately try the alternate target (Secondary)
+			currentTarget = ""
+			
+			// Increment index for the next ticker tick to try the alternate master
+			if len(targets) > 0 {
+				targetIdx = (targetIdx + 1) % len(targets)
+			}
 		}
 	}
 }

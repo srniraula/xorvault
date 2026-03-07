@@ -604,11 +604,11 @@ func (m *MasterServer) Ping(ctx context.Context, req *dfspb.PingRequest) (*dfspb
 func (m *MasterServer) MonitorPrimary(primaryAddr string) {
 	m.logger.Printf("Starting monitoring of Primary Master at %s", primaryAddr)
 
-	ticker := time.NewTicker(500 * time.Millisecond) // Ping Every 500ms
+	ticker := time.NewTicker(1 * time.Second) // Ping every 1 second
 	defer ticker.Stop()
 
 	failCount := 0
-	maxFails := 4 // Promote after 4 consecutive failures (2 seconds)
+	maxFails := 3 // Promote after 3 consecutive failures (3 seconds)
 
 	for range ticker.C {
 		// Stop monitoring if we identify we are no longer standby (promoted)
@@ -616,16 +616,15 @@ func (m *MasterServer) MonitorPrimary(primaryAddr string) {
 			return
 		}
 
-		// Use a short timeout for the ping
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-		
-		conn, err := grpc.DialContext(ctx, primaryAddr, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+		conn, err := grpc.NewClient(primaryAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
 			failCount++
 			m.logger.Printf("MONITOR: Primary unreachable (%d/%d): %v", failCount, maxFails, err)
 		} else {
 			client := dfspb.NewMasterServerClient(conn)
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 			_, err := client.Ping(ctx, &dfspb.PingRequest{})
+			cancel()
 			conn.Close()
 
 			if err != nil {
@@ -638,10 +637,9 @@ func (m *MasterServer) MonitorPrimary(primaryAddr string) {
 				failCount = 0
 			}
 		}
-		cancel()
 
 		if failCount >= maxFails {
-			m.logger.Printf("MONITOR: Primary master at %s is officially DEAD. Initiating promotion...", primaryAddr)
+			m.logger.Printf("MONITOR: Action triggered! Promoting to Active...")
 			m.PromoteToActive()
 			return
 		}

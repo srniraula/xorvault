@@ -211,8 +211,8 @@ func (m *MasterServer) PeriodicCheckpoint(intervalMinutes int, checkpointPath st
 	ticker := time.NewTicker(time.Duration(intervalMinutes) * time.Minute)
 	defer ticker.Stop()
 
-	// WAL polling ticker for Standby mode - Check for new WAL entries very frequently
-	walPoller := time.NewTicker(100 * time.Millisecond)
+	// WAL polling ticker for Standby mode
+	walPoller := time.NewTicker(500 * time.Millisecond)
 	defer walPoller.Stop()
 
 	for {
