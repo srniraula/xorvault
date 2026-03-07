@@ -105,6 +105,7 @@ import (
 	"context"
 	"dfs-project/dfspb"
 	"dfs-project/pkg/config"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -183,6 +184,7 @@ func main() {
 		secondaryAddr: *secondaryAddr,
 		myAddr:        *myAddr,
 		isPrimary:     (*secondaryAddr != ""), // If we have a secondary to talk to, we are primary
+		generation:    1,                      // Starting generation; LoadCheckpoint may overwrite this
 	}
 
 	// Restore from checkpoint first (if exists)
@@ -193,6 +195,14 @@ func main() {
 	// Then replay WAL entries after checkpoint
 	if err := server.RecoverFromWAL("master.wal"); err != nil {
 		log.Fatalf("WAL recovery failed: %v", err)
+	}
+
+	// --- STATE SYNC: if we are configured as primary, check whether the secondary
+	// promoted itself while we were down and pull its full state if so. ---
+	if *secondaryAddr != "" {
+		if err := trySyncStateFromPeer(server, *secondaryAddr, masterLogger); err != nil {
+			masterLogger.Printf("State sync from peer failed (will use local state): %v", err)
+		}
 	}
 
 	// Register MasterServer to handle client/chunkserver gRPC requests
@@ -268,4 +278,104 @@ func (m *MasterServer) SendHeartbeatsToSecondary(secondaryAddr string) {
 			m.logger.Printf("Heartbeat sent to secondary at %s (wal_seq=%d)", secondaryAddr, m.walSeq)
 		}
 	}
+}
+
+// trySyncStateFromPeer checks whether the configured secondary peer has promoted
+// itself to primary while *this* node was down.  If it has, we pull the full
+// state checkpoint from the peer and replace our local (stale) in-memory state.
+//
+// This is the key fix for the "returning primary has stale metadata" problem:
+//
+//	Primary A dies.  Secondary B promotes (generation++).
+//	A restarts, calls trySyncStateFromPeer(B).
+//	B says IsPrimary:true → A pulls B's state (has C, D, and all deletes).
+//	A then starts serving as primary with correct metadata.
+func trySyncStateFromPeer(server *MasterServer, peerAddr string, logger *log.Logger) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, err := grpc.NewClient(peerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return fmt.Errorf("cannot connect to peer %s: %v", peerAddr, err)
+	}
+	defer conn.Close()
+
+	// Ask the peer whether it is currently acting as primary
+	masterClient := dfspb.NewMasterServerClient(conn)
+	activeResp, err := masterClient.GetActiveMaster(ctx, &dfspb.GetActiveMasterRequest{})
+	if err != nil {
+		return fmt.Errorf("GetActiveMaster from peer %s failed: %v", peerAddr, err)
+	}
+
+	if !activeResp.IsPrimary {
+		// Peer is still in standby — we are the rightful primary, use local state
+		logger.Printf("Peer %s is not primary (isPrimary=false) — keeping local state (gen=%d)",
+			peerAddr, server.generation)
+		return nil
+	}
+
+	// Peer has promoted itself.  Pull its full state.
+	logger.Printf("Peer %s is the active primary — pulling full state sync...", peerAddr)
+
+	syncCtx, syncCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer syncCancel()
+
+	secClient := dfspb.NewSecondaryMasterServerClient(conn)
+	syncResp, err := secClient.RequestStateSync(syncCtx, &dfspb.GetActiveMasterRequest{})
+	if err != nil {
+		return fmt.Errorf("RequestStateSync from peer %s failed: %v", peerAddr, err)
+	}
+
+	// Decode the checkpoint the peer sent us
+	var checkpoint Checkpoint
+	if err := json.Unmarshal(syncResp.StateData, &checkpoint); err != nil {
+		return fmt.Errorf("failed to decode checkpoint from peer: %v", err)
+	}
+
+	logger.Printf("Received state from peer: gen=%d, wal_seq=%d, clients=%d, chunks=%d",
+		checkpoint.Generation, checkpoint.WALSeq,
+		len(checkpoint.ClientIDs), len(checkpoint.ChunkStatus))
+
+	// Apply peer state into our server (same path as LoadCheckpoint)
+	server.mu.Lock()
+	server.generation = checkpoint.Generation
+	server.walSeq = checkpoint.WALSeq
+	server.clientIDs = checkpoint.ClientIDs
+	server.fileSizes = checkpoint.FileSizes
+	server.chunkStatus = checkpoint.ChunkStatus
+	if checkpoint.ClientFolders != nil {
+		server.clientFolders = checkpoint.ClientFolders
+	}
+	if checkpoint.FileUploadTimes != nil {
+		server.fileUploadTimes = checkpoint.FileUploadTimes
+	}
+	if checkpoint.ClientUsernames != nil {
+		server.clientUsernames = checkpoint.ClientUsernames
+	}
+
+	// Rebuild fileInfo from checkpoint
+	server.fileInfo = make(map[int64]map[string]map[int32]*dfspb.StripeMetadata)
+	for clientID, filesJSON := range checkpoint.FileInfo {
+		server.fileInfo[clientID] = make(map[string]map[int32]*dfspb.StripeMetadata)
+		for filename, stripesJSON := range filesJSON {
+			server.fileInfo[clientID][filename] = make(map[int32]*dfspb.StripeMetadata)
+			for stripeNum, sj := range stripesJSON {
+				server.fileInfo[clientID][filename][stripeNum] = &dfspb.StripeMetadata{
+					StripeNum: sj.StripeNum,
+					ChunkIds:  sj.ChunkIds,
+					Servers:   sj.Servers,
+				}
+			}
+		}
+	}
+	server.mu.Unlock()
+
+	// Persist this synced state locally so we survive our own crash
+	if err := server.CreateCheckpoint("master.checkpoint"); err != nil {
+		logger.Printf("WARNING: failed to save synced checkpoint locally: %v", err)
+	}
+
+	logger.Printf("STATE SYNC COMPLETE: now at gen=%d wal_seq=%d (synced from %s)",
+		server.generation, server.walSeq, peerAddr)
+	return nil
 }

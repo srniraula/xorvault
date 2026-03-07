@@ -19,6 +19,11 @@
       "password": "$2a$10$wDaWg8sGW92pbBM/FR8Gwe91fso/2VlFPWP4hHjjypKXDzN22A/5u",
       "clientId": 2403348488,
       "createdAt": "2026-03-07T21:45:23.365316276+05:45"
+    },
+    "srniraulaa": {
+      "password": "$2a$10$v6H2VfGNy5OIcL.B0AKvoOXaq3vGHeKj3R4COl1.VHRHYvqoMTQJi",
+      "clientId": 3943445835,
+      "createdAt": "2026-03-07T23:04:23.992262195+05:45"
     }
   }
 }

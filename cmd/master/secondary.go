@@ -109,6 +109,16 @@ func (s *SecondaryMaster) ApplyCheckpoint(ctx context.Context, req *dfspb.Checkp
 	s.master.clientIDs = checkpoint.ClientIDs
 	s.master.fileSizes = checkpoint.FileSizes
 	s.master.chunkStatus = checkpoint.ChunkStatus
+	s.master.generation = checkpoint.Generation
+	if checkpoint.ClientFolders != nil {
+		s.master.clientFolders = checkpoint.ClientFolders
+	}
+	if checkpoint.FileUploadTimes != nil {
+		s.master.fileUploadTimes = checkpoint.FileUploadTimes
+	}
+	if checkpoint.ClientUsernames != nil {
+		s.master.clientUsernames = checkpoint.ClientUsernames
+	}
 	s.master.fileInfo = make(map[int64]map[string]map[int32]*dfspb.StripeMetadata)
 
 	for clientID, filesJSON := range checkpoint.FileInfo {
@@ -130,6 +140,61 @@ func (s *SecondaryMaster) ApplyCheckpoint(ctx context.Context, req *dfspb.Checkp
 		len(s.master.clientIDs), len(s.master.chunkStatus))
 
 	return &dfspb.CheckpointResponse{Success: true}, nil
+}
+
+// RequestStateSync is called by a returning/restarting master that was previously primary.
+// It returns the full current state (checkpoint bytes + sequence + generation) so the
+// returning node can catch up before deciding whether to resume or stay as secondary.
+func (s *SecondaryMaster) RequestStateSync(ctx context.Context, req *dfspb.GetActiveMasterRequest) (*dfspb.CheckpointRequest, error) {
+	s.master.logger.Printf("Secondary: RequestStateSync called — serialising full state (gen=%d, wal_seq=%d)",
+		s.master.generation, s.master.walSeq)
+
+	// Produce a fresh checkpoint bytes
+	s.master.mu.Lock()
+
+	// Build fileInfoJSON (same as CreateCheckpoint)
+	fileInfoJSON := make(map[int64]map[string]map[int32]*StripeMetadataJSON)
+	for clientID := range s.master.fileInfo {
+		fileInfoJSON[clientID] = make(map[string]map[int32]*StripeMetadataJSON)
+		for filename, stripes := range s.master.fileInfo[clientID] {
+			fileInfoJSON[clientID][filename] = make(map[int32]*StripeMetadataJSON)
+			for stripeNum, stripe := range stripes {
+				fileInfoJSON[clientID][filename][stripeNum] = &StripeMetadataJSON{
+					StripeNum: stripe.StripeNum,
+					ChunkIds:  stripe.ChunkIds,
+					Servers:   stripe.Servers,
+				}
+			}
+		}
+	}
+
+	checkpoint := Checkpoint{
+		Timestamp:       time.Now().Unix(),
+		Generation:      s.master.generation,
+		WALSeq:          s.master.walSeq,
+		FileInfo:        fileInfoJSON,
+		ClientIDs:       s.master.clientIDs,
+		FileSizes:       s.master.fileSizes,
+		ChunkStatus:     s.master.chunkStatus,
+		ClientFolders:   s.master.clientFolders,
+		FileUploadTimes: s.master.fileUploadTimes,
+		ClientUsernames: s.master.clientUsernames,
+	}
+	seq := s.master.walSeq
+	s.master.mu.Unlock()
+
+	data, err := json.Marshal(checkpoint)
+	if err != nil {
+		return nil, fmt.Errorf("RequestStateSync: failed to marshal state: %v", err)
+	}
+
+	s.master.logger.Printf("Secondary: RequestStateSync response ready (%d bytes, gen=%d, seq=%d)",
+		len(data), checkpoint.Generation, seq)
+
+	return &dfspb.CheckpointRequest{
+		SequenceNumber: seq,
+		StateData:      data,
+	}, nil
 }
 
 // WatchdogLoop runs in a goroutine on the secondary.
@@ -158,6 +223,7 @@ func (s *SecondaryMaster) WatchdogLoop(timeoutSeconds int) {
 func (s *SecondaryMaster) promote() {
 	s.master.mu.Lock()
 	s.master.isPrimary = true
+	s.master.generation++       // New epoch: every promotion increments generation
 	s.master.secondaryAddr = "" // no secondary below us (single failover for now)
 	s.master.mu.Unlock()
 
@@ -166,6 +232,6 @@ func (s *SecondaryMaster) promote() {
 		s.master.logger.Printf("FAILOVER: checkpoint on promotion failed: %v", err)
 	}
 
-	s.master.logger.Printf("FAILOVER COMPLETE: this node is now the active primary (wal_seq=%d)", s.master.walSeq)
+	s.master.logger.Printf("FAILOVER COMPLETE: this node is now the active primary (wal_seq=%d, generation=%d)", s.master.walSeq, s.master.generation)
 	fmt.Println(">>> THIS NODE IS NOW THE ACTIVE PRIMARY MASTER <<<")
 }

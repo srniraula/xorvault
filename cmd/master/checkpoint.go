@@ -11,11 +11,16 @@ import (
 
 // Checkpoint represents a snapshot of master state at a point in time
 type Checkpoint struct {
-	Timestamp   int64                                              `json:"timestamp"`
-	FileInfo    map[int64]map[string]map[int32]*StripeMetadataJSON `json:"file_info"`
-	ClientIDs   map[int64][]string                                 `json:"client_ids"`
-	FileSizes   map[int64]map[string]int64                         `json:"file_sizes"`
-	ChunkStatus map[string]string                                  `json:"chunk_status"`
+	Timestamp       int64                                              `json:"timestamp"`
+	Generation      uint64                                             `json:"generation"` // epoch: incremented on each promotion
+	WALSeq          uint64                                             `json:"wal_seq"`    // sequence at checkpoint time
+	FileInfo        map[int64]map[string]map[int32]*StripeMetadataJSON `json:"file_info"`
+	ClientIDs       map[int64][]string                                 `json:"client_ids"`
+	FileSizes       map[int64]map[string]int64                         `json:"file_sizes"`
+	ChunkStatus     map[string]string                                  `json:"chunk_status"`
+	ClientFolders   map[int64]map[string]bool                          `json:"client_folders"`
+	FileUploadTimes map[int64]map[string]int64                         `json:"file_upload_times"`
+	ClientUsernames map[int64]string                                   `json:"client_usernames"`
 }
 
 // StripeMetadataJSON is a JSON-serializable version of StripeMetadata
@@ -55,11 +60,16 @@ func (m *MasterServer) CreateCheckpoint(checkpointPath string) error {
 
 	// Create checkpoint structure
 	checkpoint := Checkpoint{
-		Timestamp:   time.Now().Unix(),
-		FileInfo:    fileInfoJSON,
-		ClientIDs:   m.clientIDs,
-		FileSizes:   m.fileSizes,
-		ChunkStatus: m.chunkStatus,
+		Timestamp:       time.Now().Unix(),
+		Generation:      m.generation,
+		WALSeq:          m.walSeq,
+		FileInfo:        fileInfoJSON,
+		ClientIDs:       m.clientIDs,
+		FileSizes:       m.fileSizes,
+		ChunkStatus:     m.chunkStatus,
+		ClientFolders:   m.clientFolders,
+		FileUploadTimes: m.fileUploadTimes,
+		ClientUsernames: m.clientUsernames,
 	}
 
 	// Serialize to JSON
@@ -107,9 +117,20 @@ func (m *MasterServer) LoadCheckpoint(checkpointPath string) error {
 	}
 
 	// Restore state (no lock needed - called during initialization)
+	m.generation = checkpoint.Generation
+	m.walSeq = checkpoint.WALSeq
 	m.clientIDs = checkpoint.ClientIDs
 	m.fileSizes = checkpoint.FileSizes
 	m.chunkStatus = checkpoint.ChunkStatus
+	if checkpoint.ClientFolders != nil {
+		m.clientFolders = checkpoint.ClientFolders
+	}
+	if checkpoint.FileUploadTimes != nil {
+		m.fileUploadTimes = checkpoint.FileUploadTimes
+	}
+	if checkpoint.ClientUsernames != nil {
+		m.clientUsernames = checkpoint.ClientUsernames
+	}
 
 	// Convert JSON format back to protobuf StripeMetadata
 	m.fileInfo = make(map[int64]map[string]map[int32]*dfspb.StripeMetadata)

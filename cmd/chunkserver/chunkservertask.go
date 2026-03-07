@@ -175,15 +175,28 @@ func (c *ChunkServer) ReadChunk(ctx context.Context, req *dfspb.ReadChunkRequest
 }
 
 // DeleteChunks removes multiple chunks and their checksums from disk
-// Batched deletion for efficiency
+// Batched deletion for efficiency.
+// If ClientId==0 and Username=="", search all user subdirectories for the chunk (orphan cleanup).
 func (c *ChunkServer) DeleteChunks(ctx context.Context, req *dfspb.DeleteChunksRequest) (*dfspb.DeleteChunksResponse, error) {
 	deletedCount := int32(0)
 
 	// Delete each chunk in the batch
 	for _, chunkID := range req.ChunkIds {
-		// Construct path: storagePath/username_or_id/chunk_id
-		clientDir := filepath.Join(c.storagePath, userDir(req.Username, req.ClientId))
-		chunkPath := filepath.Join(clientDir, chunkID)
+		var chunkPath string
+
+		if req.ClientId == 0 && req.Username == "" {
+			// Orphan cleanup: search all subdirectories for this chunk ID
+			chunkPath = c.findOrphanChunkPath(chunkID)
+			if chunkPath == "" {
+				c.logger.Printf("Orphan chunk %s not found on disk (already gone)", chunkID)
+				continue
+			}
+		} else {
+			// Construct path: storagePath/username_or_id/chunk_id
+			clientDir := filepath.Join(c.storagePath, userDir(req.Username, req.ClientId))
+			chunkPath = filepath.Join(clientDir, chunkID)
+		}
+
 		checksumPath := chunkPath + ".checksum"
 
 		// Delete chunk file
@@ -212,6 +225,26 @@ func (c *ChunkServer) DeleteChunks(ctx context.Context, req *dfspb.DeleteChunksR
 		Success:      true,
 		DeletedCount: deletedCount,
 	}, nil
+}
+
+// findOrphanChunkPath searches all user subdirectories of storagePath for a chunk file.
+// Used when the master sends an orphan-cleanup DeleteChunks with clientId=0, username="".
+func (c *ChunkServer) findOrphanChunkPath(chunkID string) string {
+	entries, err := os.ReadDir(c.storagePath)
+	if err != nil {
+		c.logger.Printf("findOrphanChunkPath: ReadDir failed: %v", err)
+		return ""
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		candidate := filepath.Join(c.storagePath, entry.Name(), chunkID)
+		if _, statErr := os.Stat(candidate); statErr == nil {
+			return candidate
+		}
+	}
+	return ""
 }
 
 // sendSingleHeartbeat sends one heartbeat to the given master address.

@@ -8,6 +8,7 @@ package dfspb
 
 import (
 	context "context"
+
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -834,6 +835,7 @@ const (
 	SecondaryMasterServer_ReplicateWAL_FullMethodName        = "/dfspb.SecondaryMasterServer/ReplicateWAL"
 	SecondaryMasterServer_SendMasterHeartbeat_FullMethodName = "/dfspb.SecondaryMasterServer/SendMasterHeartbeat"
 	SecondaryMasterServer_ApplyCheckpoint_FullMethodName     = "/dfspb.SecondaryMasterServer/ApplyCheckpoint"
+	SecondaryMasterServer_RequestStateSync_FullMethodName    = "/dfspb.SecondaryMasterServer/RequestStateSync"
 )
 
 // SecondaryMasterServerClient is the client API for SecondaryMasterServer service.
@@ -843,6 +845,9 @@ type SecondaryMasterServerClient interface {
 	ReplicateWAL(ctx context.Context, in *ReplicateWALRequest, opts ...grpc.CallOption) (*ReplicateWALResponse, error)
 	SendMasterHeartbeat(ctx context.Context, in *MasterHeartbeatRequest, opts ...grpc.CallOption) (*MasterHeartbeatResponse, error)
 	ApplyCheckpoint(ctx context.Context, in *CheckpointRequest, opts ...grpc.CallOption) (*CheckpointResponse, error)
+	// RequestStateSync asks the current active master to send its full state (checkpoint bytes + wal_seq + generation).
+	// Used by a returning primary to catch up before re-taking the primary role.
+	RequestStateSync(ctx context.Context, in *GetActiveMasterRequest, opts ...grpc.CallOption) (*CheckpointRequest, error)
 }
 
 type secondaryMasterServerClient struct {
@@ -883,6 +888,16 @@ func (c *secondaryMasterServerClient) ApplyCheckpoint(ctx context.Context, in *C
 	return out, nil
 }
 
+func (c *secondaryMasterServerClient) RequestStateSync(ctx context.Context, in *GetActiveMasterRequest, opts ...grpc.CallOption) (*CheckpointRequest, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CheckpointRequest)
+	err := c.cc.Invoke(ctx, SecondaryMasterServer_RequestStateSync_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SecondaryMasterServerServer is the server API for SecondaryMasterServer service.
 // All implementations must embed UnimplementedSecondaryMasterServerServer
 // for forward compatibility.
@@ -890,6 +905,7 @@ type SecondaryMasterServerServer interface {
 	ReplicateWAL(context.Context, *ReplicateWALRequest) (*ReplicateWALResponse, error)
 	SendMasterHeartbeat(context.Context, *MasterHeartbeatRequest) (*MasterHeartbeatResponse, error)
 	ApplyCheckpoint(context.Context, *CheckpointRequest) (*CheckpointResponse, error)
+	RequestStateSync(context.Context, *GetActiveMasterRequest) (*CheckpointRequest, error)
 	mustEmbedUnimplementedSecondaryMasterServerServer()
 }
 
@@ -908,6 +924,9 @@ func (UnimplementedSecondaryMasterServerServer) SendMasterHeartbeat(context.Cont
 }
 func (UnimplementedSecondaryMasterServerServer) ApplyCheckpoint(context.Context, *CheckpointRequest) (*CheckpointResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ApplyCheckpoint not implemented")
+}
+func (UnimplementedSecondaryMasterServerServer) RequestStateSync(context.Context, *GetActiveMasterRequest) (*CheckpointRequest, error) {
+	return nil, status.Error(codes.Unimplemented, "method RequestStateSync not implemented")
 }
 func (UnimplementedSecondaryMasterServerServer) mustEmbedUnimplementedSecondaryMasterServerServer() {}
 func (UnimplementedSecondaryMasterServerServer) testEmbeddedByValue()                               {}
@@ -984,6 +1003,24 @@ func _SecondaryMasterServer_ApplyCheckpoint_Handler(srv interface{}, ctx context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SecondaryMasterServer_RequestStateSync_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetActiveMasterRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SecondaryMasterServerServer).RequestStateSync(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SecondaryMasterServer_RequestStateSync_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SecondaryMasterServerServer).RequestStateSync(ctx, req.(*GetActiveMasterRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SecondaryMasterServer_ServiceDesc is the grpc.ServiceDesc for SecondaryMasterServer service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1002,6 +1039,10 @@ var SecondaryMasterServer_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ApplyCheckpoint",
 			Handler:    _SecondaryMasterServer_ApplyCheckpoint_Handler,
+		},
+		{
+			MethodName: "RequestStateSync",
+			Handler:    _SecondaryMasterServer_RequestStateSync_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

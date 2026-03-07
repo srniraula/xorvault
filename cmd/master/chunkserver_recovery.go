@@ -6,10 +6,10 @@ import (
 )
 
 // ReportInventory handles chunk inventory reports from chunk servers
-// Compares reported inventory with expected chunks and identifies discrepancies
+// Compares reported inventory with expected chunks and identifies discrepancies.
+// Extra (orphaned) chunks are cleaned up asynchronously via DeleteChunks RPC.
 func (m *MasterServer) ReportInventory(ctx context.Context, req *dfspb.InventoryRequest) (*dfspb.InventoryResponse, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	addr := req.Address
 	reportedChunks := make(map[string]bool)
@@ -21,16 +21,6 @@ func (m *MasterServer) ReportInventory(ctx context.Context, req *dfspb.Inventory
 
 	// Build expected chunks for this server from fileInfo
 	expectedChunks := make(map[string]bool)
-	// for _, stripes := range m.fileInfo {
-	// 	for _, stripe := range stripes {
-	// 		for i, server := range stripe.Servers {
-	// 			if server == addr {
-	// 				chunkID := stripe.ChunkIds[i]
-	// 				expectedChunks[chunkID] = true
-	// 			}
-	// 		}
-	// 	}
-	// }
 	for _, cliendIDtoFiles := range m.fileInfo {
 		for _, stripes := range cliendIDtoFiles {
 			for _, stripe := range stripes {
@@ -70,6 +60,26 @@ func (m *MasterServer) ReportInventory(ctx context.Context, req *dfspb.Inventory
 	if len(missingChunks) > 0 {
 		reconstructionTasks = m.buildReconstructionTasks(missingChunks, addr)
 		m.logger.Printf("Built %d reconstruction tasks for %s", len(reconstructionTasks), addr)
+	}
+
+	// Capture extraChunks snapshot so we can release lock before the gRPC call
+	extraCopy := make([]string, len(extraChunks))
+	copy(extraCopy, extraChunks)
+
+	m.mu.Unlock() // Release lock before any network I/O
+
+	// Clean up orphaned chunks asynchronously so the inventory response is not delayed.
+	// clientId=0, username="" signals the chunkserver to do a wildcard directory search.
+	if len(extraCopy) > 0 {
+		go func() {
+			m.logger.Printf("Cleaning up %d orphaned chunks on %s", len(extraCopy), addr)
+			deleted, err := m.deleteChunksFromServer(addr, extraCopy, 0, "")
+			if err != nil {
+				m.logger.Printf("Orphan cleanup on %s failed: %v", addr, err)
+			} else {
+				m.logger.Printf("Orphan cleanup: deleted %d/%d extra chunks from %s", deleted, len(extraCopy), addr)
+			}
+		}()
 	}
 
 	return &dfspb.InventoryResponse{
