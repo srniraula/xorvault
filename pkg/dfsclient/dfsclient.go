@@ -23,8 +23,8 @@ const CHUNK_SIZE = 1 * 1024 * 1024
 type Client interface {
 	ListFiles(ctx context.Context, clientID int64) ([]string, error)
 	DeleteFile(ctx context.Context, clientID int64, filename string) (int, error)
-	UploadFile(ctx context.Context, clientID int64, filename string, data io.Reader, size int64) (int64, error)
-	DownloadFile(ctx context.Context, clientID int64, filename string, destPath string) error
+	UploadFile(ctx context.Context, clientID int64, filename string, data io.Reader, size int64, username string) (int64, error)
+	DownloadFile(ctx context.Context, clientID int64, filename string, destPath string, username string) error
 }
 
 // GrpcClient implements Client using the existing gRPC Master/ChunkServer APIs
@@ -85,9 +85,9 @@ func (g *GrpcClient) DeleteFile(ctx context.Context, clientID int64, filename st
 }
 
 // UploadFile uploads content from reader to the DFS and returns the assigned clientID
-func (g *GrpcClient) UploadFile(ctx context.Context, clientID int64, filename string, data io.Reader, size int64) (int64, error) {
+func (g *GrpcClient) UploadFile(ctx context.Context, clientID int64, filename string, data io.Reader, size int64, username string) (int64, error) {
 	// Create file (master may assign clientID if 0)
-	createReq := &dfspb.CreateFileRequest{Filename: filename, TotalSize: size, ClientId: clientID}
+	createReq := &dfspb.CreateFileRequest{Filename: filename, TotalSize: size, ClientId: clientID, Username: username}
 	createResp, err := g.masterCli.CreateFile(ctx, createReq)
 	if err != nil {
 		return 0, fmt.Errorf("CreateFile failed: %w", err)
@@ -106,7 +106,7 @@ func (g *GrpcClient) UploadFile(ctx context.Context, clientID int64, filename st
 	ack := NewAckQueue()
 
 	// start uploading stripes as they arrive
-	successfulChunks, err := g.uploadStripesStreaming(stripeChan, ack, assignedClient)
+	successfulChunks, err := g.uploadStripesStreaming(stripeChan, ack, assignedClient, username)
 	if err != nil {
 		return assignedClient, err
 	}
@@ -131,7 +131,7 @@ func (g *GrpcClient) UploadFile(ctx context.Context, clientID int64, filename st
 	return assignedClient, nil
 }
 
-func writeChunkToServer(ctx context.Context, serverAddr string, chunkID string, data []byte, clientID int64) error {
+func writeChunkToServer(ctx context.Context, serverAddr string, chunkID string, data []byte, clientID int64, username string) error {
 	if serverAddr == "" {
 		return fmt.Errorf("empty server address")
 	}
@@ -147,7 +147,7 @@ func writeChunkToServer(ctx context.Context, serverAddr string, chunkID string, 
 	checksum := calculateChecksum(data)
 
 	// Use same ctx for RPC; caller should set an appropriate timeout
-	_, err = chunkCli.WriteChunk(ctx, &dfspb.WriteChunkRequest{ChunkId: chunkID, Data: data, Checksum: checksum, ClientId: clientID})
+	_, err = chunkCli.WriteChunk(ctx, &dfspb.WriteChunkRequest{ChunkId: chunkID, Data: data, Checksum: checksum, ClientId: clientID, Username: username})
 	if err != nil {
 		return err
 	}
@@ -158,8 +158,8 @@ func writeChunkToServer(ctx context.Context, serverAddr string, chunkID string, 
 var chunkUploader = writeChunkToServer
 
 // chunkDownloader is a test hook for download; by default calls the real method
-var chunkDownloader = func(g *GrpcClient, chunkID, serverAddr string, clientID int64, isData1, isData2, isParity bool) DownloadedChunk {
-	return g.downloadChunkFromServer(chunkID, serverAddr, clientID, isData1, isData2, isParity)
+var chunkDownloader = func(g *GrpcClient, chunkID, serverAddr string, clientID int64, username string, isData1, isData2, isParity bool) DownloadedChunk {
+	return g.downloadChunkFromServer(chunkID, serverAddr, clientID, username, isData1, isData2, isParity)
 }
 
 // checksum implementation moved to checksum.go
@@ -167,7 +167,7 @@ var chunkDownloader = func(g *GrpcClient, chunkID, serverAddr string, clientID i
 // helper functions and types were moved to dedicated files under pkg/dfsclient
 
 // DownloadFile downloads a file and writes to destPath
-func (g *GrpcClient) DownloadFile(ctx context.Context, clientID int64, filename string, destPath string) error {
+func (g *GrpcClient) DownloadFile(ctx context.Context, clientID int64, filename string, destPath string, username string) error {
 	// get metadata
 	meta, err := g.masterCli.GetFileMetadata(ctx, &dfspb.GetFileMetadataRequest{ClientId: clientID, Filename: filename})
 	if err != nil {
@@ -200,7 +200,7 @@ func (g *GrpcClient) DownloadFile(ctx context.Context, clientID int64, filename 
 			ParityChunk: ChunkServerPair{ChunkID: s.ChunkIds[2], Server: s.Servers[2]},
 		}
 
-		sd := g.downloadStripe(info, clientID)
+		sd := g.downloadStripe(info, clientID, username)
 
 		// attempt reconstruction if needed
 		if sd.ChunksOK < 2 {

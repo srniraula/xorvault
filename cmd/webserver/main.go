@@ -71,7 +71,7 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 	// File operations (require authentication)
 	r.POST("/files", auth.AuthMiddleware(), func(c *gin.Context) {
 		// Get authenticated user info (clientID is always non-zero, set at registration)
-		_, clientID, ok := auth.GetUserFromContext(c)
+		username, clientID, ok := auth.GetUserFromContext(c)
 		if !ok {
 			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication required"})
 			return
@@ -102,7 +102,7 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 		uctx, cancel := context.WithTimeout(cRequestContext(c), 10*time.Minute)
 		defer cancel()
 
-		assignedClient, err := cli.UploadFile(uctx, int64(clientID), filename, f, size)
+		assignedClient, err := cli.UploadFile(uctx, int64(clientID), filename, f, size, username)
 		if err != nil {
 			// Map common errors to HTTP status
 			if err.Error() == "no healthy chunkservers" {
@@ -163,7 +163,7 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 
 	r.GET("/files/:clientId/:filename", auth.AuthMiddleware(), func(c *gin.Context) {
 		// Get authenticated user info
-		_, userClientID, ok := auth.GetUserFromContext(c)
+		username, userClientID, ok := auth.GetUserFromContext(c)
 		if !ok {
 			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication required"})
 			return
@@ -208,7 +208,7 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 
 		dctx, dcancel := context.WithTimeout(cRequestContext(c), 5*time.Minute)
 		defer dcancel()
-		if err := cli.DownloadFile(dctx, requestedClientID, filename, tmpPath); err != nil {
+		if err := cli.DownloadFile(dctx, requestedClientID, filename, tmpPath, username); err != nil {
 			if err.Error() == "file not found" {
 				c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "file not found"})
 				return
@@ -271,7 +271,7 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 	// Simplified download endpoint that uses authentication
 	r.GET("/files/download/:filename", auth.AuthMiddleware(), func(c *gin.Context) {
 		// Get authenticated user info
-		_, userClientID, ok := auth.GetUserFromContext(c)
+		username, userClientID, ok := auth.GetUserFromContext(c)
 		if !ok {
 			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication required"})
 			return
@@ -311,7 +311,7 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 
 		dctx, dcancel := context.WithTimeout(cRequestContext(c), 5*time.Minute)
 		defer dcancel()
-		if err := cli.DownloadFile(dctx, clientID, filename, tmpPath); err != nil {
+		if err := cli.DownloadFile(dctx, clientID, filename, tmpPath, username); err != nil {
 			if err.Error() == "file not found" {
 				c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "file not found"})
 				return
@@ -478,7 +478,7 @@ func handleChunkUpload(c *gin.Context) {
 func handleFinalizeUpload(cli dfsclient.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Get authenticated user info (clientID is always non-zero, set at registration)
-		_, clientID, ok := auth.GetUserFromContext(c)
+		username, clientID, ok := auth.GetUserFromContext(c)
 		if !ok {
 			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication required"})
 			return
@@ -542,7 +542,7 @@ func handleFinalizeUpload(cli dfsclient.Client) gin.HandlerFunc {
 		uctx, cancel := context.WithTimeout(cRequestContext(c), 15*time.Minute) // Extended timeout for large files
 		defer cancel()
 
-		assignedClient, err := cli.UploadFile(uctx, int64(clientID), filename, file, totalSize)
+		assignedClient, err := cli.UploadFile(uctx, int64(clientID), filename, file, totalSize, username)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
 			return

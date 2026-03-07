@@ -49,6 +49,7 @@ type MasterServer struct {
 	// Folder support
 	clientFolders   map[int64]map[string]bool  // Maps client_id -> folder_path -> exists
 	fileUploadTimes map[int64]map[string]int64 // Maps client_id -> filename -> unix_timestamp
+	clientUsernames map[int64]string           // Maps client_id -> username for directory naming
 
 	// WAL fields
 	walFile   *os.File      // WAL file handle
@@ -78,6 +79,7 @@ func (m *MasterServer) ensureClientMaps(clientID int64) {
 		m.fileUploadTimes[clientID] = make(map[string]int64)
 	}
 	// clientIDs uses slices; append on nil is OK so no init required
+	// clientUsernames is a flat map; no nested init needed
 }
 
 // CreateFile registers a new file in the system
@@ -99,6 +101,11 @@ func (m *MasterServer) CreateFile(ctx context.Context, req *dfspb.CreateFileRequ
 
 	// ensure nested maps for this client exist
 	m.ensureClientMaps(req.ClientId)
+
+	// Store username for this client (used for directory naming on chunkservers)
+	if req.Username != "" {
+		m.clientUsernames[req.ClientId] = req.Username
+	}
 
 	// Check if file already exists
 	if _, ok := m.fileInfo[req.ClientId][req.Filename]; ok {
@@ -445,10 +452,13 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 	m.logger.Printf("Deleting %s for client %d: %d chunks across %d servers",
 		filename, clientID, len(allChunkIDs), len(serverChunks))
 
+	// Look up username for directory naming on chunkservers
+	username := m.clientUsernames[clientID]
+
 	// Send DeleteChunks RPC to each chunk server
 	totalDeleted := int32(0)
 	for serverAddr, chunkIDs := range serverChunks {
-		deleted, err := m.deleteChunksFromServer(serverAddr, chunkIDs, clientID)
+		deleted, err := m.deleteChunksFromServer(serverAddr, chunkIDs, clientID, username)
 		if err != nil {
 			m.logger.Printf("Failed to delete chunks from %s: %v", serverAddr, err)
 			// Continue with other servers even if one fails
@@ -504,7 +514,7 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 }
 
 // deleteChunksFromServer sends DeleteChunks RPC to a specific chunk server
-func (m *MasterServer) deleteChunksFromServer(serverAddr string, chunkIDs []string, clientID int64) (int32, error) {
+func (m *MasterServer) deleteChunksFromServer(serverAddr string, chunkIDs []string, clientID int64, username string) (int32, error) {
 	// Connect to chunk server
 	conn, err := grpc.NewClient(serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -518,6 +528,7 @@ func (m *MasterServer) deleteChunksFromServer(serverAddr string, chunkIDs []stri
 	resp, err := chunkClient.DeleteChunks(context.Background(), &dfspb.DeleteChunksRequest{
 		ChunkIds: chunkIDs,
 		ClientId: clientID,
+		Username: username,
 	})
 
 	if err != nil {

@@ -175,6 +175,7 @@ func main() {
 		servers:         make(map[string]*ServerInfo),
 		clientFolders:   make(map[int64]map[string]bool),
 		fileUploadTimes: make(map[int64]map[string]int64),
+		clientUsernames: make(map[int64]string),
 		logger:          masterLogger,
 		walFile:         walFile,
 		walWriter:       bufio.NewWriter(walFile),
