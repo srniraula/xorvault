@@ -30,6 +30,52 @@ func GetMasterAddr() string {
 	return addr
 }
 
+// GetSecondaryMasterAddr returns the secondary (standby) master address.
+// Priority order:
+//  1. SECONDARY_MASTER_ADDR environment variable
+//  2. .secondary_master_addr file in the working directory
+//  3. empty string if neither is set
+func GetSecondaryMasterAddr() string {
+	if addr := os.Getenv("SECONDARY_MASTER_ADDR"); addr != "" {
+		return strings.TrimSpace(addr)
+	}
+	if data, err := os.ReadFile(".secondary_master_addr"); err == nil {
+		if addr := strings.TrimSpace(string(data)); addr != "" {
+			return addr
+		}
+	}
+	return ""
+}
+
+// GetMasterAddrs returns all known master addresses (primary + secondary).
+// Address resolution order:
+//  1. MASTER_ADDRS env var (comma-separated list overrides everything)
+//  2. Primary from MASTER_ADDR / .master_addr file,
+//     secondary from SECONDARY_MASTER_ADDR / .secondary_master_addr file
+func GetMasterAddrs() []string {
+	// Explicit list takes priority
+	if addrs := os.Getenv("MASTER_ADDRS"); addrs != "" {
+		parts := strings.Split(addrs, ",")
+		var result []string
+		for _, p := range parts {
+			if a := strings.TrimSpace(p); a != "" {
+				result = append(result, a)
+			}
+		}
+		if len(result) > 0 {
+			return result
+		}
+	}
+
+	// Build list from individual primary + secondary sources
+	var result []string
+	result = append(result, GetMasterAddr())
+	if sec := GetSecondaryMasterAddr(); sec != "" {
+		result = append(result, sec)
+	}
+	return result
+}
+
 // GetChunkServers returns the list of chunk server addresses
 // For Docker, use hostnames; for local, use localhost
 func GetChunkServers() []string {
@@ -76,7 +122,7 @@ func GetLocalIP() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	
+
 	// Priority 1: Look for virtualbox host-only network interface (enp0s8) first
 	for _, iface := range ifaces {
 		if iface.Name == "enp0s8" && iface.Flags&net.FlagUp != 0 && iface.Flags&net.FlagLoopback == 0 {
@@ -91,7 +137,7 @@ func GetLocalIP() (string, error) {
 			}
 		}
 	}
-	
+
 	// Priority 2: Fall back to any other non-loopback interface
 	for _, iface := range ifaces {
 		// skip down, loopback interfaces, or NAT interface
@@ -112,6 +158,6 @@ func GetLocalIP() (string, error) {
 			}
 		}
 	}
-	
+
 	return "", errors.New("no suitable IPv4 address found")
 }
