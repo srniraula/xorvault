@@ -1,6 +1,6 @@
 package main
 
-// calculateParity computes XOR-based parity for RAID-5
+// calculateParity computes XOR-based parity for RAID-4
 // Takes two data chunks and returns parity chunk
 func calculateParity(chunk1, chunk2 []byte) []byte {
 	// Use the longer chunk size as basis

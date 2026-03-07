@@ -1,6 +1,6 @@
 package dfsclient
 
-// Stripe represents a RAID-5 stripe with 2 data chunks and 1 parity chunk
+// Stripe represents a RAID-4 stripe with 2 data chunks and 1 parity chunk
 type Stripe struct {
 	StripeNum   int
 	DataChunk1  []byte
@@ -20,7 +20,7 @@ func padChunk(chunk []byte, target int) []byte {
 	return p
 }
 
-// calculateParity computes XOR-based parity for RAID-5
+// calculateParity computes XOR-based parity for RAID-4
 func calculateParity(chunk1, chunk2 []byte) []byte {
 	maxLen := len(chunk1)
 	if len(chunk2) > maxLen {
