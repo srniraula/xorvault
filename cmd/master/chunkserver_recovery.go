@@ -131,6 +131,9 @@ func (m *MasterServer) buildTaskForChunk(missingChunkID string, recoveringServer
 				}
 			found:
 
+				// Look up username for directory naming
+				username := m.clientUsernames[clientID]
+
 				// Collect the other 2 chunks (not the missing one)
 				for i := 0; i < 3; i++ {
 					if i != missingIndex {
@@ -145,6 +148,7 @@ func (m *MasterServer) buildTaskForChunk(missingChunkID string, recoveringServer
 					OtherChunkIds: otherChunkIDs,
 					OtherServers:  otherServers,
 					ClientId:      clientID,
+					Username:      username,
 				}
 			}
 		}

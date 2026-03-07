@@ -200,19 +200,19 @@ func (fc *FailoverClient) DeleteFile(ctx context.Context, clientID int64, filena
 	return result, err
 }
 
-func (fc *FailoverClient) UploadFile(ctx context.Context, clientID int64, filename string, data io.Reader, size int64) (int64, error) {
+func (fc *FailoverClient) UploadFile(ctx context.Context, clientID int64, filename string, data io.Reader, size int64, username string) (int64, error) {
 	var result int64
 	err := fc.withRetry(func(c *GrpcClient) error {
 		var e error
-		result, e = c.UploadFile(ctx, clientID, filename, data, size)
+		result, e = c.UploadFile(ctx, clientID, filename, data, size, username)
 		return e
 	})
 	return result, err
 }
 
-func (fc *FailoverClient) DownloadFile(ctx context.Context, clientID int64, filename string, destPath string) error {
+func (fc *FailoverClient) DownloadFile(ctx context.Context, clientID int64, filename string, destPath string, username string) error {
 	return fc.withRetry(func(c *GrpcClient) error {
-		return c.DownloadFile(ctx, clientID, filename, destPath)
+		return c.DownloadFile(ctx, clientID, filename, destPath, username)
 	})
 }
 

@@ -91,6 +91,15 @@ type ChunkServer struct {
 	logger                               *log.Logger
 }
 
+// userDir returns the subdirectory name: username when non-empty, numeric clientID otherwise.
+// This controls how chunks are organized on disk under the chunkserver storage path.
+func userDir(username string, clientID int64) string {
+	if username != "" {
+		return username
+	}
+	return fmt.Sprintf("%d", clientID)
+}
+
 // WriteChunk stores a chunk and its checksum to disk
 // Uses client-specific subdirectories for physical isolation
 // Verifies data integrity by comparing received checksum with calculated checksum
@@ -107,8 +116,8 @@ func (c *ChunkServer) WriteChunk(ctx context.Context, req *dfspb.WriteChunkReque
 		c.logger.Printf("Checksum verified for %s: %s", req.ChunkId, calculatedChecksum)
 	}
 
-	// Create client subdirectory: storagePath/client_id/
-	clientDir := filepath.Join(c.storagePath, fmt.Sprintf("%d", req.ClientId))
+	// Create client subdirectory: storagePath/username_or_id/
+	clientDir := filepath.Join(c.storagePath, userDir(req.Username, req.ClientId))
 	err := os.MkdirAll(clientDir, 0755)
 	if err != nil {
 		c.logger.Printf("Failed to create client directory for %d: %v", req.ClientId, err)
@@ -141,8 +150,8 @@ func (c *ChunkServer) WriteChunk(ctx context.Context, req *dfspb.WriteChunkReque
 // ReadChunk retrieves a chunk and its checksum from disk
 // Reads from client-specific subdirectory
 func (c *ChunkServer) ReadChunk(ctx context.Context, req *dfspb.ReadChunkRequest) (*dfspb.ReadChunkResponse, error) {
-	// Read from client subdirectory: storagePath/client_id/chunk_id
-	clientDir := filepath.Join(c.storagePath, fmt.Sprintf("%d", req.ClientId))
+	// Read from client subdirectory: storagePath/username_or_id/chunk_id
+	clientDir := filepath.Join(c.storagePath, userDir(req.Username, req.ClientId))
 	path := filepath.Join(clientDir, req.ChunkId)
 
 	// Read chunk data
@@ -172,8 +181,8 @@ func (c *ChunkServer) DeleteChunks(ctx context.Context, req *dfspb.DeleteChunksR
 
 	// Delete each chunk in the batch
 	for _, chunkID := range req.ChunkIds {
-		// Construct path: storagePath/client_id/chunk_id
-		clientDir := filepath.Join(c.storagePath, fmt.Sprintf("%d", req.ClientId))
+		// Construct path: storagePath/username_or_id/chunk_id
+		clientDir := filepath.Join(c.storagePath, userDir(req.Username, req.ClientId))
 		chunkPath := filepath.Join(clientDir, chunkID)
 		checksumPath := chunkPath + ".checksum"
 

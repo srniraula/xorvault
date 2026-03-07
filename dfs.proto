@@ -8,6 +8,7 @@ message CreateFileRequest {
   string filename = 1;
   int64 total_size = 2;
   int64 client_id = 3;
+  string username = 4;
 }
 
 message CreateFileResponse {
@@ -50,6 +51,7 @@ message WriteChunkRequest {
   bytes data = 2;
   string checksum = 3;
   int64 client_id = 4;
+  string username = 5;
 }
 
 message WriteChunkResponse {
@@ -59,6 +61,7 @@ message WriteChunkResponse {
 message ReadChunkRequest {
   string chunk_id = 1;
   int64 client_id = 2;
+  string username = 3;
 }
 
 message ReadChunkResponse {
@@ -91,6 +94,7 @@ message ReconstructionTask {
   repeated string other_chunk_ids = 3;  // [chunk1, chunk2] - the 2 available chunks
   repeated string other_servers = 4;    // [server1, server2] - where to get them
   int64 client_id = 5;              // Client ID for physical isolation
+  string username = 6;              // Username for directory naming
 }
 
 message InventoryResponse {
@@ -121,6 +125,7 @@ message DeleteFileResponse {
 message DeleteChunksRequest {
   repeated string chunk_ids = 1;  // All chunks to delete on this server
   int64 client_id = 2;
+  string username = 3;
 }
 
 message DeleteChunksResponse {

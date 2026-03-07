@@ -54,14 +54,14 @@ func (c *ChunkServer) reconstructSingleChunk(task *dfspb.ReconstructionTask) err
 
 	// Goroutine 1: Download first chunk
 	go func() {
-		data, checksum, err := c.downloadChunkFromPeer(task.OtherServers[0], task.OtherChunkIds[0], task.ClientId)
+		data, checksum, err := c.downloadChunkFromPeer(task.OtherServers[0], task.OtherChunkIds[0], task.ClientId, task.Username)
 		results[0] = downloadResult{data: data, checksum: checksum, err: err}
 		done <- 0
 	}()
 
 	// Goroutine 2: Download second chunk
 	go func() {
-		data, checksum, err := c.downloadChunkFromPeer(task.OtherServers[1], task.OtherChunkIds[1], task.ClientId)
+		data, checksum, err := c.downloadChunkFromPeer(task.OtherServers[1], task.OtherChunkIds[1], task.ClientId, task.Username)
 		results[1] = downloadResult{data: data, checksum: checksum, err: err}
 		done <- 1
 	}()
@@ -124,6 +124,7 @@ func (c *ChunkServer) reconstructSingleChunk(task *dfspb.ReconstructionTask) err
 		Data:     reconstructed,
 		Checksum: reconstructedChecksum,
 		ClientId: task.ClientId,
+		Username: task.Username,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to store reconstructed chunk: %v", err)
@@ -137,7 +138,7 @@ func (c *ChunkServer) reconstructSingleChunk(task *dfspb.ReconstructionTask) err
 
 // downloadChunkFromPeer downloads a chunk from another chunk server
 // Reuses the ReadChunk RPC that already exists
-func (c *ChunkServer) downloadChunkFromPeer(serverAddr string, chunkID string, clientID int64) ([]byte, string, error) {
+func (c *ChunkServer) downloadChunkFromPeer(serverAddr string, chunkID string, clientID int64, username string) ([]byte, string, error) {
 	// Connect to peer chunk server
 	conn, err := grpc.NewClient(serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -151,6 +152,7 @@ func (c *ChunkServer) downloadChunkFromPeer(serverAddr string, chunkID string, c
 	resp, err := peerClient.ReadChunk(context.Background(), &dfspb.ReadChunkRequest{
 		ChunkId:  chunkID,
 		ClientId: clientID,
+		Username: username,
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("ReadChunk RPC failed: %v", err)
