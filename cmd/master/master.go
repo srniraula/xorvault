@@ -606,11 +606,11 @@ func (m *MasterServer) Ping(ctx context.Context, req *dfspb.PingRequest) (*dfspb
 func (m *MasterServer) MonitorPrimary(primaryAddr string) {
 	m.logger.Printf("Starting monitoring of Primary Master at %s", primaryAddr)
 
-	ticker := time.NewTicker(2 * time.Second) // Ping every 2 seconds
+	ticker := time.NewTicker(1 * time.Second) // Ping every 1 second
 	defer ticker.Stop()
 
 	failCount := 0
-	maxFails := 3 // Promote after 3 consecutive failures (approx 6 seconds)
+	maxFails := 4 // Promote after 4 consecutive failures (approx 4 seconds)
 
 	for range ticker.C {
 		// Stop monitoring if we identify we are no longer standby (promoted)

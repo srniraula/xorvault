@@ -143,7 +143,7 @@ func (c *ChunkServer) DeleteChunks(ctx context.Context, req *dfspb.DeleteChunksR
 // SendHeartbeats periodically pings the master. If the primary is unreachable,
 // it attempts to find an active master by checking the secondary address.
 func SendHeartbeats(port string, masterAddr string, secondaryAddr string, logger *log.Logger) {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	myAddr := config.GetMyAddr(port)
