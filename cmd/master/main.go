@@ -167,15 +167,17 @@ func main() {
 
 	// Initialize the MasterServer with empty maps
 	server := &MasterServer{
-		fileInfo:     make(map[int64]map[string]map[int32]*dfspb.StripeMetadata),
-		clientIDs:    make(map[int64][]string),
-		fileSizes:    make(map[int64]map[string]int64),
-		chunkStatus:  make(map[string]string),
-		chunkServers: config.GetChunkServers(),
-		servers:      make(map[string]*ServerInfo),
-		logger:       masterLogger,
-		walFile:      walFile,
-		walWriter:    bufio.NewWriter(walFile),
+		fileInfo:        make(map[int64]map[string]map[int32]*dfspb.StripeMetadata),
+		clientIDs:       make(map[int64][]string),
+		fileSizes:       make(map[int64]map[string]int64),
+		chunkStatus:     make(map[string]string),
+		chunkServers:    config.GetChunkServers(),
+		servers:         make(map[string]*ServerInfo),
+		clientFolders:   make(map[int64]map[string]bool),
+		fileUploadTimes: make(map[int64]map[string]int64),
+		logger:          masterLogger,
+		walFile:         walFile,
+		walWriter:       bufio.NewWriter(walFile),
 		// --- NEW failover fields ---
 		secondaryAddr: *secondaryAddr,
 		myAddr:        *myAddr,
