@@ -66,7 +66,8 @@ Chunk servers run on ports `9001`, `9002`, `9003` with storage in `chunk_server1
 ### 4. Upload a File
 
 ```bash
-make set-master MASTER_ADDR=192.168.1.77:50051
+# Point to primary (and optionally secondary) master
+make set-master MASTER_ADDR=192.168.1.71:50051 SECONDARY_MASTER_ADDR=192.168.1.75:50052
 make upload FILE=big.pdf
 ```
 
@@ -124,26 +125,16 @@ make rmdir FOLDER=documents/photos
 make build          # Build all binaries
 make proto          # Regenerate protobuf files
 make run-master     # Start master server
-make run-chunk_server1     # Start chunk server 1 (port 9001)
-make run-chunk_server2     # Start chunk server 2 (port 9002)
-make run-chunk_server3     # Start chunk server 3 (port 9003)
-
-# File operations
+make run-master-primary MY_ADDR=<ip:port> SECONDARY_ADDR=<ip:port>   # Start primary master with failover
+make run-master-secondary MY_ADDR=<ip:port>                           # Start secondary/standby master
+make run-chunk_server1 MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>]  # port 9001
+make run-chunk_server2 MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>]  # port 9002
+make run-chunk_server3 MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>]  # port 9003
+make set-master MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>] # Configure master addresses
 make upload FILE=<filename>    # Upload file
 make download FILE=<filename>  # Download file
 make delete FILE=<filename>    # Delete file
-make cat FILE=<filename>       # Preview file content
-
-# Folder operations
-make mkdir FOLDER=<path>       # Create folder hierarchy
-make rmdir FOLDER=<path>       # Remove empty folder
-make mv SRC=<source> DEST=<destination>  # Move/rename file
-
-# Listing operations
-make ls                        # List all files (simple)
-make ls-detailed              # List all files with details
-make ls-detailed FOLDER=<path> # List specific folder contents
-
+make ls                        # List uploaded files
 make clean          # Remove binaries
 make test           # Run tests
 ```
@@ -184,6 +175,80 @@ make test           # Run tests
 3. **Recovery**: Load checkpoint → replay WAL → resume operations
 
 On restart, master recovers all metadata (files, stripes, clients, chunks).
+
+### Master Failover
+
+The system supports automatic master failover with a primary/secondary pair.
+
+**How it works:**
+1. Primary master sends WAL entries to secondary after every write (CreateFile, ConfirmWrite, DeleteFile)
+2. Primary sends a heartbeat to secondary every 3 seconds
+3. Secondary applies all WAL entries to keep its in-memory state in sync
+4. If secondary receives no heartbeat for 10 seconds, it promotes itself to primary
+5. After promotion, secondary starts accepting all client and chunk server RPCs directly
+
+**How to run with failover (LAN example):**
+```bash
+# On the secondary machine (e.g. Kali at 192.168.1.20) — start this FIRST
+make run-master-secondary MY_ADDR=192.168.1.20:50052
+
+# On the primary machine (e.g. Mac at 192.168.1.10)
+make run-master-primary MY_ADDR=192.168.1.10:50051 SECONDARY_ADDR=192.168.1.20:50052
+
+# Chunk servers — pass BOTH master addresses so they auto-failover too
+make run-chunk_server1 MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
+make run-chunk_server2 MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
+make run-chunk_server3 MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
+
+# Clients — point to primary and secondary so they auto-failover
+make set-master MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
+make upload FILE=myfile.pdf
+```
+
+**To test failover:**
+1. Start secondary first, then primary
+2. Start chunk servers with both master addresses (see above)
+3. Upload a file
+4. Kill the primary (`Ctrl+C`)
+5. Within 10 seconds the secondary prints: `>>> THIS NODE IS NOW THE ACTIVE PRIMARY MASTER <<<`
+6. Within 15 seconds each chunk server prints: `[CHUNKSERVER] FAILOVER: switching active master from <primary> to <secondary>`
+7. **Client remains connected** — subsequent commands (like `make ls`) will auto-detect the primary failure and retry against the secondary address automatically.
+
+**Note:** Start the secondary BEFORE the primary, so it is ready to receive heartbeats and WAL entries immediately.
+
+### Client Auto-Failover
+
+Clients use a "Retry-on-Failure" strategy to handle master crashes:
+
+- When you run `make set-master MASTER_ADDR=192.168.1.71:50051 SECONDARY_MASTER_ADDR=192.168.1.75:50052`, both addresses are stored.
+- On every command (`upload`, `ls`, etc.), the client first attempts to connect to the **Primary** master (192.168.1.71).
+- It performs a lightweight connectivity probe (`GetActiveMaster`).
+- If the probe fails (unreachable/timed out), it logs the failure and automatically retries the operation against the **Secondary** address (192.168.1.75).
+- This ensures seamless operation even if the primary master is completely down, without needing to re-point the client.
+
+| Scenario | Behavior |
+204: |---|---|
+205: | No `SECONDARY_MASTER_ADDR` | Client fails immediately if primary is down (backward compatible) |
+206: | Primary alive | Client connects to primary; zero overhead |
+207: | Primary fails | Client logs failover and proceeds with secondary seamlessly |
+
+### Chunk Server Auto-Failover
+
+Chunk servers use a `MasterTracker` to monitor the active master:
+
+- Each chunk server sends a heartbeat to its **active master** every 5 seconds
+- If **3 consecutive heartbeats fail** (~15 seconds), it automatically switches
+  `activeAddr` to the secondary master address
+- An immediate post-failover heartbeat is sent to re-register with the secondary
+- All subsequent heartbeats and inventory reports go to the secondary
+- No chunk server restart is required
+
+| Scenario | Behaviour |
+|---|---|
+| No `-secondary-master` flag | Heartbeats keep retrying primary indefinitely (backward compatible) |
+| Primary alive | Heartbeats go to primary; counter stays at 0 |
+| Primary fails (3 misses) | Switches to secondary, sends immediate registration heartbeat |
+| Secondary becomes new primary | Operations continue seamlessly |
 
 ## File Structure
 

@@ -201,7 +201,7 @@ func (m *MasterServer) PeriodicCheckpoint(intervalMinutes int, checkpointPath st
 		select {
 		case <-ticker.C:
 			// If Standby, we skip checkpoint creation
-			if m.IsStandby {
+			if !m.isPrimary {
 				continue
 			}
 			// Create checkpoint
@@ -218,7 +218,7 @@ func (m *MasterServer) PeriodicCheckpoint(intervalMinutes int, checkpointPath st
 
 		case <-walPoller.C:
 			// If Standby, poll WAL for new updates using incremental read
-			if m.IsStandby {
+			if !m.isPrimary {
 				if err := m.RecoverFromWALIncremental(walPath); err != nil {
 					m.logger.Printf("Standby incremental WAL error: %v", err)
 				}
