@@ -116,14 +116,27 @@ func (c *ChunkServer) reportInventoryToMaster(port string, masterAddr string) (*
 	// Scan local inventory
 	inventory := c.scanInventory()
 
-	// Use the explicitly configured master address so we don't rely on a
-	// potentially stale .master_addr file on remote (LAN) devices.
-	if masterAddr == "" {
-		masterAddr = config.GetMasterAddr()
+	target := ""
+	
+	// 1. Check local dynamic discovery file first
+	if data, err := os.ReadFile(".master_addr"); err == nil {
+		if addr := strings.TrimSpace(string(data)); addr != "" {
+			target = addr
+		}
+	}
+
+	// 2. Explict flag
+	if target == "" && masterAddr != "" {
+		target = masterAddr
+	}
+
+	// 3. Fallback to cluster default
+	if target == "" {
+		target = config.GetMasterAddr()
 	}
 
 	// Connect to master
-	conn, err := grpc.NewClient(masterAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to master: %v", err)
 	}

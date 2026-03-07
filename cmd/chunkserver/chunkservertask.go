@@ -139,30 +139,6 @@ func (c *ChunkServer) DeleteChunks(ctx context.Context, req *dfspb.DeleteChunksR
 	}, nil
 }
 
-// resolveActiveMaster returns the best known master address.
-// In a LAN environment, we always prefer the explicit flag provided at startup
-// unless we're in failover mode.
-func resolveActiveMaster(configuredPrimary, configuredSecondary string) string {
-	// A chunkserver on a remote LAN device should rely on the -master flag.
-	// Only fall back to .master_addr if the primary is unknown and we need
-	// dynamic re-discovery of a promoted secondary.
-	if configuredPrimary != "" && !strings.Contains(configuredPrimary, "127.0.0.1") && !strings.Contains(configuredPrimary, "localhost") {
-		return configuredPrimary
-	}
-
-	// Dynamic fallback for failover or local dev
-	if data, err := os.ReadFile(".master_addr"); err == nil {
-		if addr := strings.TrimSpace(string(data)); addr != "" {
-			return addr
-		}
-	}
-
-	if configuredPrimary != "" {
-		return configuredPrimary
-	}
-
-	return config.GetMasterAddr()
-}
 
 // SendHeartbeats periodically pings the master. If the primary is unreachable,
 // it attempts to find an active master by checking the secondary address.
@@ -179,16 +155,39 @@ func SendHeartbeats(port string, masterAddr string, secondaryAddr string, logger
 	var masterClient dfspb.MasterServerClient
 	currentTarget := ""
 
-	// We'll alternate between primary and secondary if one fails
-	targets := []string{masterAddr}
+	// Build fallback targets
+	var targets []string
+	if masterAddr != "" {
+		targets = append(targets, masterAddr)
+	}
 	if secondaryAddr != "" && secondaryAddr != masterAddr {
 		targets = append(targets, secondaryAddr)
 	}
+	targetIdx := 0
 
 	for range ticker.C {
 		// If we don't have a working connection, resolve a target
 		if masterClient == nil {
-			target := resolveActiveMaster(masterAddr, secondaryAddr)
+			target := ""
+
+			// 1. Try dynamic .master_addr first (failover detection on shared machine/fs)
+			if data, err := os.ReadFile(".master_addr"); err == nil {
+				if addr := strings.TrimSpace(string(data)); addr != "" {
+					target = addr
+				}
+			}
+
+			// 2. Otherwise cycle through explicitly defined primary and secondary
+			if target == "" && len(targets) > 0 {
+				target = targets[targetIdx]
+				targetIdx = (targetIdx + 1) % len(targets)
+			}
+
+			// 3. Fallback to cluster default
+			if target == "" {
+				target = config.GetMasterAddr()
+			}
+
 			if target == "" {
 				logger.Printf("ERROR: No master address available for heartbeats")
 				continue

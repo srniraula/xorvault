@@ -786,26 +786,29 @@ up: build
 	@echo "System is UP! Access UI at http://localhost:5173"
 	@echo "Run 'make down' to stop everything."
 
-# Stop everything started via 'make up'
+# Stop everything started via 'make up' or 'run-*-lan' targets
 down:
+	@echo "Stopping XORFS system (all components)..."
+	@# 1. Kill tracked PIDs first
 	@if [ -f $(pid_file) ]; then \
-		echo "Stopping XORFS system..."; \
 		while read pid; do \
 			if kill -0 $$pid 2>/dev/null; then \
-				kill -9 $$pid; \
+				kill -9 $$pid 2>/dev/null; \
 				echo "Stopped PID $$pid"; \
 			fi; \
 		done < $(pid_file); \
 		rm $(pid_file); \
-		echo "All processes stopped."; \
-	else \
-		echo "No system PID file found. Cleaning up by process name..."; \
-		pkill -f "bin/master" || true; \
-		pkill -f "bin/chunkserver" || true; \
-		pkill -f "webserver/main.go" || true; \
-		pkill -f "vite" || true; \
-		echo "Cleanup complete."; \
 	fi
+	@# 2. Kill by binary name (orphaned master, chunkserver, webserver)
+	@pkill -9 -f "bin/master" 2>/dev/null || true
+	@pkill -9 -f "bin/chunkserver" 2>/dev/null || true
+	@pkill -9 -f "bin/webserver" 2>/dev/null || true
+	@# 3. Kill vite/node processes for the frontend
+	@pkill -9 -f "node.*vite" 2>/dev/null || true
+	@# 4. Clean up address and PID files
+	@rm -f .master_addr .secondary_addr .sys_pids
+	@echo "All systems stopped and ports (50051, 9001-9003, 8080, 5173) should be free."
+
 
 start-cluster: up
 stop-cluster: down
