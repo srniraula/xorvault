@@ -70,29 +70,11 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 
 	// File operations (require authentication)
 	r.POST("/files", auth.AuthMiddleware(), func(c *gin.Context) {
-		// Get authenticated user info
-		userID, clientID, ok := auth.GetUserFromContext(c)
+		// Get authenticated user info (clientID is always non-zero, set at registration)
+		_, clientID, ok := auth.GetUserFromContext(c)
 		if !ok {
 			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication required"})
 			return
-		}
-
-		// If user doesn't have a clientID assigned, assign one
-		if clientID == 0 {
-			// Generate a new client ID (simple timestamp-based)
-			clientID = int(time.Now().Unix() % 1000000)
-
-			// Update user with new clientID
-			user, err := auth.GetUser(userID)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to retrieve user"})
-				return
-			}
-			user.ClientID = clientID
-			if err := auth.SaveUser(userID, user); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to update user"})
-				return
-			}
 		}
 
 		// Request validation
@@ -495,29 +477,11 @@ func handleChunkUpload(c *gin.Context) {
 // handleFinalizeUpload reassembles chunks and uploads to DFS
 func handleFinalizeUpload(cli dfsclient.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Get authenticated user info
-		userID, clientID, ok := auth.GetUserFromContext(c)
+		// Get authenticated user info (clientID is always non-zero, set at registration)
+		_, clientID, ok := auth.GetUserFromContext(c)
 		if !ok {
 			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication required"})
 			return
-		}
-
-		// If user doesn't have a clientID assigned, assign one
-		if clientID == 0 {
-			// Generate a new client ID (simple timestamp-based)
-			clientID = int(time.Now().Unix() % 1000000)
-
-			// Update user with new clientID
-			user, err := auth.GetUser(userID)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to retrieve user"})
-				return
-			}
-			user.ClientID = clientID
-			if err := auth.SaveUser(userID, user); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to update user"})
-				return
-			}
 		}
 
 		uploadId := c.PostForm("uploadId")

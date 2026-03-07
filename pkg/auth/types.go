@@ -32,18 +32,18 @@ type CustomClaims struct {
 
 // API Request/Response structures
 type RegisterRequest struct {
-	UserID   string `json:"userId" binding:"required"`
+	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`
 }
 
 type LoginRequest struct {
-	UserID   string `json:"userId" binding:"required"`
+	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`
 }
 
 type AuthResponse struct {
-	Success bool   `json:"success"`
-	Token   string `json:"token,omitempty"`
-	UserID  string `json:"userId,omitempty"`
-	Message string `json:"message,omitempty"`
+	Success  bool   `json:"success"`
+	Token    string `json:"token,omitempty"`
+	Username string `json:"username,omitempty"`
+	Message  string `json:"message,omitempty"`
 }

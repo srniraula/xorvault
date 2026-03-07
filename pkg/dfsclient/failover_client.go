@@ -78,6 +78,7 @@ func (fc *FailoverClient) connectToAny() error {
 
 // reconnect closes the current (failed) connection and tries the remaining
 // addresses in round-robin order.  Must be called with fc.mu held.
+// It ALWAYS leaves fc.inner non-nil so callers never get a nil GrpcClient.
 func (fc *FailoverClient) reconnect() error {
 	if fc.inner != nil {
 		_ = fc.inner.Close()
@@ -106,6 +107,13 @@ func (fc *FailoverClient) reconnect() error {
 		}
 		_ = cli.Close()
 		log.Printf("[FailoverClient] master at %s not reachable: %v", addr, probeErr)
+	}
+
+	// All probes failed. Keep a live (but unresponsive) connection so fc.inner
+	// is never nil — callers will get a proper gRPC error instead of a panic.
+	if cli, err := NewGrpcClient(fc.addrs[fc.current]); err == nil {
+		fc.inner = cli
+		log.Printf("[FailoverClient] all masters unreachable; holding optimistic connection to %s", fc.addrs[fc.current])
 	}
 	return fmt.Errorf("all master addresses unreachable")
 }
@@ -137,6 +145,19 @@ func (fc *FailoverClient) withRetry(fn func(*GrpcClient) error) error {
 	inner := fc.inner
 	fc.mu.Unlock()
 
+	// Guard: if inner is nil (should not happen, but be safe) try to reconnect
+	// before making any RPC to avoid a nil-pointer panic.
+	if inner == nil {
+		log.Printf("[FailoverClient] inner client is nil; attempting reconnect before RPC")
+		fc.mu.Lock()
+		_ = fc.reconnect()
+		inner = fc.inner
+		fc.mu.Unlock()
+		if inner == nil {
+			return fmt.Errorf("no master connection available")
+		}
+	}
+
 	err := fn(inner)
 	if !isRetryable(err) {
 		return err
@@ -150,6 +171,9 @@ func (fc *FailoverClient) withRetry(fn func(*GrpcClient) error) error {
 
 	if rerr != nil {
 		return fmt.Errorf("failover failed: %w (original: %v)", rerr, err)
+	}
+	if inner == nil {
+		return fmt.Errorf("no master connection available after failover")
 	}
 	return fn(inner)
 }
