@@ -109,16 +109,20 @@ func (c *ChunkServer) scanInventory() []string {
 	return chunkIDs
 }
 
-// reportInventoryToMaster sends the current inventory to the master
-// Returns lists of missing and extra chunks
-func (c *ChunkServer) reportInventoryToMaster(port string) (*dfspb.InventoryResponse, error) {
+// reportInventoryToMaster sends the current inventory to the master.
+// Uses the currently active master address from MasterTracker so it works
+// correctly even after a primary→secondary failover.
+func (c *ChunkServer) reportInventoryToMaster(port string, tracker *MasterTracker) (*dfspb.InventoryResponse, error) {
 	// Scan local inventory
 	inventory := c.scanInventory()
 
+	// Use the active master address (may be secondary after failover)
+	masterAddr := tracker.ActiveAddr()
+
 	// Connect to master
-	conn, err := grpc.NewClient(config.GetMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(masterAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to master: %v", err)
+		return nil, fmt.Errorf("failed to connect to master %s: %v", masterAddr, err)
 	}
 	defer conn.Close()
 
@@ -132,11 +136,11 @@ func (c *ChunkServer) reportInventoryToMaster(port string) (*dfspb.InventoryResp
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to report inventory: %v", err)
+		return nil, fmt.Errorf("failed to report inventory to %s: %v", masterAddr, err)
 	}
 
-	c.logger.Printf("Inventory reported to master: %d missing, %d extra",
-		len(resp.MissingChunks), len(resp.ExtraChunks))
+	c.logger.Printf("Inventory reported to master %s: %d missing, %d extra",
+		masterAddr, len(resp.MissingChunks), len(resp.ExtraChunks))
 
 	return resp, nil
 }
@@ -178,12 +182,12 @@ func (c *ChunkServer) cleanupExtraChunks(extraChunks []string) {
 	}
 }
 
-// PerformInventoryCheck scans inventory and reports to master on startup
-// Called once when chunk server starts
-func PerformInventoryCheck(server *ChunkServer, port string, logger *log.Logger) {
+// PerformInventoryCheck scans inventory and reports to master on startup.
+// Uses the MasterTracker so the report goes to whichever master is active.
+func PerformInventoryCheck(server *ChunkServer, port string, tracker *MasterTracker, logger *log.Logger) {
 	logger.Printf("Starting inventory check...")
 
-	resp, err := server.reportInventoryToMaster(port)
+	resp, err := server.reportInventoryToMaster(port, tracker)
 	if err != nil {
 		logger.Printf("Inventory check failed: %v", err)
 		return

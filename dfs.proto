@@ -136,48 +136,49 @@ message ListFilesResponse {
   repeated string filenames = 1;
 }
 
-// New messages for folder operations and detailed listing
+// ─── FOLDER OPERATIONS ───────────────────────────────────────────────────────
+
 message CreateFolderRequest {
-  int64 client_id = 1;
-  string folder_path = 2;  // e.g., "documents/photos"
+  int64  client_id   = 1;
+  string folder_path = 2;
 }
 
 message CreateFolderResponse {
-  bool success = 1;
+  bool   success = 1;
   string message = 2;
 }
 
 message DeleteFolderRequest {
-  int64 client_id = 1;
+  int64  client_id   = 1;
   string folder_path = 2;
 }
 
 message DeleteFolderResponse {
-  bool success = 1;
+  bool   success = 1;
   string message = 2;
 }
 
 message MoveFileRequest {
-  int64 client_id = 1;
-  string source_path = 2;      // e.g., "file.pdf" or "folder1/file.pdf"
-  string destination_path = 3; // e.g., "folder2/file.pdf"
+  int64  client_id        = 1;
+  string source_path      = 2;
+  string destination_path = 3;
 }
 
 message MoveFileResponse {
-  bool success = 1;
+  bool   success = 1;
   string message = 2;
 }
 
 message FileMetadata {
-  string path = 1;           // Full path: "folder/file.pdf" or "file.pdf"
-  int64 size = 2;            // File size in bytes
-  int64 upload_time = 3;     // Unix timestamp
-  bool is_directory = 4;
+  string path         = 1;
+  int64  size         = 2;
+  int64  upload_time  = 3;
+  bool   is_directory = 4;
 }
 
 message ListFilesDetailedRequest {
-  int64 client_id = 1;
-  string folder_path = 2;    // "" for root, "folder1" for subfolder
+  int64  client_id   = 1;
+  string folder_path = 2;
 }
 
 message ListFilesDetailedResponse {
@@ -185,39 +186,43 @@ message ListFilesDetailedResponse {
 }
 
 message ReadFileContentRequest {
-  string filename = 1;
-  int64 client_id = 2;
-  int64 offset = 3;      // Byte offset to start reading from
-  int64 length = 4;      // Number of bytes to read (0 = read all)
+  string filename  = 1;
+  int64  client_id = 2;
+  int64  offset    = 3;
+  int64  length    = 4;
 }
 
 message ReadFileContentResponse {
-  bytes data = 1;
-  int64 total_size = 2;  // Total file size
+  bytes data       = 1;
+  int64 total_size = 2;
 }
+
+// service MasterServer {
+//   rpc CreateFile(CreateFileRequest) returns (CreateFileResponse);
+//   rpc AllocateChunk(AllocateChunkRequest) returns (AllocateChunkResponse);
+//   rpc GetFileMetadata(GetFileMetadataRequest) returns (GetFileMetadataResponse);
+//   rpc ReceiveHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+//   rpc ReportInventory(InventoryRequest) returns (InventoryResponse);
+//   rpc ConfirmWrite(ConfirmWriteRequest) returns (ConfirmWriteResponse);
+//   rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
+//   rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+// }
 
 service MasterServer {
-  rpc CreateFile(CreateFileRequest) returns (CreateFileResponse);
-  rpc AllocateChunk(AllocateChunkRequest) returns (AllocateChunkResponse);
-  rpc GetFileMetadata(GetFileMetadataRequest) returns (GetFileMetadataResponse);
-  rpc ReceiveHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
-  rpc ReportInventory(InventoryRequest) returns (InventoryResponse);
-  rpc ConfirmWrite(ConfirmWriteRequest) returns (ConfirmWriteResponse);
-  rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
-  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
-  
-  // New folder and file operations
-  rpc CreateFolder(CreateFolderRequest) returns (CreateFolderResponse);
-  rpc DeleteFolder(DeleteFolderRequest) returns (DeleteFolderResponse);
-  rpc MoveFile(MoveFileRequest) returns (MoveFileResponse);
-  rpc ListFilesDetailed(ListFilesDetailedRequest) returns (ListFilesDetailedResponse);
-  rpc ReadFileContent(ReadFileContentRequest) returns (ReadFileContentResponse);
-  rpc Ping(PingRequest) returns (PingResponse); // For health check
-}
-
-message PingRequest {}
-message PingResponse {
-  bool active = 1; // Returns true if server is active (not standby)
+  rpc CreateFile(CreateFileRequest)                   returns (CreateFileResponse);
+  rpc AllocateChunk(AllocateChunkRequest)             returns (AllocateChunkResponse);
+  rpc GetFileMetadata(GetFileMetadataRequest)         returns (GetFileMetadataResponse);
+  rpc ReceiveHeartbeat(HeartbeatRequest)              returns (HeartbeatResponse);
+  rpc ReportInventory(InventoryRequest)               returns (InventoryResponse);
+  rpc ConfirmWrite(ConfirmWriteRequest)               returns (ConfirmWriteResponse);
+  rpc DeleteFile(DeleteFileRequest)                   returns (DeleteFileResponse);
+  rpc ListFiles(ListFilesRequest)                     returns (ListFilesResponse);
+  rpc GetActiveMaster(GetActiveMasterRequest)         returns (GetActiveMasterResponse);
+  rpc CreateFolder(CreateFolderRequest)               returns (CreateFolderResponse);
+  rpc DeleteFolder(DeleteFolderRequest)               returns (DeleteFolderResponse);
+  rpc MoveFile(MoveFileRequest)                       returns (MoveFileResponse);
+  rpc ListFilesDetailed(ListFilesDetailedRequest)     returns (ListFilesDetailedResponse);
+  rpc ReadFileContent(ReadFileContentRequest)         returns (ReadFileContentResponse);
 }
 
 service ChunkServer {
@@ -225,4 +230,55 @@ service ChunkServer {
   rpc ReadChunk(ReadChunkRequest) returns (ReadChunkResponse);
   rpc ForwardChunk(ForwardChunkRequest) returns (WriteChunkResponse);
   rpc DeleteChunks(DeleteChunksRequest) returns (DeleteChunksResponse);
+}
+
+// ─── MASTER FAILOVER ─────────────────────────────────────────────────────────
+
+enum WALEntryType {
+  WAL_CREATE_FILE   = 0;
+  WAL_CONFIRM_WRITE = 1;
+  WAL_DELETE_FILE   = 2;
+}
+
+message WALEntry {
+  uint64       sequence_number = 1;
+  WALEntryType entry_type      = 2;
+  bytes        payload         = 3;
+  int64        timestamp_unix  = 4;
+}
+
+message ReplicateWALRequest  { WALEntry entry = 1; }
+message ReplicateWALResponse {
+  bool   success           = 1;
+  uint64 last_sequence_ack = 2;
+}
+
+message MasterHeartbeatRequest {
+  string primary_addr      = 1;
+  uint64 last_wal_sequence = 2;
+}
+message MasterHeartbeatResponse {
+  bool   success                = 1;
+  uint64 last_received_sequence = 2;
+}
+
+message CheckpointRequest {
+  uint64 sequence_number = 1;
+  bytes  state_data      = 2;
+}
+message CheckpointResponse { bool success = 1; }
+
+message GetActiveMasterRequest  {}
+message GetActiveMasterResponse {
+  string active_master_addr = 1;
+  bool   is_primary         = 2;
+}
+
+// Add GetActiveMaster to the existing MasterServer service by replacing it:
+// (delete your old MasterServer block and paste this one)
+
+service SecondaryMasterServer {
+  rpc ReplicateWAL(ReplicateWALRequest)             returns (ReplicateWALResponse);
+  rpc SendMasterHeartbeat(MasterHeartbeatRequest)   returns (MasterHeartbeatResponse);
+  rpc ApplyCheckpoint(CheckpointRequest)            returns (CheckpointResponse);
 }
