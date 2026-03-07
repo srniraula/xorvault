@@ -71,38 +71,84 @@ func (g *GrpcClient) getConn(ctx context.Context) (dfspb.MasterServerClient, err
 		return g.masterCli, nil
 	}
 
-	// Try primary then secondary
-	targets := []string{g.primaryAddr}
-	if g.secondaryAddr != "" && g.secondaryAddr != g.primaryAddr {
-		targets = append(targets, g.secondaryAddr)
-	}
+	// Build list of all known master addresses for active probing
+	var targets []string
 
-	// Also check local .master_addr in case of recent failover
+	// Check local .master_addr for a hint (useful on same machine or shared FS)
 	if data, err := os.ReadFile(".master_addr"); err == nil {
 		active := strings.TrimSpace(string(data))
-		if active != "" && active != g.primaryAddr && active != g.secondaryAddr {
-			targets = append([]string{active}, targets...)
+		if active != "" {
+			targets = append(targets, active)
 		}
+	}
+
+	// Add primary and secondary (avoiding duplicates)
+	addUnique := func(addr string) {
+		if addr == "" {
+			return
+		}
+		for _, existing := range targets {
+			if existing == addr {
+				return
+			}
+		}
+		targets = append(targets, addr)
+	}
+	addUnique(g.primaryAddr)
+	addUnique(g.secondaryAddr)
+
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("no master addresses configured")
 	}
 
 	var lastErr error
 	for _, addr := range targets {
-		if addr == "" {
-			continue
-		}
 		conn, err := grpc.Dial(addr,
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
 			grpc.WithConnectParams(grpc.ConnectParams{MinConnectTimeout: 2 * time.Second}),
 		)
-		if err == nil {
-			g.currentConn = conn
-			g.masterCli = dfspb.NewMasterServerClient(conn)
-			return g.masterCli, nil
+		if err != nil {
+			lastErr = fmt.Errorf("dial %s: %w", addr, err)
+			continue
 		}
-		lastErr = err
+
+		// Actually validate the connection works with a lightweight ListFiles call
+		// (Using empty username/password just to test connectivity - will fail auth but proves master is up)
+		cli := dfspb.NewMasterServerClient(conn)
+		testCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		_, err = cli.ListFiles(testCtx, &dfspb.ListFilesRequest{Username: "__probe__", Password: ""})
+		cancel()
+
+		// Any response (even auth failure) means master is reachable
+		// Only network/unavailable errors indicate master is down
+		if err != nil && isConnectionError(err) {
+			lastErr = fmt.Errorf("probe %s: %w", addr, err)
+			conn.Close()
+			continue
+		}
+
+		// Found a working master!
+		g.currentConn = conn
+		g.masterCli = cli
+		return g.masterCli, nil
 	}
 
-	return nil, fmt.Errorf("could not connect to any master: %v", lastErr)
+	return nil, fmt.Errorf("could not connect to any master (tried %v): %v", targets, lastErr)
+}
+
+// isConnectionError returns true if the error indicates the server is unreachable
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	// Check for common gRPC connection failure patterns
+	return strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "unavailable") ||
+		strings.Contains(errStr, "no connection") ||
+		strings.Contains(errStr, "connection error") ||
+		strings.Contains(errStr, "transport") ||
+		strings.Contains(errStr, "deadline exceeded")
 }
 
 func (g *GrpcClient) resetConn() {

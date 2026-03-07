@@ -167,7 +167,7 @@ Run on **Device A** (IP `192.168.1.77`). This single command starts:
 ```bash
 # On Device A:
 make run-master-lan MASTER=192.168.1.77:50051 SECONDARY=192.168.1.75:50052
-```
+``` 
 
 **What happens**:
 - Builds all binaries.

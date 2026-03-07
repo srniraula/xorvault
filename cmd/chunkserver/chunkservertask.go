@@ -139,9 +139,9 @@ func (c *ChunkServer) DeleteChunks(ctx context.Context, req *dfspb.DeleteChunksR
 	}, nil
 }
 
-
 // SendHeartbeats periodically pings the master. If the primary is unreachable,
-// it attempts to find an active master by checking the secondary address.
+// it attempts to find an active master by actively probing ALL known addresses.
+// This is critical for LAN deployments where .master_addr is local to each device.
 func SendHeartbeats(port string, masterAddr string, secondaryAddr string, logger *log.Logger) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -155,28 +155,38 @@ func SendHeartbeats(port string, masterAddr string, secondaryAddr string, logger
 	var masterClient dfspb.MasterServerClient
 	currentTarget := ""
 
-	// Build fallback targets
-	var targets []string
+	// Build all known master addresses (used for active probing on failover)
+	var allMasters []string
 	if masterAddr != "" {
-		targets = append(targets, masterAddr)
+		allMasters = append(allMasters, masterAddr)
 	}
 	if secondaryAddr != "" && secondaryAddr != masterAddr {
-		targets = append(targets, secondaryAddr)
+		allMasters = append(allMasters, secondaryAddr)
 	}
-	targetIdx := 0
+	// Also add config default if different
+	configMaster := config.GetMasterAddr()
+	if configMaster != "" && configMaster != masterAddr && configMaster != secondaryAddr {
+		allMasters = append(allMasters, configMaster)
+	}
 
 	for range ticker.C {
-		// If we don't have a working connection, resolve a target
+		// If we don't have a working connection, actively probe ALL known masters
 		if masterClient == nil {
-			target := ""
+			// Build probe list: start with .master_addr hint, then try all known masters
+			var probeTargets []string
 
+<<<<<<< Updated upstream
 			// 1. Try dynamic .master_addr first (failover detection)
+=======
+			// Check .master_addr for a hint (useful when running on same machine as master)
+>>>>>>> Stashed changes
 			if data, err := os.ReadFile(".master_addr"); err == nil {
 				if addr := strings.TrimSpace(string(data)); addr != "" {
-					target = addr
+					probeTargets = append(probeTargets, addr)
 				}
 			}
 
+<<<<<<< Updated upstream
 			// 2. Otherwise cycle through explicitly defined primary and secondary
 			if target == "" && len(targets) > 0 {
 				target = targets[targetIdx]
@@ -206,24 +216,98 @@ func SendHeartbeats(port string, masterAddr string, secondaryAddr string, logger
 
 		// Send heartbeat
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+=======
+			// Add all known masters (avoiding duplicates)
+			for _, addr := range allMasters {
+				duplicate := false
+				for _, existing := range probeTargets {
+					if existing == addr {
+						duplicate = true
+						break
+					}
+				}
+				if !duplicate {
+					probeTargets = append(probeTargets, addr)
+				}
+			}
+
+			if len(probeTargets) == 0 {
+				logger.Printf("ERROR: No master addresses available for heartbeats")
+				continue
+			}
+
+			// Actively probe each target until we find a working one
+			var foundConn *grpc.ClientConn
+			var foundClient dfspb.MasterServerClient
+			var foundTarget string
+
+			for _, target := range probeTargets {
+				c, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+				if err != nil {
+					logger.Printf("Failed to create gRPC client for %s: %v", target, err)
+					continue
+				}
+
+				// Actually test the connection with a quick heartbeat
+				testClient := dfspb.NewMasterServerClient(c)
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				_, err = testClient.ReceiveHeartbeat(ctx, &dfspb.HeartbeatRequest{Address: myAddr})
+				cancel()
+
+				if err != nil {
+					logger.Printf("Probe failed for %s: %v", target, err)
+					c.Close()
+					continue
+				}
+
+				// Found a working master!
+				foundConn = c
+				foundClient = testClient
+				foundTarget = target
+				logger.Printf("Connected to active master: %s", target)
+				break
+			}
+
+			if foundClient == nil {
+				logger.Printf("All master probes failed. Will retry in 2s. Targets: %v", probeTargets)
+				continue
+			}
+
+			conn = foundConn
+			masterClient = foundClient
+			currentTarget = foundTarget
+			continue // Already sent heartbeat during probe
+		}
+
+		// Send heartbeat to current master
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+>>>>>>> Stashed changes
 		_, err := masterClient.ReceiveHeartbeat(ctx, &dfspb.HeartbeatRequest{
 			Address: myAddr,
 		})
 		cancel()
 
 		if err != nil {
+<<<<<<< Updated upstream
 			logger.Printf("Heartbeat failed to %s: %v", currentTarget, err)
+=======
+			logger.Printf("Heartbeat failed to %s: %v. Will probe all masters.", currentTarget, err)
+			// Close and reset - next iteration will probe all known masters
+>>>>>>> Stashed changes
 			if conn != nil {
 				conn.Close()
 			}
 			conn = nil
 			masterClient = nil
 			currentTarget = ""
+<<<<<<< Updated upstream
 			
 			// Increment index for the next ticker tick to try the alternate master
 			if len(targets) > 0 {
 				targetIdx = (targetIdx + 1) % len(targets)
 			}
+=======
+>>>>>>> Stashed changes
 		}
 	}
 }
