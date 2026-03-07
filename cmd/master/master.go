@@ -62,6 +62,7 @@ type MasterServer struct {
 	myAddr        string // this instance's own address, e.g. "192.168.1.10:50051"
 	walSeq        uint64 // monotonically increasing WAL sequence number
 	isPrimary     bool   // true if this instance is the active primary
+	generation    uint64 // epoch counter: incremented every time a new master promotes itself
 }
 
 // ensureClientMaps makes sure the per-client nested maps exist to avoid nil-map panics
@@ -567,8 +568,8 @@ func (m *MasterServer) GetActiveMaster(ctx context.Context, req *dfspb.GetActive
 }
 
 // replicateWALToSecondary sends a single WAL entry to the secondary master.
-// Runs in a goroutine (called via `go` from AppendWAL) so it never blocks
-// the primary RPC. Errors are logged but do NOT fail the primary operation.
+// Called synchronously from AppendWAL (after releasing walMu) with a 2 s deadline.
+// Errors are logged but do NOT fail the primary operation.
 func (m *MasterServer) replicateWALToSecondary(entry WALEntry, seq uint64) {
 	if m.secondaryAddr == "" {
 		return
@@ -588,8 +589,12 @@ func (m *MasterServer) replicateWALToSecondary(entry WALEntry, seq uint64) {
 	}
 	defer conn.Close()
 
+	// Use a bounded deadline so a slow secondary never stalls the primary
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
 	client := dfspb.NewSecondaryMasterServerClient(conn)
-	resp, err := client.ReplicateWAL(context.Background(), &dfspb.ReplicateWALRequest{
+	resp, err := client.ReplicateWAL(ctx, &dfspb.ReplicateWALRequest{
 		Entry: &dfspb.WALEntry{
 			SequenceNumber: seq,
 			EntryType:      walEntryTypeFromOp(entry.Operation),

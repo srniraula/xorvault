@@ -50,15 +50,16 @@ type DeleteFileData struct {
 	ClientID int64  `json:"client_id"`
 }
 
-// appendWAL writes an entry to the Write-Ahead Log with durability guarantees
-// This ensures operations are persisted to disk before updating in-memory state
+// AppendWAL writes an entry to the Write-Ahead Log with durability guarantees
+// and then synchronously replicates to the secondary (best-effort, 2 s timeout).
+// This ensures operations are persisted to disk before updating in-memory state.
 func (m *MasterServer) AppendWAL(operation string, data interface{}) error {
 	m.walMu.Lock()
-	defer m.walMu.Unlock()
 
 	// Serialize the operation data to JSON
 	dataBytes, err := json.Marshal(data)
 	if err != nil {
+		m.walMu.Unlock()
 		return fmt.Errorf("failed to marshal WAL data: %v", err)
 	}
 
@@ -72,34 +73,41 @@ func (m *MasterServer) AppendWAL(operation string, data interface{}) error {
 	// Serialize the entire entry to JSON
 	entryBytes, err := json.Marshal(entry)
 	if err != nil {
+		m.walMu.Unlock()
 		return fmt.Errorf("failed to marshal WAL entry: %v", err)
 	}
 
 	// Write entry as a single line (newline-delimited JSON)
 	_, err = m.walWriter.WriteString(string(entryBytes) + "\n")
 	if err != nil {
+		m.walMu.Unlock()
 		return fmt.Errorf("failed to write to WAL: %v", err)
 	}
 
 	// Flush buffer to OS
 	if err := m.walWriter.Flush(); err != nil {
+		m.walMu.Unlock()
 		return fmt.Errorf("failed to flush WAL: %v", err)
 	}
 
-	// // Sync to disk for durability (survives crash/power loss)
-	// if err := m.walFile.Sync(); err != nil {
-	// 	return fmt.Errorf("failed to sync WAL: %v", err)
-	// }
-
-	// return nil
 	// Sync to disk for durability (survives crash/power loss)
 	if err := m.walFile.Sync(); err != nil {
+		m.walMu.Unlock()
 		return fmt.Errorf("failed to sync WAL: %v", err)
 	}
 
-	// Increment sequence counter and replicate to secondary (best-effort)
+	// Increment sequence and capture values before releasing the lock
 	m.walSeq++
-	go m.replicateWALToSecondary(entry, m.walSeq)
+	seq := m.walSeq
+	entryCopy := entry
+
+	// Release lock BEFORE network I/O so other callers are not blocked
+	m.walMu.Unlock()
+
+	// Synchronous replication to secondary — uses a 2 s deadline so a slow/dead
+	// secondary never stalls the primary for more than 2 s per operation.
+	// Errors are logged but do NOT fail the primary write (best-effort HA).
+	m.replicateWALToSecondary(entryCopy, seq)
 
 	return nil
 }

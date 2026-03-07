@@ -286,4 +286,8 @@ service SecondaryMasterServer {
   rpc ReplicateWAL(ReplicateWALRequest)             returns (ReplicateWALResponse);
   rpc SendMasterHeartbeat(MasterHeartbeatRequest)   returns (MasterHeartbeatResponse);
   rpc ApplyCheckpoint(CheckpointRequest)            returns (CheckpointResponse);
+  // RequestStateSync: asked by a returning primary to pull the full current state
+  // from a secondary that has promoted itself. Request=empty, Response=CheckpointRequest
+  // (reusing the message: state_data=checkpoint JSON, sequence_number=current wal_seq).
+  rpc RequestStateSync(GetActiveMasterRequest)      returns (CheckpointRequest);
 }
