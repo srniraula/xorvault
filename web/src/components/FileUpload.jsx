@@ -29,7 +29,7 @@ export default function FileUpload({ username, password, onSuccess }) {
 
       setFile(null);
       setFilename('');
-      setMsg({ type: 'success', text: 'File uploaded successfully!' })
+      setMsg({ type: 'success', text: 'File uploaded successfully! Chunks and parity are stored in the chunkservers.' })
       if (onSuccess) onSuccess(data)
     } catch (err) {
       setMsg({ type: 'danger', text: err.message })

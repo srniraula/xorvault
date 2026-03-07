@@ -42,28 +42,14 @@ export default function FilesPage({ username, password }) {
   }
 
   const onDownload = (filename) => {
-    // For downloads via browser navigation, we might need a different approach if we want to use headers.
-    // However, since window.location doesn't support headers, we can't easily pass it here without changing API to support token in query.
-    // Let's use a blob-based download if we must have the header.
-    const download = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/files/${username}/${encodeURIComponent(filename)}`, {
-          headers: { 'X-DFS-Password': password }
-        });
-        if (!res.ok) throw new Error(await res.text());
-        const blob = await res.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      } catch (err) {
-        setMessage({ type: 'danger', text: 'Download failed: ' + err.message });
-      }
-    };
-    download();
+    // Append the password as a query parameter for browser direct download
+    const url = `${API_BASE}/files/${username}/${encodeURIComponent(filename)}?password=${encodeURIComponent(password)}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   }
 
   return (

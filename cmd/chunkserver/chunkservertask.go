@@ -129,6 +129,9 @@ func (c *ChunkServer) DeleteChunks(ctx context.Context, req *dfspb.DeleteChunksR
 		}
 	}
 
+	// Try to clean up the user directory if it's now empty
+	_ = os.Remove(filepath.Join(c.storagePath, req.Username))
+
 	c.logger.Printf("Deleted %d/%d chunks for user %s", deletedCount, len(req.ChunkIds), req.Username)
 	return &dfspb.DeleteChunksResponse{
 		Success:      true,

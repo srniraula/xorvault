@@ -167,6 +167,11 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 		username := c.Param("username")
 		filename := c.Param("filename")
 		password := c.GetHeader("X-DFS-Password")
+		
+		// Fallback to query parameter for normal browser download links without headers
+		if password == "" {
+			password = c.Query("password")
+		}
 
 		lctx, lcancel := context.WithTimeout(cRequestContext(c), 15*time.Second)
 		defer lcancel()
@@ -187,7 +192,14 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 			return
 		}
 
-		tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("download_%s_%s", username, filename))
+		tmpFile, err := os.CreateTemp("", fmt.Sprintf("download_%s_%s_*", username, filename))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to create temp file"})
+			return
+		}
+		tmpPath := tmpFile.Name()
+		tmpFile.Close() // Close so DownloadFile can overwrite/open it
+
 		dctx, dcancel := context.WithTimeout(cRequestContext(c), 5*time.Minute)
 		defer dcancel()
 
