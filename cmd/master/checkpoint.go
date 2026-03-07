@@ -237,7 +237,11 @@ func (m *MasterServer) PeriodicCheckpoint(intervalMinutes int, checkpointPath st
 		case <-walPoller.C:
 			// If Standby, poll WAL for new updates using incremental read
 			if m.IsStandby {
-				if err := m.RecoverFromWALIncremental(walPath); err != nil {
+				m.standbyMu.Lock()
+				err := m.RecoverFromWALIncremental(walPath)
+				m.standbyMu.Unlock()
+
+				if err != nil {
 					// Don't spam logs for every poll, but record critical errors
 					if !os.IsNotExist(err) {
 						m.logger.Printf("Standby sync error: %v", err)
