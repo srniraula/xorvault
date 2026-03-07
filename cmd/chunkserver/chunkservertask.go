@@ -147,15 +147,13 @@ func SendHeartbeats(port string, masterAddr string, secondaryAddr string, logger
 	defer ticker.Stop()
 
 	myAddr := config.GetMyAddr(port)
+	
+	// Resolve secondary from config if not provided in flags
 	if secondaryAddr == "" {
 		secondaryAddr = config.GetSecondaryMasterAddr()
 	}
 
-	var conn *grpc.ClientConn
-	var masterClient dfspb.MasterServerClient
-	currentTarget := ""
-
-	// Build fallback targets
+	// Prepare the priority list of targets for this chunkserver
 	var targets []string
 	if masterAddr != "" {
 		targets = append(targets, masterAddr)
@@ -163,15 +161,20 @@ func SendHeartbeats(port string, masterAddr string, secondaryAddr string, logger
 	if secondaryAddr != "" && secondaryAddr != masterAddr {
 		targets = append(targets, secondaryAddr)
 	}
+
+	var conn *grpc.ClientConn
+	var masterClient dfspb.MasterServerClient
+	currentTarget := ""
 	targetIdx := 0
 
 	for range ticker.C {
-		// If we don't have a working connection, resolve a target
-		if masterClient == nil {
-			// Find the next target to try
+		// If we are not connected, try to establish a connection
+		retryCount := 0
+		for masterClient == nil && retryCount < len(targets)+1 {
+			retryCount++
 			target := ""
-			
-			// Higher priority: try the dynamic .master_addr if it exists and hasn't just failed
+
+			// 1. Try dynamic .master_addr (effective for same-host or shared FS failover)
 			if data, err := os.ReadFile(".master_addr"); err == nil {
 				addr := strings.TrimSpace(string(data))
 				if addr != "" && addr != currentTarget {
@@ -179,33 +182,45 @@ func SendHeartbeats(port string, masterAddr string, secondaryAddr string, logger
 				}
 			}
 
-			// If .master_addr wasn't useful or was the one that just failed, use the targets list
+			// 2. Cycle through the permanent primary and secondary LAN addresses
 			if target == "" && len(targets) > 0 {
 				target = targets[targetIdx]
 				targetIdx = (targetIdx + 1) % len(targets)
 			}
 
-			// Fallback to cluster default configuration
+			// 3. Last resort fallback
 			if target == "" {
 				target = config.GetMasterAddr()
 			}
 
 			if target == "" {
-				logger.Printf("ERROR: No master address available for heartbeats")
-				continue
+				logger.Printf("ERROR: No master address available")
+				break
 			}
 
-			// Try to connect (non-blocking, but the first RPC will fail if unreachable)
-			c, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			logger.Printf("Attempting heartbeat connection to Master: %s", target)
+			
+			// Use a blocking dial with a short timeout to verify connection immediately
+			dialCtx, dialCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			c, err := grpc.DialContext(dialCtx, target, 
+				grpc.WithTransportCredentials(insecure.NewCredentials()), 
+				grpc.WithBlock())
+			dialCancel()
+
 			if err != nil {
-				logger.Printf("CRITICAL: Failed to create gRPC client for %s: %v", target, err)
+				logger.Printf("Failed to connect to %s: %v", target, err)
+				currentTarget = target // Mark as tried/failed
 				continue
 			}
 
 			conn = c
 			masterClient = dfspb.NewMasterServerClient(conn)
 			currentTarget = target
-			logger.Printf("Attempting heartbeat connection to: %s", target)
+			logger.Printf("Successfully connected to Master: %s", target)
+		}
+
+		if masterClient == nil {
+			continue
 		}
 
 		// Send heartbeat
@@ -216,17 +231,13 @@ func SendHeartbeats(port string, masterAddr string, secondaryAddr string, logger
 		cancel()
 
 		if err != nil {
-			logger.Printf("Heartbeat RPC failed to %s: %v. (MyAddr: %s)", currentTarget, err, myAddr)
-			// Close and reset so we try the next target in the next ticker tick
+			logger.Printf("Heartbeat failed to %s: %v", currentTarget, err)
 			if conn != nil {
 				conn.Close()
 			}
 			conn = nil
 			masterClient = nil
-			// Important: keep currentTarget so the resolution logic knows NOT to try it again immediately via .master_addr
-		} else {
-			// Success! Reset currentTarget tracking if we want, but keeping it is fine.
-			// logger.Printf("Heartbeat success to %s", currentTarget)
+			// The next iteration of the loop will immediately try the alternate target (Secondary)
 		}
 	}
 }
