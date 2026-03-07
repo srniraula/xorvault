@@ -107,6 +107,7 @@ import (
 	"dfs-project/pkg/config"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -125,23 +126,29 @@ func main() {
 	flag.Parse()
 
 	// Setup log file for Master - all logs will be written to master.log
+	if err := os.MkdirAll("log_files", 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "FATAL: failed to create log_files directory: %v\n", err)
+		os.Exit(1)
+	}
 	logFile, err := os.OpenFile(fmt.Sprintf("log_files/master_%s.log", strings.NewReplacer(":", "-", ".", "-").Replace(*myAddr)), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
-		log.Fatalf("Failed to open log file: %v", err)
+		fmt.Fprintf(os.Stderr, "FATAL: failed to open log file: %v\n", err)
+		os.Exit(1)
 	}
 	defer logFile.Close()
 
 	// Create custom logger with prefix "MASTER: " and timestamp
 	masterLogger := log.New(logFile, fmt.Sprintf("MASTER(%s): ", *myAddr), log.LstdFlags|log.Lshortfile)
 
-	// Replace default log with file logger (for fatal errors)
-	log.SetOutput(logFile)
+	// Write to both file and stderr so startup errors are always visible
+	log.SetOutput(io.MultiWriter(os.Stderr, logFile))
 
 	// Start listening — use the -addr flag so secondary can bind its own port
 	lis, err := net.Listen("tcp", *myAddr)
 	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
+		log.Fatalf("FATAL: Failed to listen on %s: %v", *myAddr, err)
 	}
+	fmt.Printf("Master listening on %s\n", *myAddr)
 
 	// Create gRPC server instance
 	s := grpc.NewServer()
