@@ -1,11 +1,20 @@
 package auth
 
 import (
+	"hash/fnv"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
+
+// usernameToClientID derives a stable numeric DFS client ID from a username
+// using FNV-1a hashing so the same user always maps to the same client ID.
+func usernameToClientID(username string) int {
+	h := fnv.New32a()
+	h.Write([]byte(username))
+	return int(h.Sum32())
+}
 
 // RegisterHandler handles user registration
 func RegisterHandler(c *gin.Context) {
@@ -18,8 +27,8 @@ func RegisterHandler(c *gin.Context) {
 		return
 	}
 
-	// Validate userID
-	if err := ValidateUserID(req.UserID); err != nil {
+	// Validate username
+	if err := ValidateUsername(req.Username); err != nil {
 		c.JSON(http.StatusBadRequest, AuthResponse{
 			Success: false,
 			Message: err.Error(),
@@ -27,11 +36,11 @@ func RegisterHandler(c *gin.Context) {
 		return
 	}
 
-	// Check if userID already exists
-	if _, err := GetUser(req.UserID); err == nil {
+	// Check if username is already taken
+	if _, err := GetUser(req.Username); err == nil {
 		c.JSON(http.StatusConflict, AuthResponse{
 			Success: false,
-			Message: "User ID already exists",
+			Message: "Username already taken",
 		})
 		return
 	}
@@ -55,15 +64,19 @@ func RegisterHandler(c *gin.Context) {
 		return
 	}
 
+	// Derive a stable clientID from the username so it is always non-zero and
+	// consistent across restarts without needing a separate assignment step.
+	clientID := usernameToClientID(req.Username)
+
 	// Create user
 	user := &User{
 		Password:  hashedPassword,
-		ClientID:  0, // Will be assigned on first upload
+		ClientID:  clientID,
 		CreatedAt: time.Now(),
 	}
 
 	// Save user
-	if err := SaveUser(req.UserID, user); err != nil {
+	if err := SaveUser(req.Username, user); err != nil {
 		c.JSON(http.StatusInternalServerError, AuthResponse{
 			Success: false,
 			Message: "Failed to create user",
@@ -71,8 +84,8 @@ func RegisterHandler(c *gin.Context) {
 		return
 	}
 
-	// Generate JWT token
-	token, err := GenerateToken(req.UserID, user.ClientID)
+	// Generate JWT token (clientID is already set)
+	token, err := GenerateToken(req.Username, clientID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, AuthResponse{
 			Success: false,
@@ -82,10 +95,10 @@ func RegisterHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, AuthResponse{
-		Success: true,
-		Token:   token,
-		UserID:  req.UserID,
-		Message: "Registration successful",
+		Success:  true,
+		Token:    token,
+		Username: req.Username,
+		Message:  "Registration successful",
 	})
 }
 
@@ -101,20 +114,20 @@ func LoginHandler(c *gin.Context) {
 	}
 
 	// Validate input
-	if req.UserID == "" || req.Password == "" {
+	if req.Username == "" || req.Password == "" {
 		c.JSON(http.StatusBadRequest, AuthResponse{
 			Success: false,
-			Message: "UserID and password are required",
+			Message: "Username and password are required",
 		})
 		return
 	}
 
 	// Get user from storage
-	user, err := GetUser(req.UserID)
+	user, err := GetUser(req.Username)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, AuthResponse{
 			Success: false,
-			Message: "UserID or password not registered",
+			Message: "Username or password is incorrect",
 		})
 		return
 	}
@@ -123,13 +136,13 @@ func LoginHandler(c *gin.Context) {
 	if !CheckPasswordHash(req.Password, user.Password) {
 		c.JSON(http.StatusUnauthorized, AuthResponse{
 			Success: false,
-			Message: "UserID or password not registered",
+			Message: "Username or password is incorrect",
 		})
 		return
 	}
 
 	// Generate JWT token
-	token, err := GenerateToken(req.UserID, user.ClientID)
+	token, err := GenerateToken(req.Username, user.ClientID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, AuthResponse{
 			Success: false,
@@ -139,9 +152,9 @@ func LoginHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, AuthResponse{
-		Success: true,
-		Token:   token,
-		UserID:  req.UserID,
-		Message: "Login successful",
+		Success:  true,
+		Token:    token,
+		Username: req.Username,
+		Message:  "Login successful",
 	})
 }

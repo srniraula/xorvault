@@ -7,25 +7,25 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// ValidateUserID checks if userID meets requirements
-// Requirements: 3-20 characters, alphanumeric and underscores only, must start with letter
-func ValidateUserID(userID string) error {
-	if len(userID) < 3 {
-		return fmt.Errorf("user ID must be at least 3 characters long")
+// ValidateUsername checks if a username meets requirements.
+// Requirements: 3-20 characters, must start with a letter, letters/numbers/underscores only.
+func ValidateUsername(username string) error {
+	if len(username) < 3 {
+		return fmt.Errorf("username must be at least 3 characters long")
 	}
 
-	if len(userID) > 20 {
-		return fmt.Errorf("user ID must be at most 20 characters long")
+	if len(username) > 20 {
+		return fmt.Errorf("username must be at most 20 characters long")
 	}
 
 	// Must start with a letter
-	if !regexp.MustCompile(`^[a-zA-Z]`).MatchString(userID) {
-		return fmt.Errorf("user ID must start with a letter")
+	if !regexp.MustCompile(`^[a-zA-Z]`).MatchString(username) {
+		return fmt.Errorf("username must start with a letter")
 	}
 
 	// Only letters, numbers, and underscores allowed
-	if !regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]*$`).MatchString(userID) {
-		return fmt.Errorf("user ID can only contain letters, numbers, and underscores")
+	if !regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]*$`).MatchString(username) {
+		return fmt.Errorf("username can only contain letters, numbers, and underscores")
 	}
 
 	return nil
