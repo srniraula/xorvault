@@ -57,7 +57,7 @@ info "Wrote .master_addr → ${PRIMARY_IP}:${PRIMARY_PORT}"
 # ── start master gRPC server ──────────────────────────────────
 info "Starting Master gRPC on ${PRIMARY_IP}:${PRIMARY_PORT} ..."
 MASTER_ADDR="${PRIMARY_IP}:${PRIMARY_PORT}" \
-  ./bin/master -port "${PRIMARY_PORT}" -mode active \
+  ./bin/master -port "${PRIMARY_PORT}" -mode active -secondary "${SECONDARY_IP}:${SECONDARY_PORT}" \
   > log_files/master_stdout.log 2>&1 &
 MASTER_PID=$!
 echo "$MASTER_PID" >> .sys_pids

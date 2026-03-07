@@ -50,7 +50,16 @@ func main() {
 	// Actually, if we are on the same filesystem, only one writer allowed usually if using lock
 	// But append mode is generally safe for single writer. Standby should probably just READ.
 	// For now, let's open it same way.
-	walFile, err := os.OpenFile("master.wal", os.O_CREATE|os.O_RDWR|os.O_APPEND, 0666)
+	// Port-specific storage files to allow local HA testing
+	walName := "master.wal"
+	checkpointName := "master.checkpoint"
+	// If running on non-standard port locally, use port-specific names
+	if *port != "50051" && *port != "50052" {
+		walName = fmt.Sprintf("master_%s.wal", *port)
+		checkpointName = fmt.Sprintf("master_%s.checkpoint", *port)
+	}
+
+	walFile, err := os.OpenFile(walName, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0666)
 	if err != nil {
 		log.Fatalf("Failed to open WAL file: %v", err)
 	}
@@ -66,6 +75,8 @@ func main() {
 		servers:         make(map[string]*ServerInfo),      // Empty server health map
 		logger:          masterLogger,                      // Custom logger for file output
 		walFile:         walFile,                           // WAL file handle
+		walPath:         walName,                           // Configurable WAL path
+		checkpointPath:  checkpointName,                    // Configurable checkpoint path
 		walWriter:       bufio.NewWriter(walFile),          // Buffered WAL writer
 		clientFolders:   make(map[string]map[string]bool),  // Folder hierarchy support
 		fileUploadTimes: make(map[string]map[string]int64), // Upload timestamps
@@ -75,12 +86,12 @@ func main() {
 	}
 
 	// Restore from checkpoint first (if exists)
-	if err := server.LoadCheckpoint("master.checkpoint"); err != nil {
+	if err := server.LoadCheckpoint(checkpointName); err != nil {
 		log.Fatalf("Checkpoint loading failed: %v", err)
 	}
 
 	// Then replay WAL entries after checkpoint
-	if err := server.RecoverFromWAL("master.wal"); err != nil {
+	if err := server.RecoverFromWAL(walName); err != nil {
 		log.Fatalf("WAL recovery failed: %v", err)
 	}
 
@@ -130,7 +141,7 @@ func main() {
 	dfspb.RegisterMasterServerServer(s, server)
 
 	// Start background goroutine for periodic checkpointing (every 5 minutes)
-	go server.PeriodicCheckpoint(5, "master.checkpoint", "master.wal")
+	go server.PeriodicCheckpoint(5, checkpointName, walName)
 
 	// Start background goroutine for dead server detection
 	// This runs continuously in the background checking for dead servers
@@ -154,10 +165,21 @@ func main() {
 
 	// Start monitoring Primary if we are Standby
 	if server.IsStandby {
-		go server.MonitorPrimary(*primaryAddr)
+		pAddr := *primaryAddr
+		if pAddr == "127.0.0.1:50051" {
+			// Try to get better address from cluster.conf
+			if confAddr := config.GetMasterAddr(); confAddr != "" && confAddr != "127.0.0.1:50051" {
+				pAddr = confAddr
+			}
+		}
+		go server.MonitorPrimary(pAddr)
 	} else {
 		// If we are Active, start syncing our data to the Secondary
-		go server.StartBackupSync(*secondaryAddr)
+		secAddr := *secondaryAddr
+		if secAddr == "" {
+			secAddr = config.GetSecondaryMasterAddr()
+		}
+		go server.StartBackupSync(secAddr)
 	}
 
 	log.Printf("Master running on :%s (Mode: %s) – Logs to %s", *port, *mode, logFile.Name())

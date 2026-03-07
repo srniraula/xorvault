@@ -112,7 +112,10 @@ func (m *MasterServer) LoadCheckpoint(checkpointPath string) error {
 		return fmt.Errorf("failed to unmarshal checkpoint: %v", err)
 	}
 
-	// Restore state (no lock needed - called during initialization)
+	// Restore state
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	m.clientIDs = checkpoint.ClientIDs
 	m.fileSizes = checkpoint.FileSizes
 	m.chunkStatus = checkpoint.ChunkStatus

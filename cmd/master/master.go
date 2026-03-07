@@ -52,9 +52,11 @@ type MasterServer struct {
 	fileUploadTimes map[string]map[string]int64 // Maps username -> filename -> unix_timestamp
 
 	// WAL fields
-	walFile   *os.File      // WAL file handle
-	walWriter *bufio.Writer // Buffered writer for WAL
-	walMu     sync.Mutex    // Protects WAL writes
+	walFile        *os.File      // WAL file handle
+	walPath        string        // Path to WAL file
+	checkpointPath string        // Path to checkpoint file
+	walWriter      *bufio.Writer // Buffered writer for WAL
+	walMu          sync.Mutex    // Protects WAL writes
 
 	// High Availability
 	IsStandby  bool       // If true, this is a passive master (reads WAL for updates)
@@ -608,16 +610,35 @@ func (m *MasterServer) SyncMetadata(ctx context.Context, req *dfspb.SyncMetadata
 
 	// Persist checkpoint to disk
 	if len(req.CheckpointData) > 0 {
-		if err := os.WriteFile("master.checkpoint", req.CheckpointData, 0644); err != nil {
+		path := m.checkpointPath
+		if path == "" {
+			path = "master.checkpoint"
+		}
+		if err := os.WriteFile(path, req.CheckpointData, 0644); err != nil {
 			m.logger.Printf("SyncMetadata: Failed to write checkpoint: %v", err)
 			return nil, err
 		}
+
+		// Since a new checkpoint arrived, we MUST reload it to update our in-memory state,
+		// and we should reset walOffset because the companion WAL will start from 0.
+		m.logger.Printf("SyncMetadata: New checkpoint received, reloading state...")
+		if err := m.LoadCheckpoint(path); err != nil {
+			m.logger.Printf("SyncMetadata: Failed to reload checkpoint: %v", err)
+		}
+
+		m.walMu.Lock()
+		m.walOffset = 0
+		m.walMu.Unlock()
 	}
 
 	// Persist WAL to disk
 	if len(req.WalData) > 0 {
+		path := m.walPath
+		if path == "" {
+			path = "master.wal"
+		}
 		// We overwrite the local WAL with the one from the primary
-		if err := os.WriteFile("master.wal", req.WalData, 0644); err != nil {
+		if err := os.WriteFile(path, req.WalData, 0644); err != nil {
 			m.logger.Printf("SyncMetadata: Failed to write WAL: %v", err)
 			return nil, err
 		}
@@ -644,14 +665,22 @@ func (m *MasterServer) StartBackupSync(secondaryAddr string) {
 		}
 
 		// Read WAL
-		walData, err := os.ReadFile("master.wal")
+		walPath := m.walPath
+		if walPath == "" {
+			walPath = "master.wal"
+		}
+		walData, err := os.ReadFile(walPath)
 		if err != nil && !os.IsNotExist(err) {
 			m.logger.Printf("Backup sync error reading WAL: %v", err)
 			continue
 		}
 
 		// Read Checkpoint
-		checkpointData, err := os.ReadFile("master.checkpoint")
+		cpPath := m.checkpointPath
+		if cpPath == "" {
+			cpPath = "master.checkpoint"
+		}
+		checkpointData, err := os.ReadFile(cpPath)
 		if err != nil && !os.IsNotExist(err) {
 			m.logger.Printf("Backup sync error reading checkpoint: %v", err)
 			continue
