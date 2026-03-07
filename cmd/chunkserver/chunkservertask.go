@@ -168,22 +168,24 @@ func SendHeartbeats(port string, masterAddr string, secondaryAddr string, logger
 	for range ticker.C {
 		// If we don't have a working connection, resolve a target
 		if masterClient == nil {
+			// Find the next target to try
 			target := ""
-
-			// 1. Try dynamic .master_addr first (failover detection on shared machine/fs)
+			
+			// Higher priority: try the dynamic .master_addr if it exists and hasn't just failed
 			if data, err := os.ReadFile(".master_addr"); err == nil {
-				if addr := strings.TrimSpace(string(data)); addr != "" {
+				addr := strings.TrimSpace(string(data))
+				if addr != "" && addr != currentTarget {
 					target = addr
 				}
 			}
 
-			// 2. Otherwise cycle through explicitly defined primary and secondary
+			// If .master_addr wasn't useful or was the one that just failed, use the targets list
 			if target == "" && len(targets) > 0 {
 				target = targets[targetIdx]
 				targetIdx = (targetIdx + 1) % len(targets)
 			}
 
-			// 3. Fallback to cluster default
+			// Fallback to cluster default configuration
 			if target == "" {
 				target = config.GetMasterAddr()
 			}
@@ -207,7 +209,7 @@ func SendHeartbeats(port string, masterAddr string, secondaryAddr string, logger
 		}
 
 		// Send heartbeat
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		_, err := masterClient.ReceiveHeartbeat(ctx, &dfspb.HeartbeatRequest{
 			Address: myAddr,
 		})
@@ -215,16 +217,16 @@ func SendHeartbeats(port string, masterAddr string, secondaryAddr string, logger
 
 		if err != nil {
 			logger.Printf("Heartbeat RPC failed to %s: %v. (MyAddr: %s)", currentTarget, err, myAddr)
-			// Close and reset so we re-resolve master next time
+			// Close and reset so we try the next target in the next ticker tick
 			if conn != nil {
 				conn.Close()
 			}
 			conn = nil
 			masterClient = nil
-			currentTarget = ""
+			// Important: keep currentTarget so the resolution logic knows NOT to try it again immediately via .master_addr
 		} else {
-			// Success! Don't be too verbose unless debugging, but keep a record.
-			// logger.Printf("Heartbeat Success: %s -> %s", myAddr, currentTarget)
+			// Success! Reset currentTarget tracking if we want, but keeping it is fine.
+			// logger.Printf("Heartbeat success to %s", currentTarget)
 		}
 	}
 }

@@ -601,16 +601,14 @@ func (m *MasterServer) Ping(ctx context.Context, req *dfspb.PingRequest) (*dfspb
 	return &dfspb.PingResponse{Active: !m.IsStandby}, nil
 }
 
-// MonitorPrimary runs in a background goroutine on the Secondary Master
-// It pings the Primary periodically. If Primary fails, Secondary promotes itself.
 func (m *MasterServer) MonitorPrimary(primaryAddr string) {
 	m.logger.Printf("Starting monitoring of Primary Master at %s", primaryAddr)
 
-	ticker := time.NewTicker(1 * time.Second) // Ping every 1 second
+	ticker := time.NewTicker(500 * time.Millisecond) // Ping Every 500ms
 	defer ticker.Stop()
 
 	failCount := 0
-	maxFails := 4 // Promote after 4 consecutive failures (approx 4 seconds)
+	maxFails := 4 // Promote after 4 consecutive failures (2 seconds)
 
 	for range ticker.C {
 		// Stop monitoring if we identify we are no longer standby (promoted)
@@ -618,30 +616,32 @@ func (m *MasterServer) MonitorPrimary(primaryAddr string) {
 			return
 		}
 
-		conn, err := grpc.NewClient(primaryAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		// Use a short timeout for the ping
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		
+		conn, err := grpc.DialContext(ctx, primaryAddr, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 		if err != nil {
 			failCount++
-			m.logger.Printf("Failed to connect to primary (attempt %d/%d): %v", failCount, maxFails, err)
+			m.logger.Printf("MONITOR: Primary unreachable (%d/%d): %v", failCount, maxFails, err)
 		} else {
 			client := dfspb.NewMasterServerClient(conn)
-			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 			_, err := client.Ping(ctx, &dfspb.PingRequest{})
-			cancel()
 			conn.Close()
 
 			if err != nil {
 				failCount++
-				m.logger.Printf("Primary ping failed (attempt %d/%d): %v", failCount, maxFails, err)
+				m.logger.Printf("MONITOR: Primary ping failed (%d/%d): %v", failCount, maxFails, err)
 			} else {
-				// Success, reset counter
 				if failCount > 0 {
-					m.logger.Printf("Primary recovered after %d failures", failCount)
+					m.logger.Printf("MONITOR: Primary recovered after %d failures", failCount)
 				}
 				failCount = 0
 			}
 		}
+		cancel()
 
 		if failCount >= maxFails {
+			m.logger.Printf("MONITOR: Primary master at %s is officially DEAD. Initiating promotion...", primaryAddr)
 			m.PromoteToActive()
 			return
 		}

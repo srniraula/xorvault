@@ -211,14 +211,14 @@ func (m *MasterServer) PeriodicCheckpoint(intervalMinutes int, checkpointPath st
 	ticker := time.NewTicker(time.Duration(intervalMinutes) * time.Minute)
 	defer ticker.Stop()
 
-	// WAL polling ticker for Standby mode
-	walPoller := time.NewTicker(500 * time.Millisecond)
+	// WAL polling ticker for Standby mode - Check for new WAL entries very frequently
+	walPoller := time.NewTicker(100 * time.Millisecond)
 	defer walPoller.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			// If Standby, we skip checkpoint creation
+			// If Standby, we skip checkpoint creation (Primary handles it)
 			if m.IsStandby {
 				continue
 			}
@@ -238,7 +238,10 @@ func (m *MasterServer) PeriodicCheckpoint(intervalMinutes int, checkpointPath st
 			// If Standby, poll WAL for new updates using incremental read
 			if m.IsStandby {
 				if err := m.RecoverFromWALIncremental(walPath); err != nil {
-					m.logger.Printf("Standby incremental WAL error: %v", err)
+					// Don't spam logs for every poll, but record critical errors
+					if !os.IsNotExist(err) {
+						m.logger.Printf("Standby sync error: %v", err)
+					}
 				}
 			}
 		}

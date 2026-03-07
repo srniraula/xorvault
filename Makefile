@@ -807,7 +807,13 @@ down:
 	@pkill -9 -f "node.*vite" 2>/dev/null || true
 	@# 4. Clean up address and PID files
 	@rm -f .master_addr .secondary_addr .sys_pids
-	@echo "All systems stopped and ports (50051, 9001-9003, 8080, 5173) should be free."
+	@echo "All systems stopped."
+
+# Simulation: Kill only the primary master to test HA failover
+kill-primary:
+	@echo "Killing PRIMARY master (port 50051)..."
+	@pkill -9 -f "bin/master .*port 50051" || true
+	@echo "Primary master killed. Watch the secondary logs for promotion."
 
 
 start-cluster: up
@@ -816,6 +822,10 @@ stop-cluster: down
 # View local logs
 logs-local:
 	@tail -f log_files/*.log
+
+# View secondary master log specifically
+logs-secondary:
+	@tail -f log_files/master_50052.log
 
 # Run Secondary Master (High Availability)
 # Usage: make run-secondary [SEC_PORT=50052] [PRIMARY_ADDR=127.0.0.1:50051]
