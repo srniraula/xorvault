@@ -121,8 +121,8 @@ import (
 
 // main starts the master server and background health monitoring
 func main() {
-	// --- NEW: command-line flags for failover ---
-	secondaryAddr := flag.String("secondary", "", "secondary master address e.g. 192.168.1.20:50052 (leave empty if none)")
+	// --- command-line flags for failover ---
+	peerAddr := flag.String("secondary", "", "peer master address e.g. 192.168.1.20:50052 (leave empty if standalone)")
 	myAddr := flag.String("addr", "0.0.0.0:50051", "this master's own listen address e.g. 192.168.1.10:50051")
 	flag.Parse()
 
@@ -180,11 +180,12 @@ func main() {
 		logger:          masterLogger,
 		walFile:         walFile,
 		walWriter:       bufio.NewWriter(walFile),
-		// --- NEW failover fields ---
-		secondaryAddr: *secondaryAddr,
+		// --- failover fields ---
+		peerAddr:      *peerAddr,
+		secondaryAddr: *peerAddr, // will be used for WAL replication when primary
 		myAddr:        *myAddr,
-		isPrimary:     (*secondaryAddr != ""), // If we have a secondary to talk to, we are primary
-		generation:    1,                      // Starting generation; LoadCheckpoint may overwrite this
+		isPrimary:     true, // assume primary; trySyncStateFromPeer may demote us
+		generation:    1,    // starting generation; LoadCheckpoint may overwrite
 	}
 
 	// Restore from checkpoint first (if exists)
@@ -197,11 +198,14 @@ func main() {
 		log.Fatalf("WAL recovery failed: %v", err)
 	}
 
-	// --- STATE SYNC: if we are configured as primary, check whether the secondary
-	// promoted itself while we were down and pull its full state if so. ---
-	if *secondaryAddr != "" {
-		if err := trySyncStateFromPeer(server, *secondaryAddr, masterLogger); err != nil {
-			masterLogger.Printf("State sync from peer failed (will use local state): %v", err)
+	// --- STATE SYNC: if a peer is configured, check whether the peer
+	// promoted itself while we were down and pull its full state if so.
+	// trySyncStateFromPeer will set isPrimary=false if the peer is the active master. ---
+	if *peerAddr != "" {
+		if err := trySyncStateFromPeer(server, *peerAddr, masterLogger); err != nil {
+			masterLogger.Printf("State sync from peer failed (will use local state as primary): %v", err)
+			// Peer unreachable → we become primary
+			server.isPrimary = true
 		}
 	}
 
@@ -215,15 +219,22 @@ func main() {
 	// Start background goroutine for periodic checkpointing (every 5 minutes)
 	go server.PeriodicCheckpoint(5, "master.checkpoint", "master.wal")
 
-	// --- NEW: if a secondary is configured, send it heartbeats ---
-	if *secondaryAddr != "" {
-		go server.SendHeartbeatsToSecondary(*secondaryAddr)
-		masterLogger.Printf("Primary mode: will send heartbeats to secondary at %s", *secondaryAddr)
+	// --- Start heartbeats or watchdog based on actual role ---
+	if *peerAddr != "" {
+		if server.isPrimary {
+			go server.SendHeartbeatsToSecondary(*peerAddr)
+			masterLogger.Printf("Primary mode: will send heartbeats to peer at %s", *peerAddr)
+			fmt.Println(">>> THIS NODE IS THE ACTIVE PRIMARY MASTER <<<")
+		} else {
+			// We synced state from the active master — run as standby
+			go secondary.WatchdogLoop(10) // 10 second timeout
+			masterLogger.Printf("Standby mode: watchdog started (will promote if master silent for 10s)")
+			fmt.Println(">>> THIS NODE IS IN STANDBY MODE (backup) <<<")
+		}
 	} else {
-		// No secondary configured → we might be the secondary ourselves.
-		// Start the watchdog: if primary heartbeats stop arriving, promote ourselves.
-		go secondary.WatchdogLoop(10) // 10 second timeout
-		masterLogger.Printf("Standby mode: watchdog started (will promote if primary silent for 10s)")
+		// No peer configured — standalone primary
+		masterLogger.Printf("Standalone mode: no peer configured")
+		fmt.Println(">>> STANDALONE PRIMARY MASTER (no failover peer) <<<")
 	}
 
 	// Start background goroutine for dead chunk-server detection
@@ -311,11 +322,13 @@ func trySyncStateFromPeer(server *MasterServer, peerAddr string, logger *log.Log
 		// Peer is still in standby — we are the rightful primary, use local state
 		logger.Printf("Peer %s is not primary (isPrimary=false) — keeping local state (gen=%d)",
 			peerAddr, server.generation)
+		server.isPrimary = true
 		return nil
 	}
 
-	// Peer has promoted itself.  Pull its full state.
-	logger.Printf("Peer %s is the active primary — pulling full state sync...", peerAddr)
+	// Peer has promoted itself (or was always primary).  Pull its full state
+	// and demote ourselves to standby so there is only one active master.
+	logger.Printf("Peer %s is the active primary — pulling full state sync (we will be standby)...", peerAddr)
 
 	syncCtx, syncCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer syncCancel()
@@ -369,6 +382,9 @@ func trySyncStateFromPeer(server *MasterServer, peerAddr string, logger *log.Log
 		}
 	}
 	server.mu.Unlock()
+
+	// Demote ourselves: peer is the active master, we are standby
+	server.isPrimary = false
 
 	// Persist this synced state locally so we survive our own crash
 	if err := server.CreateCheckpoint("master.checkpoint"); err != nil {

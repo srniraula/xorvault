@@ -219,17 +219,33 @@ func (s *SecondaryMaster) WatchdogLoop(timeoutSeconds int) {
 }
 
 // promote flips this node from standby to active primary.
-// After this call, the node's MasterServer will start accepting full client RPCs.
+// After this call, the node's MasterServer will start accepting full client RPCs
+// and begin sending heartbeats/WAL to the peer in case it comes back online.
 func (s *SecondaryMaster) promote() {
 	s.master.mu.Lock()
 	s.master.isPrimary = true
-	s.master.generation++       // New epoch: every promotion increments generation
-	s.master.secondaryAddr = "" // no secondary below us (single failover for now)
+	s.master.generation++ // New epoch: every promotion increments generation
+
+	// Set secondaryAddr to the peer so WAL replication targets the correct node.
+	// Use peerAddr (always set from -secondary flag); fall back to the address
+	// we received in heartbeats from the old primary.
+	peerAddr := s.master.peerAddr
+	if peerAddr == "" {
+		peerAddr = s.primaryAddr
+	}
+	s.master.secondaryAddr = peerAddr
 	s.master.mu.Unlock()
 
 	// Persist our current state as a checkpoint so we can recover if WE crash
 	if err := s.master.CreateCheckpoint("master.checkpoint"); err != nil {
 		s.master.logger.Printf("FAILOVER: checkpoint on promotion failed: %v", err)
+	}
+
+	// Start sending heartbeats to the peer (old primary) so it can sync when
+	// it comes back online and remain as standby.
+	if peerAddr != "" {
+		go s.master.SendHeartbeatsToSecondary(peerAddr)
+		s.master.logger.Printf("FAILOVER: started sending heartbeats to peer %s", peerAddr)
 	}
 
 	s.master.logger.Printf("FAILOVER COMPLETE: this node is now the active primary (wal_seq=%d, generation=%d)", s.master.walSeq, s.master.generation)
