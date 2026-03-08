@@ -487,8 +487,8 @@ func getSecondaryMasterAddr() string {
 	return ""
 }
 
-// connectToMaster attempts to connect to the primary master. If unreachable,
-// it automatically fails over to the secondary master (if configured).
+// connectToMaster attempts to connect to the primary master. If unreachable
+// or in standby mode, it automatically fails over to the secondary master (if configured).
 func connectToMaster() (*grpc.ClientConn, dfspb.MasterServerClient, error) {
 	primary := getMasterAddr()
 	secondary := getSecondaryMasterAddr()
@@ -499,29 +499,48 @@ func connectToMaster() (*grpc.ClientConn, dfspb.MasterServerClient, error) {
 		return nil, nil, fmt.Errorf("failed to dial primary %s: %v", primary, err)
 	}
 
-	// Probe primary with a short timeout
+	// Probe primary with a short timeout — check both reachability AND active status
 	client := dfspb.NewMasterServerClient(conn)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+	resp, err := client.GetActiveMaster(ctx, &dfspb.GetActiveMasterRequest{})
+	cancel()
 
-	// Use GetActiveMaster as a lightweight connectivity probe
-	_, err = client.GetActiveMaster(ctx, &dfspb.GetActiveMasterRequest{})
-	if err == nil {
+	if err == nil && resp.IsPrimary {
+		// Primary is reachable and active
 		return conn, client, nil
 	}
 
-	// Primary failed or unreachable — try secondary if configured
+	// Primary is unreachable or in standby — try secondary if configured
 	if secondary != "" && secondary != primary {
-		log.Printf("Primary master %s unreachable, failing over to secondary %s...", primary, secondary)
+		reason := "unreachable"
+		if err == nil && !resp.IsPrimary {
+			reason = "in standby mode"
+		}
+		log.Printf("Primary master %s is %s, failing over to secondary %s...", primary, reason, secondary)
 		conn.Close()
 
 		conn, err = grpc.NewClient(secondary, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to dial secondary %s: %v", secondary, err)
 		}
-		return conn, dfspb.NewMasterServerClient(conn), nil
+		client = dfspb.NewMasterServerClient(conn)
+
+		// Probe secondary
+		ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+		resp2, err2 := client.GetActiveMaster(ctx2, &dfspb.GetActiveMasterRequest{})
+		cancel2()
+
+		if err2 == nil && resp2.IsPrimary {
+			// Secondary is the active master — persist for future invocations
+			log.Printf("[failover] Secondary %s is ACTIVE — updating .master_addr", secondary)
+			_ = os.WriteFile(".master_addr", []byte(secondary+"\n"), 0644)
+			return conn, client, nil
+		}
+
+		// Secondary also not active — return it anyway, operations will fail clearly
+		return conn, client, nil
 	}
 
-	// No failover possible/configured
-	return conn, client, nil // Return primary connection anyway, subsequent calls will fail with the original error
+	// No failover possible/configured — return primary connection anyway
+	return conn, client, nil
 }

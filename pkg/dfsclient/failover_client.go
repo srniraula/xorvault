@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"dfs-project/dfspb"
 	"dfs-project/pkg/config"
 )
 
@@ -41,30 +42,43 @@ func NewFailoverClient(addrs []string) (*FailoverClient, error) {
 }
 
 // connectToAny iterates over all addresses and connects to the first one that
-// responds to a ping-style RPC (ListFiles with a dummy client ID).
-// If none respond it silently picks the first address so the process can start
-// and retries on the next real request.
+// is the active primary master (IsPrimary=true). If none is active, it falls
+// back to whichever master is reachable, so reads still work on a standby.
 func (fc *FailoverClient) connectToAny() error {
+	// First pass: find the active primary
 	for i, addr := range fc.addrs {
 		cli, err := NewGrpcClient(addr)
 		if err != nil {
 			continue
 		}
-		// Quick connectivity probe: a lightweight RPC with a short timeout.
-		// Any response (even an application-level error) means the master is up.
+		if fc.isActivePrimary(cli) {
+			fc.inner = cli
+			fc.current = i
+			log.Printf("[FailoverClient] connected to active primary master at %s", addr)
+			return nil
+		}
+		_ = cli.Close()
+	}
+
+	// Second pass: fall back to any reachable master (even standby)
+	for i, addr := range fc.addrs {
+		cli, err := NewGrpcClient(addr)
+		if err != nil {
+			continue
+		}
 		probeCtx, probeCancel := context.WithTimeout(context.Background(), 3*time.Second)
 		_, probeErr := cli.ListFiles(probeCtx, 0)
 		probeCancel()
 
 		if probeErr == nil || !isRetryable(probeErr) {
-			// Master is reachable (application errors like "no files" are fine)
 			fc.inner = cli
 			fc.current = i
-			log.Printf("[FailoverClient] connected to master at %s", addr)
+			log.Printf("[FailoverClient] connected to master at %s (may be standby)", addr)
 			return nil
 		}
 		_ = cli.Close()
 	}
+
 	// No master responded; connect to the first address optimistically.
 	cli, err := NewGrpcClient(fc.addrs[0])
 	if err != nil {
@@ -77,7 +91,8 @@ func (fc *FailoverClient) connectToAny() error {
 }
 
 // reconnect closes the current (failed) connection and tries the remaining
-// addresses in round-robin order.  Must be called with fc.mu held.
+// addresses in round-robin order, preferring the active primary.
+// Must be called with fc.mu held.
 // It ALWAYS leaves fc.inner non-nil so callers never get a nil GrpcClient.
 func (fc *FailoverClient) reconnect() error {
 	if fc.inner != nil {
@@ -86,6 +101,7 @@ func (fc *FailoverClient) reconnect() error {
 	}
 
 	n := len(fc.addrs)
+	// First pass: find the active primary
 	for i := 1; i <= n; i++ {
 		idx := (fc.current + i) % n
 		addr := fc.addrs[idx]
@@ -94,7 +110,24 @@ func (fc *FailoverClient) reconnect() error {
 			log.Printf("[FailoverClient] could not connect to %s: %v", addr, err)
 			continue
 		}
-		// Quick probe
+		if fc.isActivePrimary(cli) {
+			fc.inner = cli
+			fc.current = idx
+			log.Printf("[FailoverClient] failed over to active primary at %s", addr)
+			return nil
+		}
+		_ = cli.Close()
+		log.Printf("[FailoverClient] master at %s not active primary", addr)
+	}
+
+	// Second pass: fall back to any reachable master
+	for i := 1; i <= n; i++ {
+		idx := (fc.current + i) % n
+		addr := fc.addrs[idx]
+		cli, err := NewGrpcClient(addr)
+		if err != nil {
+			continue
+		}
 		probeCtx, probeCancel := context.WithTimeout(context.Background(), 3*time.Second)
 		_, probeErr := cli.ListFiles(probeCtx, 0)
 		probeCancel()
@@ -102,11 +135,10 @@ func (fc *FailoverClient) reconnect() error {
 		if probeErr == nil || !isRetryable(probeErr) {
 			fc.inner = cli
 			fc.current = idx
-			log.Printf("[FailoverClient] failed over to master at %s", addr)
+			log.Printf("[FailoverClient] failed over to master at %s (may be standby)", addr)
 			return nil
 		}
 		_ = cli.Close()
-		log.Printf("[FailoverClient] master at %s not reachable: %v", addr, probeErr)
 	}
 
 	// All probes failed. Keep a live (but unresponsive) connection so fc.inner
@@ -118,8 +150,9 @@ func (fc *FailoverClient) reconnect() error {
 	return fmt.Errorf("all master addresses unreachable")
 }
 
-// isRetryable returns true for gRPC transport/connectivity errors that suggest
-// the master is down and we should try the next one.
+// isRetryable returns true for gRPC transport/connectivity errors or STANDBY
+// mode responses that suggest the master is down/inactive and we should try
+// the next one.
 func isRetryable(err error) bool {
 	if err == nil {
 		return false
@@ -130,6 +163,7 @@ func isRetryable(err error) bool {
 		"connection refused", "EOF",
 		"transport is closing", "no route to host",
 		"connection reset", "broken pipe",
+		"STANDBY", "standby",
 	} {
 		if strings.Contains(msg, kw) {
 			return true
@@ -234,4 +268,16 @@ func (fc *FailoverClient) ActiveAddr() string {
 		return fc.inner.masterAddr
 	}
 	return ""
+}
+
+// isActivePrimary probes a master via GetActiveMaster and returns true only if
+// it responds and reports IsPrimary=true.
+func (fc *FailoverClient) isActivePrimary(cli *GrpcClient) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	resp, err := cli.masterCli.GetActiveMaster(ctx, &dfspb.GetActiveMasterRequest{})
+	if err != nil {
+		return false
+	}
+	return resp.IsPrimary
 }

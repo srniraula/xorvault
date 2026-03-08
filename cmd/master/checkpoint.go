@@ -2,11 +2,15 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"dfs-project/dfspb"
 	"encoding/json"
 	"fmt"
 	"os"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // Checkpoint represents a snapshot of master state at a point in time
@@ -231,6 +235,9 @@ func (m *MasterServer) PeriodicCheckpoint(intervalMinutes int, checkpointPath st
 				continue
 			}
 
+			// Replicate checkpoint to peer (best-effort)
+			m.replicateCheckpointToPeer(checkpointPath)
+
 			// Truncate WAL after successful checkpoint
 			if err := m.TruncateWAL(walPath); err != nil {
 				m.logger.Printf("ERROR: Failed to truncate WAL: %v", err)
@@ -245,5 +252,43 @@ func (m *MasterServer) PeriodicCheckpoint(intervalMinutes int, checkpointPath st
 				}
 			}
 		}
+	}
+}
+
+// replicateCheckpointToPeer sends the latest local checkpoint to the peer
+// (secondary/standby) via the ApplyCheckpoint RPC. Best-effort: errors are
+// logged but do not fail the checkpoint cycle.
+func (m *MasterServer) replicateCheckpointToPeer(checkpointPath string) {
+	if m.secondaryAddr == "" {
+		return
+	}
+
+	data, err := os.ReadFile(checkpointPath)
+	if err != nil {
+		m.logger.Printf("Checkpoint replication: failed to read %s: %v", checkpointPath, err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, err := grpc.NewClient(m.secondaryAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		m.logger.Printf("Checkpoint replication: cannot connect to peer %s: %v", m.secondaryAddr, err)
+		return
+	}
+	defer conn.Close()
+
+	client := dfspb.NewSecondaryMasterServerClient(conn)
+	resp, err := client.ApplyCheckpoint(ctx, &dfspb.CheckpointRequest{
+		SequenceNumber: m.walSeq,
+		StateData:      data,
+	})
+	if err != nil {
+		m.logger.Printf("Checkpoint replication RPC to %s failed: %v", m.secondaryAddr, err)
+		return
+	}
+	if resp.Success {
+		m.logger.Printf("Checkpoint replicated to peer %s (wal_seq=%d)", m.secondaryAddr, m.walSeq)
 	}
 }

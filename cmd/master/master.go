@@ -59,8 +59,9 @@ type MasterServer struct {
 	walOffset int64         // Byte offset for incremental WAL replay (standby)
 
 	// Failover fields
-	secondaryAddr string // address of secondary master, e.g. "192.168.1.20:50052"
+	secondaryAddr string // address of the node we replicate to (set to peerAddr when primary)
 	myAddr        string // this instance's own address, e.g. "192.168.1.10:50051"
+	peerAddr      string // permanent address of the other master node (never changes)
 	walSeq        uint64 // monotonically increasing WAL sequence number
 	isPrimary     bool   // true if this instance is the active primary
 	generation    uint64 // epoch counter: incremented every time a new master promotes itself
