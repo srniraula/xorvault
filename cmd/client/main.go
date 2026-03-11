@@ -61,6 +61,14 @@ func main() {
 		log.Printf("Using existing client ID: %d", myID)
 	}
 
+	// Log failover configuration on startup
+	secondaryAddr := getSecondaryMasterAddr()
+	if secondaryAddr != "" {
+		log.Printf("Client failover enabled: will use secondary master %s if primary unreachable", secondaryAddr)
+	} else {
+		log.Printf("Client failover: secondary master not configured (set SECONDARY_MASTER_ADDR or .secondary_master_addr)")
+	}
+
 	cmd := os.Args[1] // "upload", "download", "delete", or "ls"
 
 	if cmd == "ls" {
@@ -607,8 +615,17 @@ func connectToMaster() (*grpc.ClientConn, dfspb.MasterServerClient, error) {
 	defer cancel()
 
 	// Use GetActiveMaster as a lightweight connectivity probe
-	_, err = client.GetActiveMaster(ctx, &dfspb.GetActiveMasterRequest{})
+	resp, err := client.GetActiveMaster(ctx, &dfspb.GetActiveMasterRequest{})
 	if err == nil {
+		// Primary is reachable! Before returning, try to discover secondary if we don't have one
+		if secondary == "" && resp != nil && resp.SecondaryMaster != "" {
+			secondary = resp.SecondaryMaster
+			log.Printf("Discovered secondary master from primary: %s", secondary)
+			// Save secondary master address for future failover
+			if saveErr := os.WriteFile(".secondary_master_addr", []byte(secondary), 0644); saveErr == nil {
+				log.Printf("Saved secondary master address to .secondary_master_addr file")
+			}
+		}
 		return conn, client, nil
 	}
 

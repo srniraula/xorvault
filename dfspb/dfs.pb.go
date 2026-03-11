@@ -1842,6 +1842,7 @@ type GetActiveMasterResponse struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	ActiveMasterAddr string                 `protobuf:"bytes,1,opt,name=active_master_addr,json=activeMasterAddr,proto3" json:"active_master_addr,omitempty"`
 	IsPrimary        bool                   `protobuf:"varint,2,opt,name=is_primary,json=isPrimary,proto3" json:"is_primary,omitempty"`
+	SecondaryMaster  string                 `protobuf:"bytes,3,opt,name=secondary_master,json=secondaryMaster,proto3" json:"secondary_master,omitempty"` // Secondary master address for client failover
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -1888,6 +1889,13 @@ func (x *GetActiveMasterResponse) GetIsPrimary() bool {
 		return x.IsPrimary
 	}
 	return false
+}
+
+func (x *GetActiveMasterResponse) GetSecondaryMaster() string {
+	if x != nil {
+		return x.SecondaryMaster
+	}
+	return ""
 }
 
 var File_dfs_proto protoreflect.FileDescriptor
@@ -2010,11 +2018,12 @@ const file_dfs_proto_rawDesc = "" +
 	"state_data\x18\x02 \x01(\fR\tstateData\".\n" +
 	"\x12CheckpointResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\"\x18\n" +
-	"\x16GetActiveMasterRequest\"f\n" +
+	"\x16GetActiveMasterRequest\"\x91\x01\n" +
 	"\x17GetActiveMasterResponse\x12,\n" +
 	"\x12active_master_addr\x18\x01 \x01(\tR\x10activeMasterAddr\x12\x1d\n" +
 	"\n" +
-	"is_primary\x18\x02 \x01(\bR\tisPrimary*O\n" +
+	"is_primary\x18\x02 \x01(\bR\tisPrimary\x12)\n" +
+	"\x10secondary_master\x18\x03 \x01(\tR\x0fsecondaryMaster*O\n" +
 	"\fWALEntryType\x12\x13\n" +
 	"\x0fWAL_CREATE_FILE\x10\x00\x12\x15\n" +
 	"\x11WAL_CONFIRM_WRITE\x10\x01\x12\x13\n" +

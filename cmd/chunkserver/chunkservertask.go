@@ -61,7 +61,16 @@ func (t *MasterTracker) ReportFailure(logger *log.Logger) bool {
 	logger.Printf("MasterTracker: heartbeat to %s failed (%d/%d consecutive failures)",
 		t.activeAddr, t.failureCount, t.maxFailures)
 
-	if t.failureCount >= t.maxFailures && t.secondaryAddr != "" && t.activeAddr != t.secondaryAddr {
+	if t.failureCount >= t.maxFailures {
+		if t.secondaryAddr == "" {
+			logger.Printf("ERROR: Reached %d failures but NO SECONDARY MASTER configured! Failover impossible.", t.failureCount)
+			return false
+		}
+		if t.activeAddr == t.secondaryAddr {
+			logger.Printf("ERROR: Already on secondary master, cannot failover further")
+			return false
+		}
+
 		logger.Printf("FAILOVER: primary master %s unreachable after %d failures — switching to secondary %s",
 			t.primaryAddr, t.failureCount, t.secondaryAddr)
 		fmt.Printf("[CHUNKSERVER] FAILOVER: switching active master from %s to %s\n",

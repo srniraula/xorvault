@@ -27,6 +27,19 @@ A distributed file system implementation in Go featuring RAID-5 erasure coding, 
 - Protocol Buffers compiler (`protoc`)
 - gRPC tools for Go
 
+## ⭐ Important: Master & Chunkserver Failover
+
+**As of March 2026, XorFS now supports automatic failover:**
+
+✅ **Primary Master** → detects failure of secondary master → continues accepting client operations  
+✅ **Secondary Master** → detects heartbeat loss → auto-promotes itself to primary master  
+✅ **All Chunkservers** → detect unreachable primary → automatically switch to secondary within 15 seconds  
+✅ **All Clients** → detect unreachable primary → automatically retry operations on secondary  
+
+**The `-secondary-master` flag is REQUIRED for all chunkservers to enable failover.** Without it, chunkservers cannot switch to secondary if primary fails.
+
+**Refer to "Master Failover" section below for exact setup and testing commands.**
+
 ## Quick Start
 
 ### 1. Build Binaries
@@ -40,45 +53,87 @@ This creates binaries in `bin/` directory:
 - `bin/chunkserver` - Chunk server
 - `bin/client` - Client CLI
 
-### 2. Start Master Server
+### 2. Start Primary Master Server
+
+**Important: Start secondary master FIRST (if using failover), then start primary**
 
 ```bash
-make run-master
+# Example: Mac primary at 192.168.1.87:50051, Kali secondary at 192.168.1.66:50052
+make run-master-primary MY_ADDR=192.168.1.87:50051 SECONDARY_ADDR=192.168.1.66:50052
 ```
 
-Runs on `masterIP:50051` and logs to `master.log`
+### 3. Start Secondary Master Server (for failover support)
 
-### 3. Start Chunk Servers (in separate terminals)
+**Run this FIRST on the secondary machine:**
 
 ```bash
-# Terminal 1
-make run-chunk_server1 MASTER_ADDR=192.168.1.77:50051
+# Example: Kali VM secondary at 192.168.1.66:50052
+make run-master-secondary MY_ADDR=192.168.1.66:50052
+```
 
-# Terminal 2
-make make run-chunk_server2 MASTER_ADDR=<master_addr:port>
+### 4. Start Chunk Servers (in separate terminals)
 
-# Terminal 3
-make make run-chunk_server3 MASTER_ADDR=<master_addr:port>
+**CRITICAL: All chunkservers MUST have `-secondary-master` flag, even for basic setup**
+
+```bash
+# Terminal 1 - Chunkserver1
+make run-chunk_server1 MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052
+
+# Terminal 2 - Chunkserver2
+make run-chunk_server2 MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052
+
+# Terminal 3 - Chunkserver3
+make run-chunk_server3 MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052
 ```
 
 Chunk servers run on ports `9001`, `9002`, `9003` with storage in `chunk_server1/`, `chunk_server2/`, `chunk_server3/`
 
-### 4. Upload a File
+**Verify setup:** Each chunkserver log should show:
+```
+CHUNKSERVER: ========== CRITICAL: Master failover ENABLED ==========
+CHUNKSERVER: Primary master: 192.168.1.87:50051
+CHUNKSERVER: Secondary master: 192.168.1.66:50052
+```
+
+### 5. Configure Master Addresses for Client (Automatic Failover)
+
+**CRITICAL: This step enables automatic client failover to secondary master**
 
 ```bash
-# Point to primary (and optionally secondary) master
-make set-master MASTER_ADDR=192.168.1.71:50051 SECONDARY_MASTER_ADDR=192.168.1.75:50052
+# Configure primary and secondary master addresses
+# This writes addresses to .master_addr and .secondary_master_addr files
+make set-master MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052
+```
+
+Expected output:
+```
+✓ Primary master configured: 192.168.1.87:50051
+✓ Secondary master configured: 192.168.1.66:50052
+
+✓✓✓ FAILOVER ENABLED ✓✓✓
+    Primary: 192.168.1.87:50051
+    Secondary: 192.168.1.66:50052
+    Client will auto-failover if primary becomes unreachable.
+```
+
+**After this, all client commands will use configured addresses:**
+- If primary is reachable: connects to primary (normal operation)
+- If primary is unreachable: automatically retries on secondary (transparent failover)
+
+### 6. Upload a File
+
+```bash
 make upload FILE=big.pdf
 ```
 
 This will:
 - Generate a client ID (saved to `.client_id`)
-- Split file into stripes
+- Split file into stripes (2 data + 1 parity per stripe)
 - Calculate CRC32 checksums
 - Upload chunks in parallel to chunk servers
 - Verify integrity on server side
 
-### 5. Download a File
+### 7. Download a File
 
 ```bash
 make download FILE=myfile.pdf
@@ -86,34 +141,42 @@ make download FILE=myfile.pdf
 
 Downloaded file saved as `downloaded_myfile.pdf`
 
-### 6. Delete a file
+### 8. Delete a file
 ```bash
 make delete FILE=myfile.pdf
 ```
-### 7. List uploaded files
+
+### 9. List uploaded files
 ```bash
 make ls
 ```
 
-## Makefile Commands
+## Makefile Commands Reference
 
 ```bash
 make build          # Build all binaries
 make proto          # Regenerate protobuf files
-make run-master     # Start master server
-make run-master-primary MY_ADDR=<ip:port> SECONDARY_ADDR=<ip:port>   # Start primary master with failover
+make run-master     # Start master server (NO failover - backward compatible)
+make run-master-primary MY_ADDR=<ip:port> SECONDARY_ADDR=<ip:port>   # Start primary master WITH failover
 make run-master-secondary MY_ADDR=<ip:port>                           # Start secondary/standby master
-make run-chunk_server1 MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>]  # port 9001
-make run-chunk_server2 MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>]  # port 9002
-make run-chunk_server3 MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>]  # port 9003
-make set-master MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>] # Configure master addresses
-make upload FILE=<filename>    # Upload file
-make download FILE=<filename>  # Download file
-make delete FILE=<filename>    # Delete file
-make ls                        # List uploaded files
-make clean          # Remove binaries
+make run-chunk_server1 MASTER_ADDR=<ip:port> SECONDARY_MASTER_ADDR=<ip:port>  # REQUIRES secondary flag for failover
+make run-chunk_server2 MASTER_ADDR=<ip:port> SECONDARY_MASTER_ADDR=<ip:port>  # REQUIRES secondary flag for failover
+make run-chunk_server3 MASTER_ADDR=<ip:port> SECONDARY_MASTER_ADDR=<ip:port>  # REQUIRES secondary flag for failover
+make set-master MASTER_ADDR=<ip:port> SECONDARY_MASTER_ADDR=<ip:port>  # Configure client for failover (CRITICAL!)
+make upload FILE=<filename>    # Upload file (uses addresses from set-master)
+make download FILE=<filename>  # Download file (uses addresses from set-master)
+make delete FILE=<filename>    # Delete file (uses addresses from set-master)
+make ls                        # List uploaded files (uses addresses from set-master)
+make check-secondary SECONDARY_ADDR=<ip:port>  # Verify secondary master is reachable
+make diagnose-failover         # Check if chunkservers have secondary configured
+make clean          # Remove binaries and data
 make test           # Run tests
 ```
+
+**Important Notes:**
+- `make set-master` MUST be run once before using client commands (upload/download/delete/ls)
+- Without `SECONDARY_MASTER_ADDR` in `set-master`, failover is **DISABLED**
+- With `SECONDARY_MASTER_ADDR` in `set-master`, client **automatically failovers** if primary unreachable
 
 ## How It Works
 
@@ -175,76 +238,115 @@ Every binary accepts address arguments:
 
 ### Deployment Scenarios
 
-#### Scenario 1: Two Machines (Testing Setup - Mac + Kali VM)
+#### Scenario 1: Two Machines - Mac + Kali VM (Testing Setup)
 ```
-Machine 1 (Mac 192.168.1.10):
-  - Primary Master on :50051
-  - Chunkserver1, Chunkserver2
-  - Client
-  
-Machine 2 (Kali VM 192.168.1.20):
-  - Secondary Master on :50052
-  - Chunkserver3
+Machine 1 (Mac 192.168.1.87):
+  Terminal 1: Primary Master on :50051
+  Terminal 2: Chunkserver1 on :9001
+  Terminal 3: Chunkserver3 on :9003
+  Terminal 4: Client (configure with set-master, then upload/download)
+
+Machine 2 (Kali VM 192.168.1.66):
+  Terminal 1: Secondary Master on :50052
+  Terminal 2: Chunkserver2 on :9002
 ```
 
-**Setup commands:**
+**Exact Setup Commands:**
+
+**Kali VM - Terminal 1 (Start this FIRST):**
 ```bash
-# On Kali VM — start secondary FIRST
-$ make run-master-secondary MY_ADDR=192.168.1.20:50052
-
-# On Mac (terminal 1) — start primary
-$ make run-master-primary MY_ADDR=192.168.1.10:50051 SECONDARY_ADDR=192.168.1.20:50052
-
-# On Mac (terminal 2) — start chunkserver1
-$ make run-chunk_server1 MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
-
-# On Mac (terminal 3) — start chunkserver2
-$ make run-chunk_server2 MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
-
-# On Kali VM (terminal 2) — start chunkserver3
-$ make run-chunk_server3 MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
-
-# On Mac — configure and use client
-$ make set-master MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
-$ make upload FILE=myfile.pdf
+make run-master-secondary MY_ADDR=192.168.1.66:50052
 ```
+
+**Mac - Terminal 1:**
+```bash
+make run-master-primary MY_ADDR=192.168.1.87:50051 SECONDARY_ADDR=192.168.1.66:50052
+```
+
+**Mac - Terminal 2:**
+```bash
+make run-chunk_server1 MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052
+```
+
+**Mac - Terminal 3:**
+```bash
+make run-chunk_server3 MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052
+```
+
+**Kali VM - Terminal 2:**
+```bash
+make run-chunk_server2 MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052
+```
+
+**Mac - Terminal 4 (Client):**
+```bash
+# CRITICAL: Set master addresses for client failover
+make set-master MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052
+
+# Now all client commands use configured addresses and failover automatically
+make upload FILE=myfile.pdf
+make ls
+make download FILE=myfile.pdf
+```
+
+**Verify Setup:**
+- Each chunkserver should log: `CRITICAL: Master failover ENABLED`
+- Each chunkserver should show: `Heartbeat sent to master 192.168.1.87:50051`
+- Client should show: `✓✓✓ FAILOVER ENABLED ✓✓✓`
 
 #### Scenario 2: Three Machines (Production Demo)
 ```
-Machine 1 (Laptop A):   Primary Master + Chunkserver1
-Machine 2 (Laptop B):   Secondary Master + Chunkserver2
-Machine 3 (Laptop C):   Chunkserver3 + Client
+Machine 1 (Laptop A 192.168.1.87):     Primary Master + Chunkserver1
+Machine 2 (Laptop B 192.168.1.66):     Secondary Master + Chunkserver2  
+Machine 3 (Laptop C 192.168.1.100):    Chunkserver3 + Client
 ```
 
-**Setup commands (adjust IPs for your machines):**
+**Exact Setup Commands (change IPs to your machines):**
+
+**Laptop B - Terminal 1 (Secondary Master - START THIS FIRST):**
 ```bash
-# Laptop B — secondary master
-$ make run-master-secondary MY_ADDR=<LaptopB_IP>:50052
-
-# Laptop A — primary master
-$ make run-master-primary MY_ADDR=<LaptopA_IP>:50051 SECONDARY_ADDR=<LaptopB_IP>:50052
-
-# Laptop A — chunkserver1
-$ make run-chunk_server1 MASTER_ADDR=<LaptopA_IP>:50051 SECONDARY_MASTER_ADDR=<LaptopB_IP>:50052
-
-# Laptop B — chunkserver2
-$ make run-chunk_server2 MASTER_ADDR=<LaptopA_IP>:50051 SECONDARY_MASTER_ADDR=<LaptopB_IP>:50052
-
-# Laptop C — chunkserver3
-$ make run-chunk_server3 MASTER_ADDR=<LaptopA_IP>:50051 SECONDARY_MASTER_ADDR=<LaptopB_IP>:50052
-
-# Laptop C — client
-$ make set-master MASTER_ADDR=<LaptopA_IP>:50051 SECONDARY_MASTER_ADDR=<LaptopB_IP>:50052
-$ make upload FILE=myfile.pdf
+make run-master-secondary MY_ADDR=192.168.1.66:50052
 ```
 
-**Key Notes:**
-- Change `<LaptopA_IP>`, `<LaptopB_IP>` to actual machine IPs (use `ifconfig` or `ipconfig` to find them)
-- All machines must be on the same network (subnet)
-- **No code changes needed** — just pass different IPs to the `make` commands
-- Failover works the same way across any configuration
+**Laptop A - Terminal 1 (Primary Master):**
+```bash
+make run-master-primary MY_ADDR=192.168.1.87:50051 SECONDARY_ADDR=192.168.1.66:50052
+```
 
-### Master Failover
+**Laptop A - Terminal 2 (Chunkserver1):**
+```bash
+make run-chunk_server1 MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052
+```
+
+**Laptop B - Terminal 2 (Chunkserver2):**
+```bash
+make run-chunk_server2 MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052
+```
+
+**Laptop C - Terminal 1 (Chunkserver3):**
+```bash
+make run-chunk_server3 MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052
+```
+
+**Laptop C - Terminal 2 (Client - CRITICAL for failover):**
+```bash
+# Configure client for automatic failover
+make set-master MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052
+
+# All subsequent commands automatically failover if primary fails
+make upload FILE=myfile.pdf
+make ls
+make download FILE=myfile.pdf
+```
+
+**Key Points:**
+- All IP addresses are configurable - use your actual machine IPs
+- No code changes needed across different machines
+- Change only the IP addresses in the `make` commands
+- Secondary master MUST be started before primary master
+- **Client MUST run `make set-master` to enable failover**
+
+### Master Failover - Exact Setup & Testing
 
 The system supports automatic master failover with a primary/secondary pair.
 
@@ -253,70 +355,215 @@ The system supports automatic master failover with a primary/secondary pair.
 2. Primary sends a heartbeat to secondary every 3 seconds
 3. Secondary applies all WAL entries to keep its in-memory state in sync
 4. If secondary receives no heartbeat for 10 seconds, it promotes itself to primary
-5. After promotion, secondary starts accepting all client and chunk server RPCs directly
+5. Chunkservers auto-switch to secondary after 3 missed heartbeats (~15 seconds)
+6. Clients auto-failover when primary is unreachable (using addresses from `make set-master`)
 
-**How to run with failover (LAN example):**
+**Exact setup commands (Mac 192.168.1.87 + Kali 192.168.1.66):**
+
+**Step 1: Start Secondary Master FIRST (Kali VM)**
 ```bash
-# On the secondary machine (e.g. Kali at 192.168.1.20) — start this FIRST
-make run-master-secondary MY_ADDR=192.168.1.20:50052
+make run-master-secondary MY_ADDR=192.168.1.66:50052
+```
+Expected log: 
+```
+[Secondary Master] Waiting for heartbeats from primary...
+```
 
-# On the primary machine (e.g. Mac at 192.168.1.10)
-make run-master-primary MY_ADDR=192.168.1.10:50051 SECONDARY_ADDR=192.168.1.20:50052
+**Step 2: Start Primary Master (Mac)**
+```bash
+make run-master-primary MY_ADDR=192.168.1.87:50051 SECONDARY_ADDR=192.168.1.66:50052
+```
+Expected logs:
+```
+[Master] Starting primary master...
+[Master] My address: 192.168.1.87:50051
+[Master] Secondary master: 192.168.1.66:50052
+```
 
-# Chunk servers — pass BOTH master addresses so they auto-failover too
-make run-chunk_server1 MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
-make run-chunk_server2 MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
-make run-chunk_server3 MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
+**Step 3: Start All Chunkservers (with SECONDARY_MASTER_ADDR flag)**
 
-# Clients — point to primary and secondary so they auto-failover
-make set-master MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
+Mac Terminal 2:
+```bash
+make run-chunk_server1 MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052
+```
+
+Mac Terminal 3:
+```bash
+make run-chunk_server3 MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052
+```
+
+Kali VM Terminal 2:
+```bash
+make run-chunk_server2 MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052
+```
+
+Expected log (all chunkservers):
+```
+========== CRITICAL: Master failover ENABLED ==========
+Primary master: 192.168.1.87:50051
+Secondary master: 192.168.1.66:50052
+```
+
+**Step 4: Configure Client for Failover (CRITICAL!)**
+
+Mac Terminal 4:
+```bash
+make set-master MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052
+```
+
+Expected output:
+```
+✓ Primary master configured: 192.168.1.87:50051
+✓ Secondary master configured: 192.168.1.66:50052
+
+✓✓✓ FAILOVER ENABLED ✓✓✓
+    Primary: 192.168.1.87:50051
+    Secondary: 192.168.1.66:50052
+    Client will auto-failover if primary becomes unreachable.
+```
+
+**Step 5: Upload a File**
+```bash
 make upload FILE=myfile.pdf
 ```
 
-**To test failover:**
-1. Start secondary first, then primary
-2. Start chunk servers with both master addresses (see above)
-3. Upload a file
-4. Kill the primary (`Ctrl+C`)
-5. Within 10 seconds the secondary prints: `>>> THIS NODE IS NOW THE ACTIVE PRIMARY MASTER <<<`
-6. Within 15 seconds each chunk server prints: `[CHUNKSERVER] FAILOVER: switching active master from <primary> to <secondary>`
-7. **Client remains connected** — subsequent commands (like `make ls`) will auto-detect the primary failure and retry against the secondary address automatically.
+**Step 6: Test Failover - Kill Primary Master**
 
-**Note:** Start the secondary BEFORE the primary, so it is ready to receive heartbeats and WAL entries immediately.
+In a new terminal (NOT the one running primary):
+```bash
+pkill -f "bin/master"
+```
+
+**Expected Timeline:**
+- **T+5s**: Chunkservers log `failed (1/3)`
+- **T+10s**: Chunkservers log `failed (2/3)`
+- **T+15s**: Chunkservers log `FAILOVER: switching active master from 192.168.1.87:50051 to 192.168.1.66:50052`
+- **T+16s**: Chunkservers log `Post-failover heartbeat to 192.168.1.66:50052 succeeded`
+- **Secondary Master Terminal**: Logs `>>> THIS NODE IS NOW THE ACTIVE PRIMARY MASTER <<<`
+
+**Step 7: Verify Client Failover**
+```bash
+make ls
+```
+Should succeed (client auto-detects primary failure and retries on secondary configured in step 4)
+
+**Troubleshooting Failover Issues:**
+
+| Symptom | Cause | Solution |
+|---------|-------|----------|
+| Client operations fail after `set-master` | Forgot to set SECONDARY_MASTER_ADDR | Run `make set-master` with both PRIMARY and SECONDARY addresses |
+| Chunkservers log "NO SECONDARY MASTER" | Missing `-secondary-master` flag | Restart with `SECONDARY_MASTER_ADDR=192.168.1.66:50052` |
+| Failover doesn't happen | Primary not actually killed (Ctrl+C kills make, not binary) | Use `pkill -f "bin/master"` instead |
+| Client can't failover after killling primary | Client doesn't have secondary address from `set-master` | Must run `make set-master` with SECONDARY_MASTER_ADDR before any operations |
+| Logs keep showing successful heartbeats | Primary still running on different terminal | Verify with `ps aux \| grep "bin/master"` |
 
 ### Client Auto-Failover
 
-Clients use a "Retry-on-Failure" strategy to handle master crashes:
+Clients automatically failover to secondary master when primary is unreachable.
 
-- When you run `make set-master MASTER_ADDR=192.168.1.71:50051 SECONDARY_MASTER_ADDR=192.168.1.75:50052`, both addresses are stored.
-- On every command (`upload`, `ls`, etc.), the client first attempts to connect to the **Primary** master (192.168.1.71).
-- It performs a lightweight connectivity probe (`GetActiveMaster`).
-- If the probe fails (unreachable/timed out), it logs the failure and automatically retries the operation against the **Secondary** address (192.168.1.75).
-- This ensures seamless operation even if the primary master is completely down, without needing to re-point the client.
+**How it works:**
+1. Client reads master addresses from `.master_addr` and `.secondary_master_addr` files (created by `make set-master`)
+2. On first connection attempt, client probes primary master with 2-second timeout
+3. If primary is unreachable, client automatically switches to secondary master
+4. All subsequent commands use the same master addresses from the files
+
+**To enable client failover - REQUIRED step:**
+
+```bash
+# Configure client with both primary and secondary master addresses
+make set-master MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052
+```
+
+This creates two files:
+- `.master_addr` - contains primary master address (192.168.1.87:50051)
+- `.secondary_master_addr` - contains secondary master address (192.168.1.66:50052)
+
+**Example - Client Operation:**
+
+```bash
+# First, configure client (creates address files)
+make set-master MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052
+
+# Now all commands automatically use configured addresses and failover
+make upload FILE=myfile.pdf
+make ls
+make download FILE=myfile.pdf
+```
+
+**Failover Behavior:**
 
 | Scenario | Behavior |
-204: |---|---|
-205: | No `SECONDARY_MASTER_ADDR` | Client fails immediately if primary is down (backward compatible) |
-206: | Primary alive | Client connects to primary; zero overhead |
-207: | Primary fails | Client logs failover and proceeds with secondary seamlessly |
+|----------|----------|
+| No `make set-master` run | Client fails immediately (error reading .master_addr file) |
+| `set-master` run without SECONDARY_MASTER_ADDR | No failover - if primary fails, client operations fail |
+| `set-master` run WITH SECONDARY_MASTER_ADDR | ✅ Client auto-failovers if primary unreachable (2-second timeout) |
+| Primary alive | Client uses primary; zero overhead |
+| Primary fails or slow | Client waits 2 seconds, logs failure, retries with secondary (transparent failover) |
+| Secondary becomes new primary | Operations continue seamlessly with auto-promoted secondary |
+
+**Important:** Without running `make set-master MASTER_ADDR=<primary> SECONDARY_MASTER_ADDR=<secondary>`, client failover is **NOT enabled** and client operations will fail if primary master is unavailable.
 
 ### Chunk Server Auto-Failover
 
-Chunk servers use a `MasterTracker` to monitor the active master:
+Chunkservers automatically monitor the active master and failover when primary is unreachable.
 
-- Each chunk server sends a heartbeat to its **active master** every 5 seconds
-- If **3 consecutive heartbeats fail** (~15 seconds), it automatically switches
-  `activeAddr` to the secondary master address
-- An immediate post-failover heartbeat is sent to re-register with the secondary
-- All subsequent heartbeats and inventory reports go to the secondary
-- No chunk server restart is required
+**How it works:**
+1. Each chunkserver sends heartbeat to active master every 5 seconds
+2. If 3 consecutive heartbeats fail (~15 seconds), it switches to secondary master
+3. An immediate post-failover heartbeat re-registers chunkserver with secondary
+4. All subsequent heartbeats and operations go to secondary automatically
+5. No chunkserver restart is required
 
-| Scenario | Behaviour |
+**CRITICAL: The `-secondary-master` flag is REQUIRED for failover**
+
+❌ **Without secondary flag (No failover):**
+```bash
+make run-chunk_server1 MASTER_ADDR=192.168.1.87:50051
+# Log: "NO SECONDARY MASTER" - failover DISABLED
+# If primary dies, chunkserver keeps retrying primary indefinitely
+```
+
+✅ **With secondary flag (Failover enabled):**
+```bash
+make run-chunk_server1 MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052
+# Log: "CRITICAL: Master failover ENABLED"
+# If primary dies, failover happens automatically in ~15 seconds
+```
+
+**Expected Logs When Failover Happens:**
+
+```
+T+0s: Primary master killed
+T+5s: CHUNKSERVER: Heartbeat to 192.168.1.87:50051 failed (1/3 consecutive failures)
+T+10s: CHUNKSERVER: Heartbeat to 192.168.1.87:50051 failed (2/3 consecutive failures)
+T+15s: CHUNKSERVER: Heartbeat to 192.168.1.87:50051 failed (3/3 consecutive failures)
+T+15s: CHUNKSERVER: FAILOVER: switching active master from 192.168.1.87:50051 to 192.168.1.66:50052
+T+15s: [CHUNKSERVER] FAILOVER: switching active master from 192.168.1.87:50051 to 192.168.1.66:50052
+T+16s: CHUNKSERVER: Post-failover heartbeat to 192.168.1.66:50052 succeeded
+T+20s+: CHUNKSERVER: Heartbeat sent to master 192.168.1.66:50052 (every 5 seconds)
+```
+
+**Failover Behavior Table:**
+
+| Scenario | Behavior |
 |---|---|
-| No `-secondary-master` flag | Heartbeats keep retrying primary indefinitely (backward compatible) |
-| Primary alive | Heartbeats go to primary; counter stays at 0 |
-| Primary fails (3 misses) | Switches to secondary, sends immediate registration heartbeat |
-| Secondary becomes new primary | Operations continue seamlessly |
+| No `-secondary-master` flag | Heartbeats retry primary indefinitely (backward compatible) |
+| Primary alive | Heartbeats succeed to primary every 5 seconds |
+| Primary fails (3+ misses) | Switches to secondary, sends immediate re-registration heartbeat |
+| Secondary becomes primary | All operations continue seamlessly on secondary |
+| Works on any machine | Failover works identically on Mac, Kali, laptop, or any physical location |
+
+**Verification:** Check chunkserver logs for failover configuration:
+```bash
+tail log_files/chunkserver.log | grep -i "failover\|critical\|warning"
+```
+
+Should show:
+```
+========== CRITICAL: Master failover ENABLED ==========
+Primary master: 192.168.1.87:50051
+Secondary master: 192.168.1.66:50052
+```
 
 ## File Structure
 

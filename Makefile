@@ -97,18 +97,32 @@ ls:
 test:
 	@go test ./...
 
-# Set the master address for this client workspace
-# Usage (from client workspace): make set-master MASTER_ADDR=192.168.1.10:50051
+# Set the master address for client (creates .master_addr and .secondary_master_addr files)
+# Usage: make set-master MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052
+# CRITICAL: SECONDARY_MASTER_ADDR is necessary for automatic failover to work
 .PHONY: set-master
 set-master:
 	@if [ -z "$(MASTER_ADDR)" ]; then \
-		echo "Error: MASTER_ADDR not specified. Usage: make set-master MASTER_ADDR=host:port [SECONDARY_MASTER_ADDR=host:port]"; exit 1; \
+		echo "Error: MASTER_ADDR not specified."; \
+		echo "Usage: make set-master MASTER_ADDR=192.168.1.87:50051 SECONDARY_MASTER_ADDR=192.168.1.66:50052"; exit 1; \
 	fi
 	@echo "$(MASTER_ADDR)" > .master_addr
-	@echo "Wrote .master_addr with $(MASTER_ADDR)"
+	@echo "✓ Primary master configured: $(MASTER_ADDR)"
 	@if [ -n "$(SECONDARY_MASTER_ADDR)" ]; then \
 		echo "$(SECONDARY_MASTER_ADDR)" > .secondary_master_addr; \
-		echo "Wrote .secondary_master_addr with $(SECONDARY_MASTER_ADDR)"; \
+		echo "✓ Secondary master configured: $(SECONDARY_MASTER_ADDR)"; \
+		echo ""; \
+		echo "✓✓✓ FAILOVER ENABLED ✓✓✓"; \
+		echo "    Primary: $(MASTER_ADDR)"; \
+		echo "    Secondary: $(SECONDARY_MASTER_ADDR)"; \
+		echo "    Client will auto-failover if primary becomes unreachable."; \
+	else \
+		echo "⚠ WARNING: No secondary master configured."; \
+		echo ""; \
+		echo "Failover is DISABLED. If primary master fails, client operations will fail."; \
+		echo ""; \
+		echo "To enable failover, run:"; \
+		echo "  make set-master MASTER_ADDR=$(MASTER_ADDR) SECONDARY_MASTER_ADDR=<secondary_ip:port>"; \
 	fi
 
 .PHONY: set_master
@@ -392,4 +406,37 @@ help:
 	@echo "=== Master Failover ==="
 	@echo "  make run-master-primary MY_ADDR=<ip:port> SECONDARY_ADDR=<ip:port>"
 	@echo "  make run-master-secondary MY_ADDR=<ip:port>"
-	@echo "  make run-chunk_server1 MASTER_ADDR=<primary:port> SECONDARY_MASTER_ADDR=<secondary:port>"
+	@echo ""
+	@echo "=== Failover Testing Help ==="
+	@echo "  make check-secondary       - Verify secondary master configuration"
+	@echo "  make diagnose-failover     - Check if chunkservers have secondary configured"
+	@echo ""
+	@echo "See FAILOVER_TROUBLESHOOTING.md for detailed failover setup and verification steps"
+
+# ========== Failover Diagnostic Commands ==========
+
+# Check if secondary master is running and accessible
+check-secondary:
+	@if [ -z "$(SECONDARY_ADDR)" ]; then \
+		echo "Usage: make check-secondary SECONDARY_ADDR=192.168.1.66:50052"; exit 1; \
+	fi
+	@echo "Checking secondary master at $(SECONDARY_ADDR)..."
+	@if nc -zv $(SECONDARY_ADDR) 2>&1 | grep -q succeeded; then \
+		echo "✓ Secondary master IS reachable on $(SECONDARY_ADDR)"; \
+	else \
+		echo "✗ Secondary master NOT reachable on $(SECONDARY_ADDR)"; \
+		echo "  Verify: 1) Master running  2) Correct IP/port  3) Network connectivity"; \
+	fi
+
+# Diagnose failover configuration in running chunkservers
+diagnose-failover:
+	@echo "Checking chunkserver logs for secondary master configuration..."
+	@echo ""
+	@echo "Chunkserver1 (port 9001):"
+	@grep -i "secondary\|failover" log_files/chunkserver.log | tail -1 | grep -q "CRITICAL" && echo "  ✓ Secondary configured" || echo "  ✗ NO secondary configured"
+	@echo ""
+	@echo "Full config from latest logs:"
+	@grep -A 3 "CRITICAL\|WARNING" log_files/chunkserver.log | tail -8
+	@echo ""
+	@echo "To fix: Restart chunkservers with -secondary-master flag"
+	@echo "  make run-chunk_server1 MASTER_ADDR=<primary> SECONDARY_MASTER_ADDR=<secondary>"

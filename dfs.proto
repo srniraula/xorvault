@@ -206,6 +206,7 @@ message GetActiveMasterRequest  {}
 message GetActiveMasterResponse {
   string active_master_addr = 1;
   bool   is_primary         = 2;
+  string secondary_master   = 3; // Secondary master address for client failover
 }
 
 // Add GetActiveMaster to the existing MasterServer service by replacing it:

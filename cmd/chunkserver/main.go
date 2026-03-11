@@ -42,9 +42,17 @@ func main() {
 	tracker := NewMasterTracker(primaryAddr, *secondaryMaster)
 
 	if *secondaryMaster != "" {
-		chunkLogger.Printf("Master failover enabled: primary=%s, secondary=%s", primaryAddr, *secondaryMaster)
+		chunkLogger.Printf("========== CRITICAL: Master failover ENABLED ==========")
+		chunkLogger.Printf("Primary master: %s", primaryAddr)
+		chunkLogger.Printf("Secondary master: %s", *secondaryMaster)
+		chunkLogger.Printf("Failover trigger: 3 consecutive heartbeat failures (~15 seconds)")
+		chunkLogger.Printf("====================================================")
 	} else {
-		chunkLogger.Printf("No secondary master configured — failover disabled (primary=%s)", primaryAddr)
+		chunkLogger.Printf("========== WARNING: NO SECONDARY MASTER ==========")
+		chunkLogger.Printf("Primary master: %s", primaryAddr)
+		chunkLogger.Printf("Secondary master: NOT CONFIGURED")
+		chunkLogger.Printf("Failover: DISABLED - check your -secondary-master flag!")
+		chunkLogger.Printf("================================================")
 	}
 
 	// Start gRPC server

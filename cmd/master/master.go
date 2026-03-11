@@ -508,12 +508,14 @@ func (m *MasterServer) ListFiles(ctx context.Context, req *dfspb.ListFilesReques
 
 // GetActiveMaster lets any node (client, chunk server) discover the active master.
 // Returns this node's own address and whether it is currently the primary.
+// Also returns the secondary master address for automatic client failover.
 // Both primary and standby implement this identically — the caller uses
 // IsPrimary to know if it needs to try the other address.
 func (m *MasterServer) GetActiveMaster(ctx context.Context, req *dfspb.GetActiveMasterRequest) (*dfspb.GetActiveMasterResponse, error) {
 	return &dfspb.GetActiveMasterResponse{
 		ActiveMasterAddr: m.myAddr,
 		IsPrimary:        m.isPrimary,
+		SecondaryMaster:  m.secondaryAddr,
 	}, nil
 }
 
