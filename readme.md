@@ -151,6 +151,99 @@ make test           # Run tests
 
 On restart, master recovers all metadata (files, stripes, clients, chunks).
 
+## Flexible Deployment Architecture
+
+**Key Design Principle**: All components (master, chunkserver, client) accept **IP addresses via command-line flags or environment variables**. This allows deployment on any number of machines with any configuration.
+
+### Command-Line Arguments
+
+Every binary accepts address arguments:
+
+**Master servers:**
+- `-addr <IP:PORT>`: Which address/port to listen on (default: `0.0.0.0:50051`)
+- `-secondary <IP:PORT>`: Address of secondary master for replication (optional)
+
+**Chunk servers:**
+- `-port <PORT>`: Which port to listen on (default: `9001`)
+- `-storage <PATH>`: Where to store chunks (default: `chunks`)
+- `-master <IP:PORT>`: Primary master address (required)
+- `-secondary-master <IP:PORT>`: Secondary master for failover (optional)
+
+**Clients:**
+- Read from `.master_addr` file or `MASTER_ADDR` environment variable
+- Read from `.secondary_master_addr` file or `SECONDARY_MASTER_ADDR` environment variable
+
+### Deployment Scenarios
+
+#### Scenario 1: Two Machines (Testing Setup - Mac + Kali VM)
+```
+Machine 1 (Mac 192.168.1.10):
+  - Primary Master on :50051
+  - Chunkserver1, Chunkserver2
+  - Client
+  
+Machine 2 (Kali VM 192.168.1.20):
+  - Secondary Master on :50052
+  - Chunkserver3
+```
+
+**Setup commands:**
+```bash
+# On Kali VM — start secondary FIRST
+$ make run-master-secondary MY_ADDR=192.168.1.20:50052
+
+# On Mac (terminal 1) — start primary
+$ make run-master-primary MY_ADDR=192.168.1.10:50051 SECONDARY_ADDR=192.168.1.20:50052
+
+# On Mac (terminal 2) — start chunkserver1
+$ make run-chunk_server1 MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
+
+# On Mac (terminal 3) — start chunkserver2
+$ make run-chunk_server2 MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
+
+# On Kali VM (terminal 2) — start chunkserver3
+$ make run-chunk_server3 MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
+
+# On Mac — configure and use client
+$ make set-master MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
+$ make upload FILE=myfile.pdf
+```
+
+#### Scenario 2: Three Machines (Production Demo)
+```
+Machine 1 (Laptop A):   Primary Master + Chunkserver1
+Machine 2 (Laptop B):   Secondary Master + Chunkserver2
+Machine 3 (Laptop C):   Chunkserver3 + Client
+```
+
+**Setup commands (adjust IPs for your machines):**
+```bash
+# Laptop B — secondary master
+$ make run-master-secondary MY_ADDR=<LaptopB_IP>:50052
+
+# Laptop A — primary master
+$ make run-master-primary MY_ADDR=<LaptopA_IP>:50051 SECONDARY_ADDR=<LaptopB_IP>:50052
+
+# Laptop A — chunkserver1
+$ make run-chunk_server1 MASTER_ADDR=<LaptopA_IP>:50051 SECONDARY_MASTER_ADDR=<LaptopB_IP>:50052
+
+# Laptop B — chunkserver2
+$ make run-chunk_server2 MASTER_ADDR=<LaptopA_IP>:50051 SECONDARY_MASTER_ADDR=<LaptopB_IP>:50052
+
+# Laptop C — chunkserver3
+$ make run-chunk_server3 MASTER_ADDR=<LaptopA_IP>:50051 SECONDARY_MASTER_ADDR=<LaptopB_IP>:50052
+
+# Laptop C — client
+$ make set-master MASTER_ADDR=<LaptopA_IP>:50051 SECONDARY_MASTER_ADDR=<LaptopB_IP>:50052
+$ make upload FILE=myfile.pdf
+```
+
+**Key Notes:**
+- Change `<LaptopA_IP>`, `<LaptopB_IP>` to actual machine IPs (use `ifconfig` or `ipconfig` to find them)
+- All machines must be on the same network (subnet)
+- **No code changes needed** — just pass different IPs to the `make` commands
+- Failover works the same way across any configuration
+
 ### Master Failover
 
 The system supports automatic master failover with a primary/secondary pair.

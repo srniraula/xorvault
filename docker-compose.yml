@@ -3,51 +3,20 @@
 version: '3.8'
 
 # Services = containers that run together
+# NOTE: For flexible deployments, master servers are configured via environment variables
+# You can run everything on Docker OR on actual machines
+# 
+# STANDALONE DEPLOYMENT (Mac + Kali VM):
+#   1. Kali VM: make run-master-secondary MY_ADDR=192.168.1.20:50052
+#   2. Mac (primary): make run-master-primary MY_ADDR=192.168.1.10:50051 SECONDARY_ADDR=192.168.1.20:50052
+#   3. Any machine: make run-chunk_server1 MASTER_ADDR=192.168.1.10:50051 SECONDARY_MASTER_ADDR=192.168.1.20:50052
+#
+# DOCKER DEPLOYMENT (set env vars before running):
+#   export PRIMARY_MASTER=192.168.1.10:50051
+#   export SECONDARY_MASTER=192.168.1.20:50052
+#   docker-compose up
+#
 services:
-  # Master server container
-  master:
-    # Build image from our Dockerfile
-    build:
-      context: .        # Look for Dockerfile in current directory
-      dockerfile: Dockerfile
-    
-    # Container name (easier to reference than auto-generated names)
-    container_name: dfs-master
-    
-    # Hostname inside the Docker network
-    hostname: master
-
-    # Command to run when container starts
-    command: sh -c "chown -R dfs:dfs /data && exec master"
-    
-    # Port mapping: host:container
-    # Access master at localhost:50051 from your host machine
-    ports:
-      - "50051:50051"
-    
-    # Named volume for persistent data
-    # Even if container is deleted, data survives
-    volumes:
-      - ./master-data:/data
-    
-    # Connect to custom network
-    networks:
-      - dfs-network
-    
-    # Environment variables
-    environment:
-      - DFS_ROLE=master
-    
-    # Restart policy: always restart if it crashes
-    restart: unless-stopped
-    
-    # Health check to monitor if master is running properly
-    healthcheck:
-      test: ["CMD", "sh", "-c", "netstat -an | grep 50051 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
   # Chunk Server 1
   chunkserver1:
     build:
@@ -57,8 +26,8 @@ services:
     container_name: dfs-chunkserver1
     hostname: chunkserver1
     
-    # Pass command-line arguments
-    command: sh -c "chown -R dfs:dfs /data && exec chunkserver -port 9001 -storage /data/"
+    # Use environment variables for flexibility across deployments
+    command: sh -c "chown -R dfs:dfs /data && exec chunkserver -port 9001 -storage /data/ -master ${PRIMARY_MASTER:-master-primary:50051} -secondary-master ${SECONDARY_MASTER:-master-secondary:50052}"
     
     ports:
       - "9001:9001"
@@ -72,12 +41,8 @@ services:
     environment:
       - DFS_ROLE=chunkserver
       - CHUNK_SERVER_ID=1
-      - MASTER_ADDR=master:50051
-    
-    # Wait for master to be healthy before starting
-    depends_on:
-      master:
-        condition: service_healthy
+      - MASTER_ADDR=${PRIMARY_MASTER:-master-primary:50051}
+      - SECONDARY_MASTER_ADDR=${SECONDARY_MASTER:-master-secondary:50052}
     
     restart: unless-stopped
 
@@ -90,8 +55,8 @@ services:
     container_name: dfs-chunkserver2
     hostname: chunkserver2
     
-    
-    command: sh -c "chown -R dfs:dfs /data && exec chunkserver -port 9002 -storage /data/"
+    # Use environment variables for flexibility across deployments
+    command: sh -c "chown -R dfs:dfs /data && exec chunkserver -port 9002 -storage /data/ -master ${PRIMARY_MASTER:-master-primary:50051} -secondary-master ${SECONDARY_MASTER:-master-secondary:50052}"
     
     ports:
       - "9002:9002"
@@ -105,11 +70,8 @@ services:
     environment:
       - DFS_ROLE=chunkserver
       - CHUNK_SERVER_ID=2
-      - MASTER_ADDR=master:50051
-    
-    depends_on:
-      master:
-        condition: service_healthy
+      - MASTER_ADDR=${PRIMARY_MASTER:-master-primary:50051}
+      - SECONDARY_MASTER_ADDR=${SECONDARY_MASTER:-master-secondary:50052}
     
     restart: unless-stopped
 
@@ -122,7 +84,8 @@ services:
     container_name: dfs-chunkserver3
     hostname: chunkserver3
     
-    command: sh -c "chown -R dfs:dfs /data && exec chunkserver -port 9003 -storage /data/"
+    # Use environment variables for flexibility across deployments
+    command: sh -c "chown -R dfs:dfs /data && exec chunkserver -port 9003 -storage /data/ -master ${PRIMARY_MASTER:-master-primary:50051} -secondary-master ${SECONDARY_MASTER:-master-secondary:50052}"
     
     ports:
       - "9003:9003"
@@ -136,11 +99,8 @@ services:
     environment:
       - DFS_ROLE=chunkserver
       - CHUNK_SERVER_ID=3
-      - MASTER_ADDR=master:50051
-    
-    depends_on:
-      master:
-        condition: service_healthy
+      - MASTER_ADDR=${PRIMARY_MASTER:-master-primary:50051}
+      - SECONDARY_MASTER_ADDR=${SECONDARY_MASTER:-master-secondary:50052}
     
     restart: unless-stopped
 
@@ -170,12 +130,11 @@ services:
     
     environment:
       - DFS_ROLE=client
-      - MASTER_ADDR=master:50051
+      - MASTER_ADDR=${PRIMARY_MASTER:-master-primary:50051}
+      - SECONDARY_MASTER_ADDR=${SECONDARY_MASTER:-master-secondary:50052}
     
-    # Wait for cluster to be ready
+    # Wait for chunk servers to be ready
     depends_on:
-      master:
-        condition: service_healthy
       chunkserver1:
         condition: service_started
       chunkserver2:
