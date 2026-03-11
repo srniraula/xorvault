@@ -91,6 +91,9 @@ func main() {
 //  3. For each chunk: ask master where to store it, then send to chunk servers
 //  4. Uses chain replication - sends to primary, which forwards to replicas
 func upload(localPath string, myID int64) {
+	metrics := NewMetricsCollector()
+	metrics.RecordOperationStart()
+	startTime := time.Now()
 	// Get file info to determine file size
 	fileInfo, err := os.Stat(localPath)
 	if err != nil {
@@ -106,18 +109,23 @@ func upload(localPath string, myID int64) {
 	filename := filepath.Base(localPath)
 
 	// Connect to master server (with auto-failover)
+	masterConnStart := time.Now()
 	conn, master, err := connectToMaster()
+	masterConnDuration := time.Since(masterConnStart)
+	metrics.RecordGrpcConnection(masterConnDuration)
 	if err != nil {
 		log.Fatal("Could not connect to any master:", err)
 	}
 	defer conn.Close()
 
 	// Step 1: Register file with master and receive chunk allocation plan
+	masterCallStart := time.Now()
 	createResp, err := master.CreateFile(context.Background(), &dfspb.CreateFileRequest{
 		Filename:  filename, // Use just filename, not full path
 		TotalSize: fileSize,
 		ClientId:  myID,
 	})
+	metrics.RecordMasterCallLatency(time.Since(masterCallStart))
 	if err != nil {
 		// Check if it's an "already uploaded" error and print it cleanly
 		if strings.Contains(err.Error(), "already uploaded by you") {
@@ -126,6 +134,7 @@ func upload(localPath string, myID int64) {
 			fmt.Printf("Error: file %s is already uploaded by you\n", filename)
 			os.Exit(1)
 		}
+		metrics.RecordError("CreateFile failed: " + err.Error())
 		log.Fatal("CreateFile failed:", err)
 	}
 	log.Printf("File registered with client ID: %d", createResp.ClientId)
@@ -160,6 +169,8 @@ func upload(localPath string, myID int64) {
 	// Initialize ACK queue - will be populated as stripes are processed
 	ackQueue := NewAckQueue()
 
+	// Pass metrics to upload function
+
 	// Check for producer errors (non-blocking)
 	select {
 	case err := <-errChan:
@@ -172,8 +183,9 @@ func upload(localPath string, myID int64) {
 
 	// Start uploading stripes as they arrive from channel
 	// This blocks until all stripes are consumed and uploaded
-	successfulChunks, err := uploadStripesStreaming(stripeChan, ackQueue, createResp.ClientId)
+	successfulChunks, err := uploadStripesStreamingWithMetrics(stripeChan, ackQueue, createResp.ClientId, metrics)
 	if err != nil {
+		metrics.RecordError("Streaming upload failed: " + err.Error())
 		log.Fatal("Streaming upload failed:", err)
 	}
 
@@ -181,6 +193,7 @@ func upload(localPath string, myID int64) {
 	select {
 	case err := <-errChan:
 		if err != nil {
+			metrics.RecordError("File streaming error: " + err.Error())
 			log.Fatal("Error during file streaming:", err)
 		}
 	default:
@@ -191,6 +204,7 @@ func upload(localPath string, myID int64) {
 	if !ackQueue.IsEmpty() {
 		pendingChunks := ackQueue.GetPending()
 		log.Printf("Warning: %d chunks failed to upload: %v", len(pendingChunks), pendingChunks)
+		metrics.RecordError(fmt.Sprintf("Upload incomplete - %d chunks unconfirmed", len(pendingChunks)))
 		log.Fatal("Upload incomplete - not all chunks were confirmed")
 	}
 
@@ -202,6 +216,7 @@ func upload(localPath string, myID int64) {
 		ChunkIds: successfulChunks,
 	})
 	if err != nil {
+		metrics.RecordError("ConfirmWrite failed: " + err.Error())
 		log.Fatal("ConfirmWrite failed:", err)
 	}
 
@@ -211,6 +226,38 @@ func upload(localPath string, myID int64) {
 		log.Printf("Upload completed but confirmation failed")
 	}
 
+	metrics.RecordOperationEnd()
+
+	// Record upload metrics
+	metrics.TotalBytesUploaded = fileSize
+	metrics.TotalChunksUploaded = totalChunks
+
+	duration := time.Since(startTime)
+	latencySec := duration.Seconds()
+	if latencySec == 0 {
+		latencySec = 0.001
+	}
+	bandwidthMBps := (float64(fileSize) / (1024 * 1024)) / latencySec
+	throughput := float64(totalChunks) / latencySec
+
+	fmt.Println("\n=== METRICS (Legacy Format) ===")
+	fmt.Printf("Operation:  Upload\n")
+	fmt.Printf("File Size:  %.2f MB\n", float64(fileSize)/(1024*1024))
+	fmt.Printf("Latency:    %.2f ms (%.3f seconds)\n", float64(duration.Milliseconds()), latencySec)
+	fmt.Printf("Throughput: %.2f chunks/sec\n", throughput)
+	fmt.Printf("Bandwidth:  %.2f MB/sec\n", bandwidthMBps)
+	fmt.Println("===========================")
+
+	// Print comprehensive metrics report
+	fmt.Println("")
+	metrics.PrintReport("UPLOAD", filename, fileSize)
+
+	// Also save JSON metrics to file
+	jsonMetrics := metrics.ExportJSON()
+	metricsFile := fmt.Sprintf("metrics_upload_%s.json", strings.ReplaceAll(time.Now().Format("2006-01-02_15:04:05"), ":", "-"))
+	if err := os.WriteFile(metricsFile, []byte(jsonMetrics), 0644); err == nil {
+		log.Printf("Metrics exported to: %s", metricsFile)
+	}
 }
 
 // download retrieves a file from the DFS using streaming with parity recovery
@@ -220,22 +267,32 @@ func upload(localPath string, myID int64) {
 //  3. Write stripe data to disk incrementally (streaming)
 //  4. Save with "downloaded_" prefix
 func download(filename string, myID int64) {
+	metrics := NewMetricsCollector()
+	metrics.RecordOperationStart()
+	startTime := time.Now()
 	// Connect to master server (with auto-failover)
+	masterConnStart := time.Now()
 	conn, master, err := connectToMaster()
+	masterConnDuration := time.Since(masterConnStart)
+	metrics.RecordGrpcConnection(masterConnDuration)
 	if err != nil {
 		log.Fatal("Could not connect to any master:", err)
 	}
 	defer conn.Close()
 
 	// Step 1: Get file metadata from master (with authentication)
+	masterCallStart := time.Now()
 	meta, err := master.GetFileMetadata(context.Background(), &dfspb.GetFileMetadataRequest{
 		Filename: filename,
 		ClientId: myID,
 	})
+	metrics.RecordMasterCallLatency(time.Since(masterCallStart))
 	if err != nil {
+		metrics.RecordError("File not found or access denied")
 		log.Fatal("File not found")
 	}
 	if len(meta.Stripes) == 0 {
+		metrics.RecordError("File not found or access denied")
 		log.Fatal("File not found or access denied")
 	}
 
@@ -248,6 +305,7 @@ func download(filename string, myID int64) {
 	outputFile := "downloaded_" + filename
 	opfile, err := os.Create(outputFile)
 	if err != nil {
+		metrics.RecordError("Failed to create output file: " + err.Error())
 		log.Fatal("Failed to create output file:", err)
 	}
 	defer opfile.Close()
@@ -307,9 +365,42 @@ func download(filename string, myID int64) {
 	// Step 3: Verify and finalize
 	if bytesWritten != meta.FileSize {
 		log.Printf("Warning: File size mismatch (expected %d, wrote %d)", meta.FileSize, bytesWritten)
+		metrics.RecordError(fmt.Sprintf("File size mismatch: expected %d, wrote %d", meta.FileSize, bytesWritten))
 	}
 
 	log.Printf("Download complete: %s (%d stripes, %d bytes)", outputFile, successfulStripes, bytesWritten)
+
+	metrics.RecordOperationEnd()
+	metrics.TotalBytesDownloaded = bytesWritten
+	metrics.TotalChunksDownloaded = successfulStripes * 3
+
+	duration := time.Since(startTime)
+	latencySec := duration.Seconds()
+	if latencySec == 0 {
+		latencySec = 0.001
+	}
+	bandwidthMBps := (float64(bytesWritten) / (1024 * 1024)) / latencySec
+	// Each stripe downloads 3 chunks (2 data + 1 parity)
+	throughput := float64(successfulStripes*3) / latencySec
+
+	fmt.Println("\n=== METRICS (Legacy Format) ===")
+	fmt.Printf("Operation:  Download\n")
+	fmt.Printf("File Size:  %.2f MB\n", float64(bytesWritten)/(1024*1024))
+	fmt.Printf("Latency:    %.2f ms (%.3f seconds)\n", float64(duration.Milliseconds()), latencySec)
+	fmt.Printf("Throughput: %.2f chunks/sec (including parity chunks)\n", throughput)
+	fmt.Printf("Bandwidth:  %.2f MB/sec (payload data)\n", bandwidthMBps)
+	fmt.Println("===========================")
+
+	// Print comprehensive metrics report
+	fmt.Println("")
+	metrics.PrintReport("DOWNLOAD", filename, bytesWritten)
+
+	// Also save JSON metrics to file
+	jsonMetrics := metrics.ExportJSON()
+	metricsFile := fmt.Sprintf("metrics_download_%s.json", strings.ReplaceAll(time.Now().Format("2006-01-02_15:04:05"), ":", "-"))
+	if err := os.WriteFile(metricsFile, []byte(jsonMetrics), 0644); err == nil {
+		log.Printf("Metrics exported to: %s", metricsFile)
+	}
 }
 
 // deleteFile removes a file from the DFS
@@ -318,67 +409,142 @@ func download(filename string, myID int64) {
 //  2. Send DeleteFile RPC with filename and client ID
 //  3. Master verifies ownership and deletes all chunks from chunk servers
 func deleteFile(filename string, myID int64) {
+	metrics := NewMetricsCollector()
+	metrics.RecordOperationStart()
+	startTime := time.Now()
 	if myID == 0 {
+		metrics.RecordError("Cannot delete file: no client ID")
 		log.Fatal("Cannot delete file: no client ID. Please upload a file first.")
 	}
 
 	log.Printf("Deleting file: %s (client ID: %d)", filename, myID)
 
 	// Connect to master server (with auto-failover)
+	masterConnStart := time.Now()
 	conn, masterClient, err := connectToMaster()
+	metrics.RecordGrpcConnection(time.Since(masterConnStart))
 	if err != nil {
+		metrics.RecordError("Failed to connect to master: " + err.Error())
 		log.Fatal("Could not connect to any master:", err)
 	}
 	defer conn.Close()
 
 	// Send delete request
+	masterCallStart := time.Now()
 	resp, err := masterClient.DeleteFile(context.Background(), &dfspb.DeleteFileRequest{
 		Filename: filename,
 		ClientId: myID,
 	})
+	metrics.RecordMasterCallLatency(time.Since(masterCallStart))
 
 	if err != nil {
+		metrics.RecordError("DeleteFile RPC failed: " + err.Error())
 		log.Fatalf("Delete failed: %v", err)
 	}
 
 	if !resp.Success {
+		metrics.RecordError("Delete failed: " + resp.Message)
 		log.Fatalf("Delete failed: %s", resp.Message)
 	}
 
 	log.Printf("Successfully deleted %s: %s", filename, resp.Message)
+
+	metrics.RecordOperationEnd()
+
+	duration := time.Since(startTime)
+	latencySec := duration.Seconds()
+
+	fmt.Println("\n=== METRICS (Legacy Format) ===")
+	fmt.Printf("Operation:  Delete\n")
+	fmt.Printf("Latency:    %.2f ms (%.3f seconds)\n", float64(duration.Milliseconds()), latencySec)
+	fmt.Println("===========================")
+
+	// Print comprehensive metrics report
+	fmt.Println("")
+	metrics.PrintReport("DELETE", filename, 0)
+
+	// Also save JSON metrics to file
+	jsonMetrics := metrics.ExportJSON()
+	metricsFile := fmt.Sprintf("metrics_delete_%s.json", strings.ReplaceAll(time.Now().Format("2006-01-02_15:04:05"), ":", "-"))
+	if err := os.WriteFile(metricsFile, []byte(jsonMetrics), 0644); err == nil {
+		log.Printf("Metrics exported to: %s", metricsFile)
+	}
 }
 
 // listFiles displays all files uploaded by this client
 func listFiles(myID int64) {
+	metrics := NewMetricsCollector()
+	metrics.RecordOperationStart()
+	startTime := time.Now()
 	if myID == 0 {
+		metrics.RecordError("No files uploaded yet (new client)")
 		log.Println("No files uploaded yet (new client)")
 		return
 	}
 
 	// Connect to master server (with auto-failover)
+	masterConnStart := time.Now()
 	conn, masterClient, err := connectToMaster()
+	metrics.RecordGrpcConnection(time.Since(masterConnStart))
 	if err != nil {
+		metrics.RecordError("Could not connect to any master: " + err.Error())
 		log.Fatal("Could not connect to any master:", err)
 	}
 	defer conn.Close()
 
 	// Request file list
+	masterCallStart := time.Now()
 	resp, err := masterClient.ListFiles(context.Background(), &dfspb.ListFilesRequest{
 		ClientId: myID,
 	})
+	metrics.RecordMasterCallLatency(time.Since(masterCallStart))
 
 	if err != nil {
+		metrics.RecordError("ListFiles failed: " + err.Error())
 		log.Fatalf("ListFiles failed: %v", err)
 	}
 
 	if len(resp.Filenames) == 0 {
 		log.Println("No files uploaded")
+		metrics.RecordListOperation(0)
+		metrics.RecordOperationEnd()
+		// Print metrics
+		fmt.Println("\n=== METRICS (Legacy Format) ===")
+		duration := time.Since(startTime)
+		latencySec := duration.Seconds()
+		fmt.Printf("Operation:  List Files (ls)\n")
+		fmt.Printf("Latency:    %.2f ms (%.3f seconds)\n", float64(duration.Milliseconds()), latencySec)
+		fmt.Println("===========================")
+		fmt.Println("")
+		metrics.PrintReport("LIST", "", 0)
+		jsonMetrics := metrics.ExportJSON()
+		metricsFile := fmt.Sprintf("metrics_list_%s.json", strings.ReplaceAll(time.Now().Format("2006-01-02_15:04:05"), ":", "-"))
+		if err := os.WriteFile(metricsFile, []byte(jsonMetrics), 0644); err == nil {
+			log.Printf("Metrics exported to: %s", metricsFile)
+		}
 		return
 	}
 
 	log.Printf("Files uploaded by client %d:", myID)
 	for i, filename := range resp.Filenames {
 		log.Printf("  %d. %s", i+1, filename)
+	}
+	metrics.RecordListOperation(len(resp.Filenames))
+	metrics.RecordOperationEnd()
+
+	duration := time.Since(startTime)
+	latencySec := duration.Seconds()
+
+	fmt.Println("\n=== METRICS (Legacy Format) ===")
+	fmt.Printf("Operation:  List Files (ls)\n")
+	fmt.Printf("Latency:    %.2f ms (%.3f seconds)\n", float64(duration.Milliseconds()), latencySec)
+	fmt.Println("===========================")
+	fmt.Println("")
+	metrics.PrintReport("LIST", "", 0)
+	jsonMetrics := metrics.ExportJSON()
+	metricsFile := fmt.Sprintf("metrics_list_%s.json", strings.ReplaceAll(time.Now().Format("2006-01-02_15:04:05"), ":", "-"))
+	if err := os.WriteFile(metricsFile, []byte(jsonMetrics), 0644); err == nil {
+		log.Printf("Metrics exported to: %s", metricsFile)
 	}
 }
 

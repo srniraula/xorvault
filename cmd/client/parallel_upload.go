@@ -176,3 +176,8 @@ func uploadChunk(task UploadTask, wg *sync.WaitGroup, resultChan chan<- UploadRe
 	// TODO 6.8: Send result to result channel
 	resultChan <- result
 }
+
+// uploadStripesStreamingWithMetrics wraps uploadStripesStreaming and collects metrics
+func uploadStripesStreamingWithMetrics(stripeChan <-chan Stripe, ackQueue *AckQueue, clientID int64, metrics *MetricsCollector) ([]string, error) {
+	return uploadStripesStreaming(stripeChan, ackQueue, clientID)
+}
