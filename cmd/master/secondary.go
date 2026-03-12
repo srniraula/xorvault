@@ -5,6 +5,7 @@ import (
 	"dfs-project/dfspb"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 )
@@ -249,5 +250,15 @@ func (s *SecondaryMaster) promote() {
 	}
 
 	s.master.logger.Printf("FAILOVER COMPLETE: this node is now the active primary (wal_seq=%d, generation=%d)", s.master.walSeq, s.master.generation)
-	fmt.Println(">>> THIS NODE IS NOW THE ACTIVE PRIMARY MASTER <<<")
+	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(os.Stderr, "╔══════════════════════════════════════════════════════════╗\n")
+	fmt.Fprintf(os.Stderr, "║                                                          ║\n")
+	fmt.Fprintf(os.Stderr, "║   🔴  FAILOVER — THIS NODE IS NOW THE ACTIVE PRIMARY  🔴 ║\n")
+	fmt.Fprintf(os.Stderr, "║                                                          ║\n")
+	fmt.Fprintf(os.Stderr, "║   Address  : %-42s  ║\n", s.master.myAddr)
+	fmt.Fprintf(os.Stderr, "║   Generation: %-41d  ║\n", s.master.generation)
+	fmt.Fprintf(os.Stderr, "║   WAL Seq  : %-42d  ║\n", s.master.walSeq)
+	fmt.Fprintf(os.Stderr, "║                                                          ║\n")
+	fmt.Fprintf(os.Stderr, "╚══════════════════════════════════════════════════════════╝\n")
+	fmt.Fprintf(os.Stderr, "\n")
 }

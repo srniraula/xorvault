@@ -4,9 +4,11 @@ import (
 	"dfs-project/dfspb"
 	"dfs-project/pkg/config"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"os"
+	"time"
 
 	"google.golang.org/grpc"
 )
@@ -47,6 +49,17 @@ func main() {
 		chunkLogger.Printf("No secondary master configured — failover disabled (primary=%s)", primaryAddr)
 	}
 
+	// Print startup banner showing active master
+	fmt.Fprintf(os.Stderr, "\n╔══════════════════════════════════════════════════════════╗\n")
+	fmt.Fprintf(os.Stderr,   "║  CHUNKSERVER port %-4s — starting up                     ║\n", *port)
+	fmt.Fprintf(os.Stderr,   "║  Active master : %-40s║\n", primaryAddr+"  ")
+	if *secondaryMaster != "" {
+		fmt.Fprintf(os.Stderr, "║  Standby master: %-40s║\n", *secondaryMaster+"  ")
+	} else {
+		fmt.Fprintf(os.Stderr, "║  (no secondary master — failover disabled)               ║\n")
+	}
+	fmt.Fprintf(os.Stderr,   "╚══════════════════════════════════════════════════════════╝\n\n")
+
 	// Start gRPC server
 	lis, err := net.Listen("tcp", "0.0.0.0:"+*port)
 	if err != nil {
@@ -66,6 +79,20 @@ func main() {
 	// Start heartbeat goroutine — handles automatic failover via MasterTracker.
 	go SendHeartbeats(*port, tracker, chunkLogger)
 
+	// Periodic status printer — shows active master every 5 seconds.
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			activeAddr := tracker.ActiveAddr()
+			role := "PRIMARY"
+			if activeAddr != tracker.primaryAddr {
+				role = "SECONDARY (failed-over)"
+			}
+			fmt.Fprintf(os.Stderr, "[STATUS] chunkserver:%s → master: %s  [%s]\n",
+				*port, activeAddr, role)
+		}
+	}()
 	log.Printf("ChunkServer running on 0.0.0.0:%s (storage: %s)", *port, *storage)
 
 	if err := s.Serve(lis); err != nil {

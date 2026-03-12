@@ -67,15 +67,21 @@ func (t *MasterTracker) ReportFailure(logger *log.Logger) bool {
 			// Primary is down — fail over to secondary.
 			logger.Printf("FAILOVER: primary master %s unreachable after %d failures — switching to secondary %s",
 				t.primaryAddr, t.failureCount, t.secondaryAddr)
-			fmt.Printf("[CHUNKSERVER] FAILOVER: switching active master from %s to %s\n",
-				from, t.secondaryAddr)
+			fmt.Fprintf(os.Stderr, "\n╔══════════════════════════════════════════════════════════╗\n")
+			fmt.Fprintf(os.Stderr,   "║  🔴 CHUNKSERVER FAILOVER — switching active master       ║\n")
+			fmt.Fprintf(os.Stderr,   "║  FROM: %-50s║\n", from+"  ")
+			fmt.Fprintf(os.Stderr,   "║  TO  : %-50s║\n", t.secondaryAddr+"  ")
+			fmt.Fprintf(os.Stderr,   "╚══════════════════════════════════════════════════════════╝\n\n")
 			t.activeAddr = t.secondaryAddr
 		} else {
 			// Secondary is down — fail back to primary.
 			logger.Printf("FAILBACK: secondary master %s unreachable after %d failures — switching back to primary %s",
 				t.secondaryAddr, t.failureCount, t.primaryAddr)
-			fmt.Printf("[CHUNKSERVER] FAILBACK: switching active master from %s to %s\n",
-				from, t.primaryAddr)
+			fmt.Fprintf(os.Stderr, "\n╔══════════════════════════════════════════════════════════╗\n")
+			fmt.Fprintf(os.Stderr,   "║  🟡 CHUNKSERVER FAILBACK — switching back to primary     ║\n")
+			fmt.Fprintf(os.Stderr,   "║  FROM: %-50s║\n", from+"  ")
+			fmt.Fprintf(os.Stderr,   "║  TO  : %-50s║\n", t.primaryAddr+"  ")
+			fmt.Fprintf(os.Stderr,   "╚══════════════════════════════════════════════════════════╝\n\n")
 			t.activeAddr = t.primaryAddr
 		}
 		t.failureCount = 0
