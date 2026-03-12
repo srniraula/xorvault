@@ -125,8 +125,8 @@ make rmdir FOLDER=documents/photos
 make build          # Build all binaries
 make proto          # Regenerate protobuf files
 make run-master     # Start master server
-make run-master-primary MY_ADDR=<ip:port> SECONDARY_ADDR=<ip:port>   # Start primary master with failover
-make run-master-secondary MY_ADDR=<ip:port>                           # Start secondary/standby master
+make run-master-primary MY_ADDR=<ip:port> SECONDARY_ADDR=<ip:port>    # Start primary master with failover
+make run-master-secondary MY_ADDR=<ip:port> PRIMARY_ADDR=<ip:port>    # Start secondary/standby master (PRIMARY_ADDR = primary's address)
 make run-chunk_server1 MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>]  # port 9001
 make run-chunk_server2 MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>]  # port 9002
 make run-chunk_server3 MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>]  # port 9003
@@ -190,7 +190,8 @@ The system supports automatic master failover with a primary/secondary pair.
 **How to run with failover (LAN example):**
 ```bash
 # On the secondary machine (e.g. Kali at 192.168.1.20) — start this FIRST
-make run-master-secondary MY_ADDR=192.168.1.20:50052
+# PRIMARY_ADDR tells the standby who to watch for heartbeats
+make run-master-secondary MY_ADDR=192.168.1.20:50052 PRIMARY_ADDR=192.168.1.10:50051
 
 # On the primary machine (e.g. Mac at 192.168.1.10)
 make run-master-primary MY_ADDR=192.168.1.10:50051 SECONDARY_ADDR=192.168.1.20:50052
@@ -210,8 +211,8 @@ make upload FILE=myfile.pdf
 2. Start chunk servers with both master addresses (see above)
 3. Upload a file
 4. Kill the primary (`Ctrl+C`)
-5. Within 10 seconds the secondary prints: `>>> THIS NODE IS NOW THE ACTIVE PRIMARY MASTER <<<`
-6. Within 15 seconds each chunk server prints: `[CHUNKSERVER] FAILOVER: switching active master from <primary> to <secondary>`
+5. Within 10 seconds the secondary terminal prints a failover banner and `[STATUS] ... → ✅ ACTIVE PRIMARY`
+6. Within 15 seconds each chunk server terminal prints a `🔴 CHUNKSERVER FAILOVER` banner and its `[STATUS]` lines switch to show the secondary as `SECONDARY (failed-over)`
 7. **Client remains connected** — subsequent commands (like `make ls`) will auto-detect the primary failure and retry against the secondary address automatically.
 
 **Note:** Start the secondary BEFORE the primary, so it is ready to receive heartbeats and WAL entries immediately.

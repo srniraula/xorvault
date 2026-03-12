@@ -57,13 +57,13 @@ run-master-primary: build
 	fi
 	@./bin/master -addr $(MY_ADDR) -secondary $(SECONDARY_ADDR)
 
-# Run secondary master (standby mode — no -secondary flag means watchdog mode)
-# Usage: make run-master-secondary MY_ADDR=192.168.1.20:50052
+# Run secondary master (standby mode — monitors the primary for heartbeats)
+# Usage: make run-master-secondary MY_ADDR=192.168.1.66:50052 PRIMARY_ADDR=192.168.1.87:50051
 run-master-secondary: build
 	@if [ -z "$(MY_ADDR)" ]; then \
-		echo "Error: MY_ADDR not specified. Usage: make run-master-secondary MY_ADDR=192.168.1.20:50052"; exit 1; \
+		echo "Error: MY_ADDR not specified. Usage: make run-master-secondary MY_ADDR=192.168.1.66:50052 PRIMARY_ADDR=192.168.1.87:50051"; exit 1; \
 	fi
-	@./bin/master -addr $(MY_ADDR)
+	@./bin/master -addr $(MY_ADDR) -secondary $(PRIMARY_ADDR)
 
 # Run web server
 run-webserver: build

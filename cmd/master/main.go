@@ -224,18 +224,30 @@ func main() {
 		if server.isPrimary {
 			go server.SendHeartbeatsToSecondary(*peerAddr)
 			masterLogger.Printf("Primary mode: will send heartbeats to peer at %s", *peerAddr)
-			fmt.Println(">>> THIS NODE IS THE ACTIVE PRIMARY MASTER <<<")
+			fmt.Fprintf(os.Stderr, "\n╔══════════════════════════════════════════════╗\n")
+			fmt.Fprintf(os.Stderr,   "║  ✅  ACTIVE PRIMARY MASTER: %-16s  ║\n", *myAddr)
+			fmt.Fprintf(os.Stderr,   "║     Standby peer: %-26s  ║\n", *peerAddr)
+			fmt.Fprintf(os.Stderr,   "╚══════════════════════════════════════════════╝\n\n")
 		} else {
 			// We synced state from the active master — run as standby
 			go secondary.WatchdogLoop(10) // 10 second timeout
 			masterLogger.Printf("Standby mode: watchdog started (will promote if master silent for 10s)")
-			fmt.Println(">>> THIS NODE IS IN STANDBY MODE (backup) <<<")
+			fmt.Fprintf(os.Stderr, "\n╔══════════════════════════════════════════════╗\n")
+			fmt.Fprintf(os.Stderr,   "║  ⏳  STANDBY MASTER: %-23s  ║\n", *myAddr)
+			fmt.Fprintf(os.Stderr,   "║     Watching primary: %-24s  ║\n", *peerAddr)
+			fmt.Fprintf(os.Stderr,   "╚══════════════════════════════════════════════╝\n\n")
 		}
 	} else {
 		// No peer configured — standalone primary
 		masterLogger.Printf("Standalone mode: no peer configured")
-		fmt.Println(">>> STANDALONE PRIMARY MASTER (no failover peer) <<<")
+		fmt.Fprintf(os.Stderr, "\n╔══════════════════════════════════════════════╗\n")
+		fmt.Fprintf(os.Stderr,   "║  ✅  STANDALONE PRIMARY: %-20s  ║\n", *myAddr)
+		fmt.Fprintf(os.Stderr,   "║     (no failover peer configured)             ║\n")
+		fmt.Fprintf(os.Stderr,   "╚══════════════════════════════════════════════╝\n\n")
 	}
+
+	// Start periodic status printer — prints current role to terminal every 5 seconds
+	go startStatusPrinter(server, secondary, *myAddr, *peerAddr)
 
 	// Start background goroutine for dead chunk-server detection
 	go func() {
@@ -259,6 +271,39 @@ func main() {
 	// Start serving - this blocks until server shuts down
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("Failed to serve: %v", err)
+	}
+}
+
+// startStatusPrinter prints the current node role to stderr every 5 seconds.
+// This makes it impossible to miss which node is the active primary at any point.
+func startStatusPrinter(server *MasterServer, secondary *SecondaryMaster, myAddr, peerAddr string) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		server.mu.Lock()
+		isPrimary := server.isPrimary
+		gen := server.generation
+		walSeq := server.walSeq
+		server.mu.Unlock()
+
+		if isPrimary {
+			fmt.Fprintf(os.Stderr, "[STATUS] %s → ✅ ACTIVE PRIMARY  (gen=%d, wal_seq=%d)\n",
+				myAddr, gen, walSeq)
+		} else {
+			// Show how long since last heartbeat from primary
+			secondary.mu.Lock()
+			lastHB := secondary.lastHeartbeat
+			primAddr := secondary.primaryAddr
+			secondary.mu.Unlock()
+
+			if primAddr == "" {
+				primAddr = peerAddr
+			}
+			elapsed := time.Since(lastHB).Round(time.Second)
+			fmt.Fprintf(os.Stderr, "[STATUS] %s → ⏳ STANDBY  (primary: %s, last heartbeat: %s ago)\n",
+				myAddr, primAddr, elapsed)
+		}
 	}
 }
 
