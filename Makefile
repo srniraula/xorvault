@@ -37,16 +37,25 @@ run-master: build
 # Run chunk server 1
 # Usage: make run-chunk_server1 MASTER_ADDR=<primary:port> [SECONDARY_MASTER_ADDR=<secondary:port>]
 run-chunk_server1: build
+	@if [ -z "$(SECONDARY_MASTER_ADDR)" ]; then \
+		echo "WARNING: SECONDARY_MASTER_ADDR not set — chunkserver1 will NOT fail over if primary master dies!"; \
+	fi
 	@./bin/chunkserver -port 9001 -storage chunk_server1 -master $(MASTER_ADDR) -secondary-master $(SECONDARY_MASTER_ADDR)
 
 # Run chunk server 2
 # Usage: make run-chunk_server2 MASTER_ADDR=<primary:port> [SECONDARY_MASTER_ADDR=<secondary:port>]
 run-chunk_server2: build
+	@if [ -z "$(SECONDARY_MASTER_ADDR)" ]; then \
+		echo "WARNING: SECONDARY_MASTER_ADDR not set — chunkserver2 will NOT fail over if primary master dies!"; \
+	fi
 	@./bin/chunkserver -port 9002 -storage chunk_server2 -master $(MASTER_ADDR) -secondary-master $(SECONDARY_MASTER_ADDR)
 
 # Run chunk server 3
 # Usage: make run-chunk_server3 MASTER_ADDR=<primary:port> [SECONDARY_MASTER_ADDR=<secondary:port>]
 run-chunk_server3: build
+	@if [ -z "$(SECONDARY_MASTER_ADDR)" ]; then \
+		echo "WARNING: SECONDARY_MASTER_ADDR not set — chunkserver3 will NOT fail over if primary master dies!"; \
+	fi
 	@./bin/chunkserver -port 9003 -storage chunk_server3 -master $(MASTER_ADDR) -secondary-master $(SECONDARY_MASTER_ADDR)
 
 # Run primary master (with secondary address)
