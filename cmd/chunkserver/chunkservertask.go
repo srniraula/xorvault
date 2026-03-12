@@ -32,7 +32,7 @@ func NewMasterTracker(primaryAddr, secondaryAddr string) *MasterTracker {
 		primaryAddr:   primaryAddr,
 		secondaryAddr: secondaryAddr,
 		activeAddr:    primaryAddr,
-		maxFailures:   3, // 3 x 5s heartbeat interval = 15 seconds before failover
+		maxFailures:   6, // 6 x 5s heartbeat interval = 30 seconds before failover
 	}
 }
 

@@ -230,8 +230,8 @@ func main() {
 			fmt.Fprintf(os.Stderr,   "╚══════════════════════════════════════════════╝\n\n")
 		} else {
 			// We synced state from the active master — run as standby
-			go secondary.WatchdogLoop(10) // 10 second timeout
-			masterLogger.Printf("Standby mode: watchdog started (will promote if master silent for 10s)")
+			go secondary.WatchdogLoop(30) // 30 second timeout to handle LAN/WiFi packet loss
+			masterLogger.Printf("Standby mode: watchdog started (will promote if master silent for 30s)")
 			fmt.Fprintf(os.Stderr, "\n╔══════════════════════════════════════════════╗\n")
 			fmt.Fprintf(os.Stderr,   "║  ⏳  STANDBY MASTER: %-23s  ║\n", *myAddr)
 			fmt.Fprintf(os.Stderr,   "║     Watching primary: %-24s  ║\n", *peerAddr)
@@ -313,24 +313,24 @@ func (m *MasterServer) SendHeartbeatsToSecondary(secondaryAddr string) {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		conn, err := grpc.NewClient(secondaryAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		if err != nil {
-			m.logger.Printf("Heartbeat to secondary: connect failed: %v", err)
-			continue
-		}
+	// Dial exactly once and reuse the connection to avoid TCP handshake exhaustion
+	conn, err := grpc.NewClient(secondaryAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		m.logger.Printf("Heartbeat to secondary: permanent dial failure: %v", err)
+		return
+	}
+	defer conn.Close()
+	
+	client := dfspb.NewSecondaryMasterServerClient(conn)
 
-		client := dfspb.NewSecondaryMasterServerClient(conn)
-		// Use a 2-second timeout so a network hiccup never blocks this goroutine
-		// longer than 2s. Without a timeout, context.Background() hangs indefinitely
-		// on packet loss, making the secondary falsely promote itself after 10 seconds.
+	for range ticker.C {
+		// Use a short timeout for the RPC itself so a broken connection doesn't block
 		hbCtx, hbCancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_, err = client.SendMasterHeartbeat(hbCtx, &dfspb.MasterHeartbeatRequest{
+		_, err := client.SendMasterHeartbeat(hbCtx, &dfspb.MasterHeartbeatRequest{
 			PrimaryAddr:     m.myAddr,
 			LastWalSequence: m.walSeq,
 		})
 		hbCancel()
-		conn.Close()
 
 		if err != nil {
 			m.logger.Printf("Heartbeat to secondary failed: %v", err)

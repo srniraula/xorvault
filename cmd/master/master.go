@@ -217,14 +217,9 @@ func (m *MasterServer) allocateChunksInternal(clientID int64, totalSize int, fil
 		for chunkInStripe := 1; chunkInStripe <= 2 && chunkCounter <= totalChunks; chunkInStripe++ {
 			chunkID := fmt.Sprintf("%s_chunk%d_%04d", filename, stripeNum, chunkCounter)
 
-			// Alternate between chunkserver1 and chunkserver2
-			if chunkInStripe == 1 {
-				stripe.ChunkIds[0] = chunkID
-				stripe.Servers[0] = healthy[0]
-			} else {
-				stripe.ChunkIds[1] = chunkID
-				stripe.Servers[1] = healthy[1]
-			}
+			// Assign to healthy[0] and healthy[1] dynamically based on heartbeat registrations
+			stripe.ChunkIds[chunkInStripe-1] = chunkID
+			stripe.Servers[chunkInStripe-1] = healthy[chunkInStripe-1]
 
 			// Mark chunk as PENDING
 			m.chunkStatus[chunkID] = "PENDING"
