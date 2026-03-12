@@ -264,7 +264,7 @@ func sendSingleHeartbeat(masterAddr, myAddr string, logger *log.Logger) bool {
 	defer conn.Close()
 
 	masterClient := dfspb.NewMasterServerClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
 
 	_, err = masterClient.ReceiveHeartbeat(ctx, &dfspb.HeartbeatRequest{Address: myAddr})
@@ -277,7 +277,7 @@ func sendSingleHeartbeat(masterAddr, myAddr string, logger *log.Logger) bool {
 }
 
 // SendHeartbeats sends periodic heartbeats to the active master.
-// If the primary master becomes unreachable (3 consecutive failures), it
+// If the primary master becomes unreachable (6 consecutive failures = 30s), it
 // automatically fails over to the secondary master address (if provided).
 func SendHeartbeats(port string, tracker *MasterTracker, logger *log.Logger) {
 	ticker := time.NewTicker(5 * time.Second)

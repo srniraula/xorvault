@@ -325,7 +325,7 @@ func (m *MasterServer) SendHeartbeatsToSecondary(secondaryAddr string) {
 
 	for range ticker.C {
 		// Use a short timeout for the RPC itself so a broken connection doesn't block
-		hbCtx, hbCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		hbCtx, hbCancel := context.WithTimeout(context.Background(), 4*time.Second)
 		_, err := client.SendMasterHeartbeat(hbCtx, &dfspb.MasterHeartbeatRequest{
 			PrimaryAddr:     m.myAddr,
 			LastWalSequence: m.walSeq,
