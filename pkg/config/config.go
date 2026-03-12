@@ -89,12 +89,10 @@ func GetChunkServers() []string {
 		}
 	}
 
-	// Local development mode: use localhost
-	return []string{
-		"127.0.0.1:9001",
-		"127.0.0.1:9002",
-		"127.0.0.1:9003",
-	}
+	// Local development/LAN mode: start empty.
+	// Chunkservers will register themselves dynamically when they
+	// send their first heartbeat to the master.
+	return []string{}
 }
 
 // GetMyAddr returns this chunk server's address for registration with master
