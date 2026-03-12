@@ -321,10 +321,15 @@ func (m *MasterServer) SendHeartbeatsToSecondary(secondaryAddr string) {
 		}
 
 		client := dfspb.NewSecondaryMasterServerClient(conn)
-		_, err = client.SendMasterHeartbeat(context.Background(), &dfspb.MasterHeartbeatRequest{
+		// Use a 2-second timeout so a network hiccup never blocks this goroutine
+		// longer than 2s. Without a timeout, context.Background() hangs indefinitely
+		// on packet loss, making the secondary falsely promote itself after 10 seconds.
+		hbCtx, hbCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, err = client.SendMasterHeartbeat(hbCtx, &dfspb.MasterHeartbeatRequest{
 			PrimaryAddr:     m.myAddr,
 			LastWalSequence: m.walSeq,
 		})
+		hbCancel()
 		conn.Close()
 
 		if err != nil {
