@@ -570,6 +570,362 @@
 // 	}
 // }
 
+// package main
+
+// import (
+// 	"bufio"
+// 	"context"
+// 	"dfs-project/dfspb"
+// 	"dfs-project/pkg/config"
+// 	"encoding/json"
+// 	"flag"
+// 	"fmt"
+// 	"io"
+// 	"log"
+// 	"net"
+// 	"os"
+// 	"strings"
+// 	"time"
+
+// 	"google.golang.org/grpc"
+// 	"google.golang.org/grpc/credentials/insecure"
+// )
+
+// // main starts the master server and background health monitoring
+// func main() {
+// 	// --- command-line flags for failover ---
+// 	// peerAddr := flag.String("secondary", "", "peer master address e.g. 192.168.1.20:50052 (leave empty if standalone)")
+// 	// myAddr := flag.String("addr", "0.0.0.0:50051", "this master's own listen address e.g. 192.168.1.10:50051")
+// 	// flag.Parse()
+// 	peerAddr := flag.String("secondary", "", "peer master address e.g. 192.168.1.20:50052 (leave empty if standalone)")
+// 	myAddr := flag.String("addr", "0.0.0.0:50051", "this master's own listen address e.g. 192.168.1.10:50051")
+// 	role := flag.String("role", "primary", "startup role: 'primary' or 'secondary'. Secondary always starts in standby.")
+// 	flag.Parse()
+
+// 	// Setup log file for Master - all logs will be written to master.log
+// 	if err := os.MkdirAll("log_files", 0755); err != nil {
+// 		fmt.Fprintf(os.Stderr, "FATAL: failed to create log_files directory: %v\n", err)
+// 		os.Exit(1)
+// 	}
+// 	logFile, err := os.OpenFile(fmt.Sprintf("log_files/master_%s.log", strings.NewReplacer(":", "-", ".", "-").Replace(*myAddr)), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+// 	if err != nil {
+// 		fmt.Fprintf(os.Stderr, "FATAL: failed to open log file: %v\n", err)
+// 		os.Exit(1)
+// 	}
+// 	defer logFile.Close()
+
+// 	// Create custom logger with prefix "MASTER: " and timestamp
+// 	masterLogger := log.New(logFile, fmt.Sprintf("MASTER(%s): ", *myAddr), log.LstdFlags|log.Lshortfile)
+
+// 	// Write to both file and stderr so startup errors are always visible
+// 	log.SetOutput(io.MultiWriter(os.Stderr, logFile))
+
+// 	// Start listening — use the -addr flag so secondary can bind its own port
+// 	lis, err := net.Listen("tcp", *myAddr)
+// 	if err != nil {
+// 		log.Fatalf("FATAL: Failed to listen on %s: %v", *myAddr, err)
+// 	}
+// 	fmt.Printf("Master listening on %s\n", *myAddr)
+
+// 	// Create gRPC server instance
+// 	s := grpc.NewServer()
+
+// 	// Open WAL file for write-ahead logging
+// 	// In standby mode, we open read-only initially, but for simplicity we keep it append
+// 	// (Standby won't write unless promoted, but needs to read)
+// 	// Actually, if we are on the same filesystem, only one writer allowed usually if using lock
+// 	// But append mode is generally safe for single writer. Standby should probably just READ.
+// 	// For now, let's open it same way.
+// 	walFile, err := os.OpenFile("master.wal", os.O_CREATE|os.O_RDWR|os.O_APPEND, 0666)
+// 	if err != nil {
+// 		log.Fatalf("Failed to open WAL file: %v", err)
+// 	}
+// 	defer walFile.Close()
+
+// 	// Initialize the MasterServer with empty maps
+// 	server := &MasterServer{
+// 		fileInfo:        make(map[int64]map[string]map[int32]*dfspb.StripeMetadata),
+// 		clientIDs:       make(map[int64][]string),
+// 		fileSizes:       make(map[int64]map[string]int64),
+// 		chunkStatus:     make(map[string]string),
+// 		chunkServers:    config.GetChunkServers(),
+// 		servers:         make(map[string]*ServerInfo),
+// 		clientFolders:   make(map[int64]map[string]bool),
+// 		fileUploadTimes: make(map[int64]map[string]int64),
+// 		clientUsernames: make(map[int64]string),
+// 		logger:          masterLogger,
+// 		walFile:         walFile,
+// 		walWriter:       bufio.NewWriter(walFile),
+// 		// --- failover fields ---
+// 		peerAddr:      *peerAddr,
+// 		secondaryAddr: *peerAddr, // will be used for WAL replication when primary
+// 		myAddr:        *myAddr,
+// 		isPrimary:     *role != "secondary", // secondary always starts in standby
+// 		generation:    1,                    // starting generation; LoadCheckpoint may overwrite
+// 	}
+
+// 	// Restore from checkpoint first (if exists)
+// 	if err := server.LoadCheckpoint("master.checkpoint"); err != nil {
+// 		log.Fatalf("Checkpoint loading failed: %v", err)
+// 	}
+
+// 	// Then replay WAL entries after checkpoint
+// 	if err := server.RecoverFromWAL("master.wal"); err != nil {
+// 		log.Fatalf("WAL recovery failed: %v", err)
+// 	}
+
+// 	// --- ROLE-BASED STATE SYNC ---
+// 	// SECONDARY: Always start in standby. Never contact the peer at startup to decide
+// 	//            role — the WatchdogLoop will promote us only after 30s of silence.
+// 	// PRIMARY:   Check if the peer promoted itself while we were down and pull its
+// 	//            full state if so. If peer unreachable, use local WAL state and proceed.
+// 	if *role == "secondary" {
+// 		server.isPrimary = false
+// 		masterLogger.Printf("Starting as SECONDARY (standby). Will promote only if primary silent for 30s.")
+// 	} else if *peerAddr != "" {
+// 		if err := trySyncStateFromPeer(server, *peerAddr, masterLogger); err != nil {
+// 			masterLogger.Printf("State sync from peer failed (peer unreachable; using local WAL state as primary): %v", err)
+// 			server.isPrimary = true
+// 		}
+// 	}
+
+// 	// Register MasterServer to handle client/chunkserver gRPC requests
+// 	dfspb.RegisterMasterServerServer(s, server)
+
+// 	// --- NEW: register SecondaryMasterServer so this node can also act as standby ---
+// 	secondary := NewSecondaryMaster(server)
+// 	dfspb.RegisterSecondaryMasterServerServer(s, secondary)
+
+// 	// Start background goroutine for periodic checkpointing (every 5 minutes)
+// 	go server.PeriodicCheckpoint(5, "master.checkpoint", "master.wal")
+
+// 	// --- Start heartbeats or watchdog based on actual role ---
+// 	if *peerAddr != "" {
+// 		if server.isPrimary {
+// 			go server.SendHeartbeatsToSecondary(*peerAddr)
+// 			masterLogger.Printf("Primary mode: will send heartbeats to peer at %s", *peerAddr)
+// 			fmt.Fprintf(os.Stderr, "\n╔══════════════════════════════════════════════╗\n")
+// 			fmt.Fprintf(os.Stderr, "║  ✅  ACTIVE PRIMARY MASTER: %-16s  ║\n", *myAddr)
+// 			fmt.Fprintf(os.Stderr, "║     Standby peer: %-26s  ║\n", *peerAddr)
+// 			fmt.Fprintf(os.Stderr, "╚══════════════════════════════════════════════╝\n\n")
+// 		} else {
+// 			// We synced state from the active master — run as standby
+// 			go secondary.WatchdogLoop(30) // 30 second timeout to handle LAN/WiFi packet loss
+// 			masterLogger.Printf("Standby mode: watchdog started (will promote if master silent for 30s)")
+// 			fmt.Fprintf(os.Stderr, "\n╔══════════════════════════════════════════════╗\n")
+// 			fmt.Fprintf(os.Stderr, "║  ⏳  STANDBY MASTER: %-23s  ║\n", *myAddr)
+// 			fmt.Fprintf(os.Stderr, "║     Watching primary: %-24s  ║\n", *peerAddr)
+// 			fmt.Fprintf(os.Stderr, "╚══════════════════════════════════════════════╝\n\n")
+// 		}
+// 	} else {
+// 		// No peer configured — standalone primary
+// 		masterLogger.Printf("Standalone mode: no peer configured")
+// 		fmt.Fprintf(os.Stderr, "\n╔══════════════════════════════════════════════╗\n")
+// 		fmt.Fprintf(os.Stderr, "║  ✅  STANDALONE PRIMARY: %-20s  ║\n", *myAddr)
+// 		fmt.Fprintf(os.Stderr, "║     (no failover peer configured)             ║\n")
+// 		fmt.Fprintf(os.Stderr, "╚══════════════════════════════════════════════╝\n\n")
+// 	}
+
+// 	// Start periodic status printer — prints current role to terminal every 5 seconds
+// 	go startStatusPrinter(server, secondary, *myAddr, *peerAddr)
+
+// 	// Start background goroutine for dead chunk-server detection
+// 	go func() {
+// 		for {
+// 			time.Sleep(10 * time.Second)
+// 			server.serversMu.Lock()
+// 			for addr, info := range server.servers {
+// 				if time.Since(info.LastHeartbeat) > 20*time.Second {
+// 					if info.Alive {
+// 						info.Alive = false
+// 						server.logger.Printf("DEAD SERVER DETECTED: %s", addr)
+// 					}
+// 				}
+// 			}
+// 			server.serversMu.Unlock()
+// 		}
+// 	}()
+
+// 	log.Printf("Master running on %s — Logs to master.log", *myAddr)
+
+// 	// Start serving - this blocks until server shuts down
+// 	if err := s.Serve(lis); err != nil {
+// 		log.Fatalf("Failed to serve: %v", err)
+// 	}
+// }
+
+// // startStatusPrinter prints the current node role to stderr every 5 seconds.
+// // This makes it impossible to miss which node is the active primary at any point.
+// func startStatusPrinter(server *MasterServer, secondary *SecondaryMaster, myAddr, peerAddr string) {
+// 	ticker := time.NewTicker(5 * time.Second)
+// 	defer ticker.Stop()
+
+// 	for range ticker.C {
+// 		server.mu.Lock()
+// 		isPrimary := server.isPrimary
+// 		gen := server.generation
+// 		walSeq := server.walSeq
+// 		server.mu.Unlock()
+
+// 		if isPrimary {
+// 			fmt.Fprintf(os.Stderr, "[STATUS] %s → ✅ ACTIVE PRIMARY  (gen=%d, wal_seq=%d)\n",
+// 				myAddr, gen, walSeq)
+// 		} else {
+// 			// Show how long since last heartbeat from primary
+// 			secondary.mu.Lock()
+// 			lastHB := secondary.lastHeartbeat
+// 			primAddr := secondary.primaryAddr
+// 			secondary.mu.Unlock()
+
+// 			if primAddr == "" {
+// 				primAddr = peerAddr
+// 			}
+// 			elapsed := time.Since(lastHB).Round(time.Second)
+// 			fmt.Fprintf(os.Stderr, "[STATUS] %s → ⏳ STANDBY  (primary: %s, last heartbeat: %s ago)\n",
+// 				myAddr, primAddr, elapsed)
+// 		}
+// 	}
+// }
+
+// // SendHeartbeatsToSecondary periodically pings the secondary master.
+// // Secondary uses these to detect primary failure and trigger auto-promotion.
+// func (m *MasterServer) SendHeartbeatsToSecondary(secondaryAddr string) {
+// 	ticker := time.NewTicker(3 * time.Second)
+// 	defer ticker.Stop()
+
+// 	// Dial exactly once and reuse the connection to avoid TCP handshake exhaustion
+// 	conn, err := grpc.NewClient(secondaryAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+// 	if err != nil {
+// 		m.logger.Printf("Heartbeat to secondary: permanent dial failure: %v", err)
+// 		return
+// 	}
+// 	defer conn.Close()
+
+// 	client := dfspb.NewSecondaryMasterServerClient(conn)
+
+// 	for range ticker.C {
+// 		// Use a short timeout for the RPC itself so a broken connection doesn't block
+// 		hbCtx, hbCancel := context.WithTimeout(context.Background(), 4*time.Second)
+// 		_, err := client.SendMasterHeartbeat(hbCtx, &dfspb.MasterHeartbeatRequest{
+// 			PrimaryAddr:     m.myAddr,
+// 			LastWalSequence: m.walSeq,
+// 		})
+// 		hbCancel()
+
+// 		if err != nil {
+// 			m.logger.Printf("Heartbeat to secondary failed: %v", err)
+// 			log.Printf("WARNING: Heartbeat to secondary at %s failed: %v", secondaryAddr, err)
+// 		} else {
+// 			m.logger.Printf("Heartbeat sent to secondary at %s (wal_seq=%d)", secondaryAddr, m.walSeq)
+// 		}
+// 	}
+// }
+
+// // trySyncStateFromPeer checks whether the configured secondary peer has promoted
+// // itself to primary while *this* node was down.  If it has, we pull the full
+// // state checkpoint from the peer and replace our local (stale) in-memory state.
+// //
+// // This is the key fix for the "returning primary has stale metadata" problem:
+// //
+// //	Primary A dies.  Secondary B promotes (generation++).
+// //	A restarts, calls trySyncStateFromPeer(B).
+// //	B says IsPrimary:true → A pulls B's state (has C, D, and all deletes).
+// //	A then starts serving as primary with correct metadata.
+// func trySyncStateFromPeer(server *MasterServer, peerAddr string, logger *log.Logger) error {
+// 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// 	defer cancel()
+
+// 	conn, err := grpc.NewClient(peerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+// 	if err != nil {
+// 		return fmt.Errorf("cannot connect to peer %s: %v", peerAddr, err)
+// 	}
+// 	defer conn.Close()
+
+// 	// Ask the peer whether it is currently acting as primary
+// 	masterClient := dfspb.NewMasterServerClient(conn)
+// 	activeResp, err := masterClient.GetActiveMaster(ctx, &dfspb.GetActiveMasterRequest{})
+// 	if err != nil {
+// 		return fmt.Errorf("GetActiveMaster from peer %s failed: %v", peerAddr, err)
+// 	}
+
+// 	if !activeResp.IsPrimary {
+// 		// Peer is still in standby — we are the rightful primary, use local state
+// 		logger.Printf("Peer %s is not primary (isPrimary=false) — keeping local state (gen=%d)",
+// 			peerAddr, server.generation)
+// 		server.isPrimary = true
+// 		return nil
+// 	}
+
+// 	// Peer has promoted itself (or was always primary).  Pull its full state
+// 	// and demote ourselves to standby so there is only one active master.
+// 	logger.Printf("Peer %s is the active primary — pulling full state sync (we will be standby)...", peerAddr)
+
+// 	syncCtx, syncCancel := context.WithTimeout(context.Background(), 10*time.Second)
+// 	defer syncCancel()
+
+// 	secClient := dfspb.NewSecondaryMasterServerClient(conn)
+// 	syncResp, err := secClient.RequestStateSync(syncCtx, &dfspb.GetActiveMasterRequest{})
+// 	if err != nil {
+// 		return fmt.Errorf("RequestStateSync from peer %s failed: %v", peerAddr, err)
+// 	}
+
+// 	// Decode the checkpoint the peer sent us
+// 	var checkpoint Checkpoint
+// 	if err := json.Unmarshal(syncResp.StateData, &checkpoint); err != nil {
+// 		return fmt.Errorf("failed to decode checkpoint from peer: %v", err)
+// 	}
+
+// 	logger.Printf("Received state from peer: gen=%d, wal_seq=%d, clients=%d, chunks=%d",
+// 		checkpoint.Generation, checkpoint.WALSeq,
+// 		len(checkpoint.ClientIDs), len(checkpoint.ChunkStatus))
+
+// 	// Apply peer state into our server (same path as LoadCheckpoint)
+// 	server.mu.Lock()
+// 	server.generation = checkpoint.Generation
+// 	server.walSeq = checkpoint.WALSeq
+// 	server.clientIDs = checkpoint.ClientIDs
+// 	server.fileSizes = checkpoint.FileSizes
+// 	server.chunkStatus = checkpoint.ChunkStatus
+// 	if checkpoint.ClientFolders != nil {
+// 		server.clientFolders = checkpoint.ClientFolders
+// 	}
+// 	if checkpoint.FileUploadTimes != nil {
+// 		server.fileUploadTimes = checkpoint.FileUploadTimes
+// 	}
+// 	if checkpoint.ClientUsernames != nil {
+// 		server.clientUsernames = checkpoint.ClientUsernames
+// 	}
+
+// 	// Rebuild fileInfo from checkpoint
+// 	server.fileInfo = make(map[int64]map[string]map[int32]*dfspb.StripeMetadata)
+// 	for clientID, filesJSON := range checkpoint.FileInfo {
+// 		server.fileInfo[clientID] = make(map[string]map[int32]*dfspb.StripeMetadata)
+// 		for filename, stripesJSON := range filesJSON {
+// 			server.fileInfo[clientID][filename] = make(map[int32]*dfspb.StripeMetadata)
+// 			for stripeNum, sj := range stripesJSON {
+// 				server.fileInfo[clientID][filename][stripeNum] = &dfspb.StripeMetadata{
+// 					StripeNum: sj.StripeNum,
+// 					ChunkIds:  sj.ChunkIds,
+// 					Servers:   sj.Servers,
+// 				}
+// 			}
+// 		}
+// 	}
+// 	server.mu.Unlock()
+
+// 	// Demote ourselves: peer is the active master, we are standby
+// 	server.isPrimary = false
+
+// 	// Persist this synced state locally so we survive our own crash
+// 	if err := server.CreateCheckpoint("master.checkpoint"); err != nil {
+// 		logger.Printf("WARNING: failed to save synced checkpoint locally: %v", err)
+// 	}
+
+// 	logger.Printf("STATE SYNC COMPLETE: now at gen=%d wal_seq=%d (synced from %s)",
+// 		server.generation, server.walSeq, peerAddr)
+// 	return nil
+// }
+
 package main
 
 import (
@@ -676,7 +1032,7 @@ func main() {
 
 	// --- ROLE-BASED STATE SYNC ---
 	// SECONDARY: Always start in standby. Never contact the peer at startup to decide
-	//            role — the WatchdogLoop will promote us only after 30s of silence.
+	//            role — the WatchdogLoop will promote us only after 6s of silence + 3 probes.
 	// PRIMARY:   Check if the peer promoted itself while we were down and pull its
 	//            full state if so. If peer unreachable, use local WAL state and proceed.
 	if *role == "secondary" {
@@ -710,8 +1066,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "╚══════════════════════════════════════════════╝\n\n")
 		} else {
 			// We synced state from the active master — run as standby
-			go secondary.WatchdogLoop(30) // 30 second timeout to handle LAN/WiFi packet loss
-			masterLogger.Printf("Standby mode: watchdog started (will promote if master silent for 30s)")
+			go secondary.WatchdogLoop(6) // 6s timeout: 6 missed 1s heartbeats → confirmation probes
+			masterLogger.Printf("Standby mode: watchdog started (will promote if master silent for 6s + 3 probes)")
 			fmt.Fprintf(os.Stderr, "\n╔══════════════════════════════════════════════╗\n")
 			fmt.Fprintf(os.Stderr, "║  ⏳  STANDBY MASTER: %-23s  ║\n", *myAddr)
 			fmt.Fprintf(os.Stderr, "║     Watching primary: %-24s  ║\n", *peerAddr)
@@ -789,23 +1145,47 @@ func startStatusPrinter(server *MasterServer, secondary *SecondaryMaster, myAddr
 
 // SendHeartbeatsToSecondary periodically pings the secondary master.
 // Secondary uses these to detect primary failure and trigger auto-promotion.
+//
+// KEY DESIGN: We re-dial from scratch on every failure rather than reusing a
+// stuck connection. When the peer was down and comes back up, gRPC's internal
+// reconnect backoff on a shared connection can take 30-120s to recover — far
+// longer than our 6s watchdog timeout on the secondary. By closing the broken
+// connection and dialing fresh, we reach the recovered peer within 1-2s.
 func (m *MasterServer) SendHeartbeatsToSecondary(secondaryAddr string) {
-	ticker := time.NewTicker(3 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
-	// Dial exactly once and reuse the connection to avoid TCP handshake exhaustion
-	conn, err := grpc.NewClient(secondaryAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		m.logger.Printf("Heartbeat to secondary: permanent dial failure: %v", err)
-		return
-	}
-	defer conn.Close()
+	var conn *grpc.ClientConn
+	var client dfspb.SecondaryMasterServerClient
 
-	client := dfspb.NewSecondaryMasterServerClient(conn)
+	dial := func() bool {
+		if conn != nil {
+			conn.Close()
+			conn = nil
+			client = nil
+		}
+		var err error
+		conn, err = grpc.NewClient(secondaryAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			m.logger.Printf("Heartbeat: dial to secondary %s failed: %v", secondaryAddr, err)
+			return false
+		}
+		client = dfspb.NewSecondaryMasterServerClient(conn)
+		return true
+	}
+
+	// Initial dial
+	dial()
 
 	for range ticker.C {
-		// Use a short timeout for the RPC itself so a broken connection doesn't block
-		hbCtx, hbCancel := context.WithTimeout(context.Background(), 4*time.Second)
+		if client == nil {
+			// Previous dial failed — retry
+			if !dial() {
+				continue
+			}
+		}
+
+		hbCtx, hbCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		_, err := client.SendMasterHeartbeat(hbCtx, &dfspb.MasterHeartbeatRequest{
 			PrimaryAddr:     m.myAddr,
 			LastWalSequence: m.walSeq,
@@ -813,11 +1193,18 @@ func (m *MasterServer) SendHeartbeatsToSecondary(secondaryAddr string) {
 		hbCancel()
 
 		if err != nil {
-			m.logger.Printf("Heartbeat to secondary failed: %v", err)
-			log.Printf("WARNING: Heartbeat to secondary at %s failed: %v", secondaryAddr, err)
+			m.logger.Printf("Heartbeat to secondary %s failed — will re-dial next tick: %v", secondaryAddr, err)
+			// Close the broken connection; dial() on next tick
+			conn.Close()
+			conn = nil
+			client = nil
 		} else {
-			m.logger.Printf("Heartbeat sent to secondary at %s (wal_seq=%d)", secondaryAddr, m.walSeq)
+			m.logger.Printf("Heartbeat sent to secondary %s (wal_seq=%d)", secondaryAddr, m.walSeq)
 		}
+	}
+
+	if conn != nil {
+		conn.Close()
 	}
 }
 
