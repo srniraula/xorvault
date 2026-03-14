@@ -1,0 +1,6 @@
+timestamp,operation,filename,file_size_bytes,file_size_human,stripe_count,chunk_count,total_latency_ms,master_rpc_latency_ms,data_transfer_ms,parity_compute_ms,master_overhead_pct,throughput_mbps,bandwidth_mbps,parallel_speedup,chunks_attempted,chunks_succeeded,chunks_reconstructed,success_rate_pct,status,error
+2026-03-14T13:01:04.172012+05:45,upload,test1024mb.bin,1073741824,1.00 GB,512,1536,20000.750,342.395,19656.059,1982.640,1.71,53.6851,54.6265,3.0000,1536,1536,0,100.00,success,
+2026-03-14T13:01:39.136532+05:45,download,test1024mb.bin,1073741824,1.00 GB,512,1536,9904.027,1.038,9902.882,0.000,0.01,108.4147,108.4272,3.0000,1536,1536,0,100.00,success,
+2026-03-14T13:03:27.885887+05:45,upload,test100mb.bin,104857600,100.00 MB,50,150,767.103,54.847,705.506,161.690,7.15,136.6931,148.6275,3.0000,150,150,0,100.00,success,
+2026-03-14T13:03:48.345538+05:45,download,test100mb.bin,104857600,100.00 MB,50,150,991.042,0.630,990.240,0.000,0.06,105.8054,105.8912,3.0000,150,150,50,100.00,success,
+2026-03-14T13:05:28.786638+05:45,download,test100mb.bin,104857600,100.00 MB,50,150,917.932,0.997,916.771,0.000,0.11,114.2324,114.3771,3.0000,150,150,0,100.00,success,
