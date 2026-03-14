@@ -22,7 +22,7 @@ func TestUploadStripesStreamingSuccess(t *testing.T) {
 	defer func() { chunkUploader = orig }()
 
 	g := &GrpcClient{}
-	ok, err := g.uploadStripesStreaming(ch, ack, 42, "")
+	ok, err := g.uploadStripesStreaming(ch, ack, 42, "", "testfile.bin")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestUploadStripesStreamingFailure(t *testing.T) {
 	defer func() { chunkUploader = orig }()
 
 	g := &GrpcClient{}
-	_, err := g.uploadStripesStreaming(ch, ack, 42, "")
+	_, err := g.uploadStripesStreaming(ch, ack, 42, "", "testfile.bin")
 	if err == nil {
 		t.Fatalf("expected error due to one failed chunk")
 	}

@@ -27,7 +27,7 @@ func TestDownloadStripeAndReconstruct(t *testing.T) {
 	defer func() { chunkDownloader = orig }()
 
 	g := &GrpcClient{}
-	sd := g.downloadStripe(info, 42, "")
+	sd := g.downloadStripe(info, 42, "", "testfile.bin")
 	if sd.ChunksOK != 2 {
 		t.Fatalf("expected 2 chunks ok, got %d", sd.ChunksOK)
 	}

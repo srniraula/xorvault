@@ -224,11 +224,11 @@ func (fc *FailoverClient) ListFiles(ctx context.Context, clientID int64) ([]stri
 	return result, err
 }
 
-func (fc *FailoverClient) DeleteFile(ctx context.Context, clientID int64, filename string) (int, error) {
+func (fc *FailoverClient) DeleteFile(ctx context.Context, clientID int64, filename string, username string) (int, error) {
 	var result int
 	err := fc.withRetry(func(c *GrpcClient) error {
 		var e error
-		result, e = c.DeleteFile(ctx, clientID, filename)
+		result, e = c.DeleteFile(ctx, clientID, filename, username)
 		return e
 	})
 	return result, err

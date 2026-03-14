@@ -27,13 +27,15 @@ type ChunkServerPair struct {
 
 // DownloadedChunk represents result of downloading a single chunk
 type DownloadedChunk struct {
-	ChunkID  string
-	Data     []byte
-	Success  bool
-	Error    error
-	IsData1  bool
-	IsData2  bool
-	IsParity bool
+	ChunkID   string
+	Data      []byte
+	Success   bool
+	Error     error
+	IsData1   bool
+	IsData2   bool
+	IsParity  bool
+	Filename  string // for logging
+	StripeNum int    // for logging
 }
 
 // StripeDownload holds downloaded chunks
@@ -81,30 +83,40 @@ func (g *GrpcClient) downloadChunkFromServer(chunkID, serverAddr string, clientI
 }
 
 // downloadStripe downloads 3 chunks in parallel
-func (g *GrpcClient) downloadStripe(info DownloadStripeInfo, clientID int64, username string) StripeDownload {
+func (g *GrpcClient) downloadStripe(info DownloadStripeInfo, clientID int64, username string, filename string) StripeDownload {
 	var wg sync.WaitGroup
 	ch := make(chan DownloadedChunk, 3)
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ch <- chunkDownloader(g, info.DataChunk1.ChunkID, info.DataChunk1.Server, clientID, username, true, false, false)
+		dc := chunkDownloader(g, info.DataChunk1.ChunkID, info.DataChunk1.Server, clientID, username, true, false, false)
+		dc.Filename = filename
+		dc.StripeNum = info.StripeNum
+		ch <- dc
 	}()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ch <- chunkDownloader(g, info.DataChunk2.ChunkID, info.DataChunk2.Server, clientID, username, false, true, false)
+		dc := chunkDownloader(g, info.DataChunk2.ChunkID, info.DataChunk2.Server, clientID, username, false, true, false)
+		dc.Filename = filename
+		dc.StripeNum = info.StripeNum
+		ch <- dc
 	}()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ch <- chunkDownloader(g, info.ParityChunk.ChunkID, info.ParityChunk.Server, clientID, username, false, false, true)
+		dc := chunkDownloader(g, info.ParityChunk.ChunkID, info.ParityChunk.Server, clientID, username, false, false, true)
+		dc.Filename = filename
+		dc.StripeNum = info.StripeNum
+		ch <- dc
 	}()
 
 	wg.Wait()
 	close(ch)
 
 	sd := StripeDownload{StripeNum: info.StripeNum}
+	logger := GetUserLogger()
 	for r := range ch {
 		if r.Success {
 			sd.ChunksOK++
@@ -116,6 +128,19 @@ func (g *GrpcClient) downloadStripe(info DownloadStripeInfo, clientID int64, use
 			}
 			if r.IsParity {
 				sd.ParityChunk = r.Data
+			}
+			// Log successful chunk download
+			if username != "" && filename != "" {
+				_ = logger.LogChunkDownloaded(username, filename, r.ChunkID, int64(len(r.Data)), r.StripeNum)
+			}
+		} else {
+			// Log failed chunk download
+			if username != "" && filename != "" {
+				errMsg := "unknown error"
+				if r.Error != nil {
+					errMsg = r.Error.Error()
+				}
+				_ = logger.LogChunkDownloadFailed(username, filename, r.ChunkID, r.StripeNum, errMsg)
 			}
 		}
 	}
