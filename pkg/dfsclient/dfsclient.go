@@ -22,7 +22,7 @@ const CHUNK_SIZE = 1 * 1024 * 1024
 // Interface exposes high-level DFS operations used by HTTP handlers
 type Client interface {
 	ListFiles(ctx context.Context, clientID int64) ([]string, error)
-	DeleteFile(ctx context.Context, clientID int64, filename string) (int, error)
+	DeleteFile(ctx context.Context, clientID int64, filename string, username string) (int, error)
 	UploadFile(ctx context.Context, clientID int64, filename string, data io.Reader, size int64, username string) (int64, error)
 	DownloadFile(ctx context.Context, clientID int64, filename string, destPath string, username string) error
 }
@@ -66,7 +66,7 @@ func (g *GrpcClient) ListFiles(ctx context.Context, clientID int64) ([]string, e
 	return resp.Filenames, nil
 }
 
-func (g *GrpcClient) DeleteFile(ctx context.Context, clientID int64, filename string) (int, error) {
+func (g *GrpcClient) DeleteFile(ctx context.Context, clientID int64, filename string, username string) (int, error) {
 	resp, err := g.masterCli.DeleteFile(ctx, &dfspb.DeleteFileRequest{ClientId: clientID, Filename: filename})
 	if err != nil {
 		return 0, err
@@ -79,8 +79,15 @@ func (g *GrpcClient) DeleteFile(ctx context.Context, clientID int64, filename st
 	_, err = fmt.Sscanf(resp.Message, "deleted %d chunks", &deleted)
 	if err != nil {
 		// couldn't parse, but deletion succeeded
-		return 0, nil
+		deleted = 0
 	}
+
+	// Log the deletion
+	if username != "" {
+		logger := GetUserLogger()
+		_ = logger.LogFileDeleted(username, filename, deleted)
+	}
+
 	return deleted, nil
 }
 
@@ -106,7 +113,7 @@ func (g *GrpcClient) UploadFile(ctx context.Context, clientID int64, filename st
 	ack := NewAckQueue()
 
 	// start uploading stripes as they arrive
-	successfulChunks, err := g.uploadStripesStreaming(stripeChan, ack, assignedClient, username)
+	successfulChunks, err := g.uploadStripesStreaming(stripeChan, ack, assignedClient, username, filename)
 	if err != nil {
 		return assignedClient, err
 	}
@@ -168,6 +175,13 @@ var chunkDownloader = func(g *GrpcClient, chunkID, serverAddr string, clientID i
 
 // DownloadFile downloads a file and writes to destPath
 func (g *GrpcClient) DownloadFile(ctx context.Context, clientID int64, filename string, destPath string, username string) error {
+	logger := GetUserLogger()
+
+	// Log download start
+	if username != "" {
+		_ = logger.LogDownloadStart(username, filename)
+	}
+
 	// get metadata
 	meta, err := g.masterCli.GetFileMetadata(ctx, &dfspb.GetFileMetadataRequest{ClientId: clientID, Filename: filename})
 	if err != nil {
@@ -200,7 +214,7 @@ func (g *GrpcClient) DownloadFile(ctx context.Context, clientID int64, filename 
 			ParityChunk: ChunkServerPair{ChunkID: s.ChunkIds[2], Server: s.Servers[2]},
 		}
 
-		sd := g.downloadStripe(info, clientID, username)
+		sd := g.downloadStripe(info, clientID, username, filename)
 
 		// attempt reconstruction if needed
 		if sd.ChunksOK < 2 {
@@ -218,6 +232,11 @@ func (g *GrpcClient) DownloadFile(ctx context.Context, clientID int64, filename 
 			return err
 		}
 		bytesWritten += int64(n)
+	}
+
+	// Log download complete
+	if username != "" {
+		_ = logger.LogFileDownloadComplete(username, filename, len(keys))
 	}
 
 	return nil

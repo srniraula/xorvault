@@ -38,7 +38,7 @@ chunks3/
 
 # --- Log, State, and Temporary Files ---
 # Log directories and files
-log_files/
+log_files/*
 *.log
 !log_files/README.md  # Keep the README file inside the log directory
 

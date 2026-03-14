@@ -1,29 +1,14 @@
 {
   "users": {
-    "Sanim_27": {
-      "password": "$2a$10$A.F16Tt6ZYfzStAVc/Ze6ee44RE69ckqcUuPqC0V2IUTuvzqBTrAy",
-      "clientId": 3183087543,
-      "createdAt": "2026-03-07T22:06:04.038264855+05:45"
-    },
-    "nis23": {
-      "password": "$2a$10$m9WJTZdG6GulV1lqhemfE.mgnifBDIv3DVN218gFd90.eJTxlvZNu",
-      "clientId": 978379566,
-      "createdAt": "2026-03-07T21:46:02.235600917+05:45"
-    },
     "shantiram": {
-      "password": "$2a$10$/K/3upNjrcDoAoP8U.tmWOpT51pbfiunrmgbS9D.lNhzUTVuG8bMO",
+      "password": "$2a$10$8T/fjMJkL4P/5kuoB.8y4urjS6R5qfni8J29Xc2QeEghaIYtAiWya",
       "clientId": 1637538018,
-      "createdAt": "2026-03-07T22:04:06.383446867+05:45"
+      "createdAt": "2026-03-14T22:36:31.489274488+05:45"
     },
-    "srniraula": {
-      "password": "$2a$10$wDaWg8sGW92pbBM/FR8Gwe91fso/2VlFPWP4hHjjypKXDzN22A/5u",
-      "clientId": 2403348488,
-      "createdAt": "2026-03-07T21:45:23.365316276+05:45"
-    },
-    "srniraulaa": {
-      "password": "$2a$10$v6H2VfGNy5OIcL.B0AKvoOXaq3vGHeKj3R4COl1.VHRHYvqoMTQJi",
-      "clientId": 3943445835,
-      "createdAt": "2026-03-07T23:04:23.992262195+05:45"
+    "srnnn": {
+      "password": "$2a$10$2Vc9O6oLvrZfWsCxtuJY5eOYKejd3ZvXazlvZPYK6CosjoCv6VXy6",
+      "clientId": 2817370614,
+      "createdAt": "2026-03-14T22:32:18.105945061+05:45"
     }
   }
 }

@@ -137,7 +137,7 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 
 	r.GET("/files", auth.AuthMiddleware(), func(c *gin.Context) {
 		// Get authenticated user info
-		_, clientID, ok := auth.GetUserFromContext(c)
+		username, clientID, ok := auth.GetUserFromContext(c)
 		if !ok {
 			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication required"})
 			return
@@ -158,6 +158,13 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
 			return
 		}
+
+		// Log file refresh
+		if username != "" {
+			logger := dfsclient.GetUserLogger()
+			_ = logger.LogFileRefresh(username, len(files))
+		}
+
 		c.JSON(http.StatusOK, gin.H{"filenames": files})
 	})
 
@@ -228,7 +235,7 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 
 	r.DELETE("/files/:clientId/:filename", auth.AuthMiddleware(), func(c *gin.Context) {
 		// Get authenticated user info
-		_, userClientID, ok := auth.GetUserFromContext(c)
+		username, userClientID, ok := auth.GetUserFromContext(c)
 		if !ok {
 			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication required"})
 			return
@@ -251,7 +258,7 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 		dctx, dcancel := context.WithTimeout(cRequestContext(c), 30*time.Second)
 		defer dcancel()
 
-		deleted, err := cli.DeleteFile(dctx, requestedClientID, filename)
+		deleted, err := cli.DeleteFile(dctx, requestedClientID, filename, username)
 		if err != nil {
 			// Map not found
 			if err.Error() == "file not found" {
@@ -332,7 +339,7 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 	// Simplified delete endpoint that uses authentication
 	r.DELETE("/files/delete/:filename", auth.AuthMiddleware(), func(c *gin.Context) {
 		// Get authenticated user info
-		_, userClientID, ok := auth.GetUserFromContext(c)
+		username, userClientID, ok := auth.GetUserFromContext(c)
 		if !ok {
 			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication required"})
 			return
@@ -350,7 +357,7 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 		dctx, dcancel := context.WithTimeout(cRequestContext(c), 30*time.Second)
 		defer dcancel()
 
-		deleted, err := cli.DeleteFile(dctx, clientID, filename)
+		deleted, err := cli.DeleteFile(dctx, clientID, filename, username)
 		if err != nil {
 			// Map not found
 			if err.Error() == "file not found" {
