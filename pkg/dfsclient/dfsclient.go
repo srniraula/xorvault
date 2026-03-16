@@ -3,6 +3,7 @@
 package dfsclient
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -100,6 +101,15 @@ func (g *GrpcClient) UploadFile(ctx context.Context, clientID int64, filename st
 		return 0, fmt.Errorf("CreateFile failed: %w", err)
 	}
 	assignedClient := createResp.ClientId
+	cleanupOnFailure := func(cause error) error {
+		// Best-effort rollback so a failed upload does not reserve filename forever.
+		rctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if _, derr := g.masterCli.DeleteFile(rctx, &dfspb.DeleteFileRequest{ClientId: assignedClient, Filename: filename}); derr != nil {
+			return fmt.Errorf("%w (rollback failed: %v)", cause, derr)
+		}
+		return cause
+	}
 	// Build stripes map
 	stripesMap := createResp.Stripes
 
@@ -115,14 +125,14 @@ func (g *GrpcClient) UploadFile(ctx context.Context, clientID int64, filename st
 	// start uploading stripes as they arrive
 	successfulChunks, err := g.uploadStripesStreaming(stripeChan, ack, assignedClient, username, filename)
 	if err != nil {
-		return assignedClient, err
+		return assignedClient, cleanupOnFailure(err)
 	}
 
 	// Check producer errors
 	select {
 	case err := <-errChan:
 		if err != nil {
-			return assignedClient, err
+			return assignedClient, cleanupOnFailure(err)
 		}
 	default:
 	}
@@ -131,11 +141,16 @@ func (g *GrpcClient) UploadFile(ctx context.Context, clientID int64, filename st
 	if len(successfulChunks) > 0 {
 		_, err := g.masterCli.ConfirmWrite(ctx, &dfspb.ConfirmWriteRequest{Filename: filename, ChunkIds: successfulChunks})
 		if err != nil {
-			return assignedClient, fmt.Errorf("confirm write failed: %w", err)
+			return assignedClient, cleanupOnFailure(fmt.Errorf("confirm write failed: %w", err))
 		}
 	}
 
 	return assignedClient, nil
+}
+
+// UploadFileFromBytes retries safely because each attempt gets a fresh reader.
+func (g *GrpcClient) UploadFileFromBytes(ctx context.Context, clientID int64, filename string, payload []byte, username string) (int64, error) {
+	return g.UploadFile(ctx, clientID, filename, bytes.NewReader(payload), int64(len(payload)), username)
 }
 
 func writeChunkToServer(ctx context.Context, serverAddr string, chunkID string, data []byte, clientID int64, username string) error {
