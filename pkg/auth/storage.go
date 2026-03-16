@@ -12,7 +12,6 @@ var (
 	storageMutex sync.RWMutex
 	dataDir      = "data"
 	usersFile    = "users.json"
-	counterFile  = "counter.json"
 )
 
 // SetStorageDir sets the base directory for user data storage
@@ -27,15 +26,6 @@ func InitStorage() error {
 	// Create data directory
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return fmt.Errorf("failed to create data directory: %v", err)
-	}
-
-	// Initialize counter if it doesn't exist
-	counterPath := filepath.Join(dataDir, counterFile)
-	if _, err := os.Stat(counterPath); os.IsNotExist(err) {
-		counter := &Counter{NextUserID: 100000}
-		if err := saveCounter(counter); err != nil {
-			return err
-		}
 	}
 
 	// Initialize users file if it doesn't exist
@@ -139,26 +129,6 @@ func UpdateUserClientID(userID string, clientID int) error {
 	return saveUsers(storage)
 }
 
-// GenerateUserID generates a new 6-digit userID
-func GenerateUserID() (string, error) {
-	storageMutex.Lock()
-	defer storageMutex.Unlock()
-
-	counter, err := loadCounterUnsafe()
-	if err != nil {
-		return "", err
-	}
-
-	userID := fmt.Sprintf("%06d", counter.NextUserID)
-	counter.NextUserID++
-
-	if err := saveCounter(counter); err != nil {
-		return "", err
-	}
-
-	return userID, nil
-}
-
 // loadUsersUnsafe loads users without mutex (caller must handle locking)
 func loadUsersUnsafe() (*UserStorage, error) {
 	usersPath := filepath.Join(dataDir, usersFile)
@@ -177,31 +147,4 @@ func loadUsersUnsafe() (*UserStorage, error) {
 	}
 
 	return &storage, nil
-}
-
-// loadCounterUnsafe loads counter without mutex
-func loadCounterUnsafe() (*Counter, error) {
-	counterPath := filepath.Join(dataDir, counterFile)
-	data, err := os.ReadFile(counterPath)
-	if err != nil {
-		return nil, err
-	}
-
-	var counter Counter
-	if err := json.Unmarshal(data, &counter); err != nil {
-		return nil, err
-	}
-
-	return &counter, nil
-}
-
-// saveCounter saves counter to file
-func saveCounter(counter *Counter) error {
-	data, err := json.MarshalIndent(counter, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	counterPath := filepath.Join(dataDir, counterFile)
-	return os.WriteFile(counterPath, data, 0600)
 }

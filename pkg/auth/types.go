@@ -18,11 +18,6 @@ type UserStorage struct {
 	Users map[string]*User `json:"users"`
 }
 
-// Counter keeps track of the next user ID to assign
-type Counter struct {
-	NextUserID int `json:"nextUserId"`
-}
-
 // JWT Claims structure
 type CustomClaims struct {
 	UserID   string `json:"userId"`
