@@ -16,7 +16,7 @@ type mockClient struct {
 	UploadFunc   func(ctxCtx context.Context, clientID int64, filename string, data io.Reader, size int64, username string) (int64, error)
 	ListFunc     func(ctxCtx context.Context, clientID int64) ([]string, error)
 	DownloadFunc func(ctxCtx context.Context, clientID int64, filename string, destPath string, username string) error
-	DeleteFunc   func(ctxCtx context.Context, clientID int64, filename string) (int, error)
+	DeleteFunc   func(ctxCtx context.Context, clientID int64, filename string, username string) (int, error)
 }
 
 func (m *mockClient) UploadFile(ctx context.Context, clientID int64, filename string, data io.Reader, size int64, username string) (int64, error) {
@@ -37,9 +37,9 @@ func (m *mockClient) DownloadFile(ctx context.Context, clientID int64, filename 
 	}
 	return nil
 }
-func (m *mockClient) DeleteFile(ctx context.Context, clientID int64, filename string) (int, error) {
+func (m *mockClient) DeleteFile(ctx context.Context, clientID int64, filename string, username string) (int, error) {
 	if m.DeleteFunc != nil {
-		return m.DeleteFunc(ctx, clientID, filename)
+		return m.DeleteFunc(ctx, clientID, filename, username)
 	}
 	return 0, nil
 }
@@ -117,7 +117,9 @@ func TestDownloadHandler(t *testing.T) {
 
 func TestDeleteHandler(t *testing.T) {
 	mc := &mockClient{}
-	mc.DeleteFunc = func(ctx context.Context, clientID int64, filename string) (int, error) { return 3, nil }
+	mc.DeleteFunc = func(ctx context.Context, clientID int64, filename string, username string) (int, error) {
+		return 3, nil
+	}
 
 	r := NewRouter(mc)
 	req := httptest.NewRequest("DELETE", "/files/1/foo.txt", nil)

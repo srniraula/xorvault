@@ -62,7 +62,7 @@ func GetMasterAddrs() []string {
 				result = append(result, a)
 			}
 		}
-		if len(result) > 0 {
+		if len(result) > 0 { 
 			return result
 		}
 	}
