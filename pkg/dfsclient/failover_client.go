@@ -235,10 +235,15 @@ func (fc *FailoverClient) DeleteFile(ctx context.Context, clientID int64, filena
 }
 
 func (fc *FailoverClient) UploadFile(ctx context.Context, clientID int64, filename string, data io.Reader, size int64, username string) (int64, error) {
+	payload, readErr := io.ReadAll(data)
+	if readErr != nil {
+		return 0, fmt.Errorf("failed to read upload input: %w", readErr)
+	}
+
 	var result int64
 	err := fc.withRetry(func(c *GrpcClient) error {
 		var e error
-		result, e = c.UploadFile(ctx, clientID, filename, data, size, username)
+		result, e = c.UploadFileFromBytes(ctx, clientID, filename, payload, username)
 		return e
 	})
 	return result, err
