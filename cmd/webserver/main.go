@@ -13,6 +13,7 @@ import (
 
 	"dfs-project/pkg/auth"
 	"dfs-project/pkg/dfsclient"
+	"dfs-project/pkg/webserver"
 
 	"github.com/gin-gonic/gin"
 )
@@ -29,6 +30,9 @@ func main() {
 	if err := auth.InitStorage(); err != nil {
 		panic("Failed to initialize auth storage: " + err.Error())
 	}
+
+	// Initialize webserver logger (creates webserver_logs/ directory)
+	_ = webserver.GetWebServerLogger()
 
 	r := gin.Default()
 
@@ -216,11 +220,25 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 
 		tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("download_%d_%s", requestedClientID, filename))
 		_ = os.Remove(tmpPath)
-		defer os.Remove(tmpPath)
+
+		// Initialize download session logging
+		logger := webserver.GetWebServerLogger()
+		sessionID, _ := logger.LogDownloadSessionStart(username, filename, requestedClientID, tmpPath)
 
 		dctx, dcancel := context.WithTimeout(cRequestContext(c), 5*time.Minute)
 		defer dcancel()
+
 		if err := cli.DownloadFile(dctx, requestedClientID, filename, tmpPath, username); err != nil {
+			// Download failed
+			_ = logger.LogDownloadFailed(sessionID, err.Error())
+			// Clean up incomplete download
+			if _, statErr := os.Stat(tmpPath); statErr == nil {
+				if sizeFreed, _ := getFileSize(tmpPath); sizeFreed > 0 {
+					_ = logger.LogIncompleteDownloadCleanup(sessionID, tmpPath, sizeFreed)
+				}
+			}
+			os.Remove(tmpPath)
+
 			if err.Error() == "file not found" {
 				c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "file not found"})
 				return
@@ -231,6 +249,17 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 		c.File(tmpPath)
+
+		// Log download complete after file is served
+		_ = logger.LogDownloadComplete(sessionID)
+
+		// Clean up download file after response is sent
+		defer func() {
+			if sizeFreed, _ := getFileSize(tmpPath); sizeFreed > 0 {
+				_ = logger.LogIncompleteDownloadCleanup(sessionID, tmpPath, sizeFreed)
+			}
+			os.Remove(tmpPath)
+		}()
 	})
 
 	r.DELETE("/files/:clientId/:filename", auth.AuthMiddleware(), func(c *gin.Context) {
@@ -258,16 +287,26 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 		dctx, dcancel := context.WithTimeout(cRequestContext(c), 30*time.Second)
 		defer dcancel()
 
+		// Log delete initiation
+		logger := webserver.GetWebServerLogger()
+		_ = logger.LogFileDeleteInitiated(username, filename, requestedClientID)
+
 		deleted, err := cli.DeleteFile(dctx, requestedClientID, filename, username)
 		if err != nil {
 			// Map not found
 			if err.Error() == "file not found" {
+				_ = logger.LogFileDeleteFailed(username, filename, requestedClientID, "file not found")
 				c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "file not found"})
 				return
 			}
+			_ = logger.LogFileDeleteFailed(username, filename, requestedClientID, err.Error())
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
 			return
 		}
+
+		// Log successful deletion
+		_ = logger.LogFileDeleteSuccess(username, filename, requestedClientID, deleted)
+
 		msg := "deleted"
 		if deleted > 0 {
 			msg = fmt.Sprintf("deleted %d chunks", deleted)
@@ -315,11 +354,25 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 
 		tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("download_%d_%s", clientID, filename))
 		_ = os.Remove(tmpPath)
-		defer os.Remove(tmpPath)
+
+		// Initialize download session logging
+		logger := webserver.GetWebServerLogger()
+		sessionID, _ := logger.LogDownloadSessionStart(username, filename, clientID, tmpPath)
 
 		dctx, dcancel := context.WithTimeout(cRequestContext(c), 5*time.Minute)
 		defer dcancel()
+
 		if err := cli.DownloadFile(dctx, clientID, filename, tmpPath, username); err != nil {
+			// Download failed
+			_ = logger.LogDownloadFailed(sessionID, err.Error())
+			// Clean up incomplete download
+			if _, statErr := os.Stat(tmpPath); statErr == nil {
+				if sizeFreed, _ := getFileSize(tmpPath); sizeFreed > 0 {
+					_ = logger.LogIncompleteDownloadCleanup(sessionID, tmpPath, sizeFreed)
+				}
+			}
+			os.Remove(tmpPath)
+
 			if err.Error() == "file not found" {
 				c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "file not found"})
 				return
@@ -330,6 +383,17 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 		c.File(tmpPath)
+
+		// Log download complete after file is served
+		_ = logger.LogDownloadComplete(sessionID)
+
+		// Clean up download file after response is sent
+		defer func() {
+			if sizeFreed, _ := getFileSize(tmpPath); sizeFreed > 0 {
+				_ = logger.LogIncompleteDownloadCleanup(sessionID, tmpPath, sizeFreed)
+			}
+			os.Remove(tmpPath)
+		}()
 	})
 
 	// Simplified delete endpoint that uses authentication
@@ -353,16 +417,26 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 		dctx, dcancel := context.WithTimeout(cRequestContext(c), 30*time.Second)
 		defer dcancel()
 
+		// Log delete initiation
+		logger := webserver.GetWebServerLogger()
+		_ = logger.LogFileDeleteInitiated(username, filename, clientID)
+
 		deleted, err := cli.DeleteFile(dctx, clientID, filename, username)
 		if err != nil {
 			// Map not found
 			if err.Error() == "file not found" {
+				_ = logger.LogFileDeleteFailed(username, filename, clientID, "file not found")
 				c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "file not found"})
 				return
 			}
+			_ = logger.LogFileDeleteFailed(username, filename, clientID, err.Error())
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
 			return
 		}
+
+		// Log successful deletion
+		_ = logger.LogFileDeleteSuccess(username, filename, clientID, deleted)
+
 		msg := "deleted"
 		if deleted > 0 {
 			msg = fmt.Sprintf("deleted %d chunks", deleted)
@@ -425,6 +499,12 @@ func handleChunkUpload(c *gin.Context) {
 		return
 	}
 
+	// Get authenticated user for logging
+	username, _, ok := auth.GetUserFromContext(c)
+	if !ok {
+		username = "unknown"
+	}
+
 	// Create upload directory
 	uploadDir := filepath.Join(os.TempDir(), "dfs_uploads", uploadId)
 	if err := os.MkdirAll(uploadDir, 0755); err != nil {
@@ -451,8 +531,14 @@ func handleChunkUpload(c *gin.Context) {
 			CreatedAt:      time.Now(),
 		}
 		uploadStatuses[uploadId] = status
+		uploadStatusMu.Unlock()
+
+		// Log upload start (only on first chunk)
+		logger := webserver.GetWebServerLogger()
+		_ = logger.LogChunkUploadStart(username, uploadId, filename, totalChunks, uploadDir)
+	} else {
+		uploadStatusMu.Unlock()
 	}
-	uploadStatusMu.Unlock()
 
 	// Add chunk to uploaded list
 	status.mu.Lock()
@@ -467,12 +553,19 @@ func handleChunkUpload(c *gin.Context) {
 	if !found {
 		status.UploadedChunks = append(status.UploadedChunks, chunkIndex)
 	}
+	uploadedCount := len(status.UploadedChunks)
 	status.mu.Unlock()
+
+	// Log chunk stored
+	logger := webserver.GetWebServerLogger()
+	chunkSize := chunkFile.Size
+	totalSize := int64(uploadedCount) * chunkSize // Approximate
+	_ = logger.LogChunkStored(username, uploadId, chunkIndex, chunkSize, uploadedCount, totalChunks, totalSize, uploadDir)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success":        true,
 		"chunkIndex":     chunkIndex,
-		"uploadedChunks": len(status.UploadedChunks),
+		"uploadedChunks": uploadedCount,
 		"totalChunks":    totalChunks,
 	})
 }
@@ -524,14 +617,27 @@ func handleFinalizeUpload(cli dfsclient.Client) gin.HandlerFunc {
 		}
 		status.mu.RUnlock()
 
-		// Reassemble file
 		uploadDir := filepath.Join(os.TempDir(), "dfs_uploads", uploadId)
+
+		// Log: all chunks uploaded, about to reassemble
+		logger := webserver.GetWebServerLogger()
+		_ = logger.LogChunkUploadComplete(username, uploadId, filename, status.TotalChunks, totalSize, uploadDir)
+
+		// Reassemble file
 		assembledFile := filepath.Join(uploadDir, "assembled_file")
 
+		// Log: reassembly start
+		_ = logger.LogChunkReassemblyStart(username, uploadId, uploadDir)
+
+		reassemblyStart := time.Now()
 		if err := reassembleChunks(uploadDir, assembledFile, status.TotalChunks); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to reassemble file: " + err.Error()})
 			return
 		}
+		reassemblyMs := time.Since(reassemblyStart).Milliseconds()
+
+		// Log: reassembly complete
+		_ = logger.LogChunkReassemblyComplete(username, uploadId, totalSize, reassemblyMs)
 
 		// Open assembled file for upload to DFS
 		file, err := os.Open(assembledFile)
@@ -547,10 +653,23 @@ func handleFinalizeUpload(cli dfsclient.Client) gin.HandlerFunc {
 
 		// cleanupUpload removes both the temp directory and the status map entry.
 		cleanupUpload := func() {
+			// Calculate size freed before deleting
+			sizeFreed := int64(0)
+			filepath.Walk(uploadDir, func(path string, info os.FileInfo, err error) error {
+				if err == nil && !info.IsDir() {
+					sizeFreed += info.Size()
+				}
+				return nil
+			})
+
 			os.RemoveAll(uploadDir)
 			uploadStatusMu.Lock()
 			delete(uploadStatuses, uploadId)
 			uploadStatusMu.Unlock()
+
+			// Log cleanup
+			logger := webserver.GetWebServerLogger()
+			_ = logger.LogChunkUploadCleanup(username, uploadId, uploadDir, sizeFreed)
 		}
 
 		assignedClient, err := cli.UploadFile(uctx, int64(clientID), filename, file, totalSize, username)
@@ -637,6 +756,15 @@ func reassembleChunks(uploadDir, outputPath string, totalChunks int) error {
 
 func cRequestContext(c *gin.Context) context.Context { return c.Request.Context() }
 
+// getFileSize returns the size of a file, or 0 if file doesn't exist
+func getFileSize(path string) (int64, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	return info.Size(), nil
+}
+
 // startUploadSweeper runs in a background goroutine and periodically evicts
 // abandoned chunked uploads — those where /files/chunk was called but
 // /files/finalize was never called (browser closed, network dropped, etc.).
@@ -666,11 +794,44 @@ func startUploadSweeper(sweepInterval, maxAge time.Duration) {
 
 		// Remove each expired entry from the map and from disk.
 		uploadStatusMu.Lock()
+		uploadsDeleted := 0
+		var totalSizeFreed int64 = 0
+		var deletedIds []string
+
+		logger := webserver.GetWebServerLogger()
+
 		for _, id := range expired {
 			delete(uploadStatuses, id)
 			uploadDir := filepath.Join(os.TempDir(), "dfs_uploads", id)
+
+			// Calculate size freed before deleting
+			sizeFreed := int64(0)
+			filepath.Walk(uploadDir, func(path string, info os.FileInfo, err error) error {
+				if err == nil && !info.IsDir() {
+					sizeFreed += info.Size()
+				}
+				return nil
+			})
+
 			_ = os.RemoveAll(uploadDir)
+
+			// Log abandoned upload cleanup
+			_ = logger.LogAbandonedUploadCleanup(id, uploadDir, sizeFreed)
+
+			uploadsDeleted++
+			totalSizeFreed += sizeFreed
+			deletedIds = append(deletedIds, id)
 		}
 		uploadStatusMu.Unlock()
+
+		// Log sweep completion summary
+		sweepSummary := webserver.UploadSweepSummary{
+			SweepTime:        time.Now(),
+			UploadsChecked:   len(uploadStatuses),
+			UploadsDeleted:   uploadsDeleted,
+			TotalSizeFreed:   totalSizeFreed,
+			AbandonedUploads: deletedIds,
+		}
+		_ = logger.LogUploadSweepComplete(sweepSummary)
 	}
 }
