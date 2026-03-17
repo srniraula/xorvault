@@ -36,6 +36,7 @@ export default function FilesPage({ authToken, username }) {
   const [toasts, setToasts] = useState([])
   const [deletingFile, setDeletingFile] = useState(null)
   const [downloadingFile, setDownloadingFile] = useState(null)
+  const [downloadProgress, setDownloadProgress] = useState({})
 
   const authHeaders = { Authorization: `Bearer ${authToken}` }
 
@@ -79,23 +80,48 @@ export default function FilesPage({ authToken, username }) {
     }
   }
 
-  const onDownload = async (filename) => {
+  const onDownload = (filename) => {
     setDownloadingFile(filename)
-    try {
-      const res = await fetch(`${API_BASE}/files/download/${encodeURIComponent(filename)}`, {
-        headers: authHeaders
-      })
-      if (!res.ok) throw new Error('Download failed')
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url; a.download = filename; a.click()
-      URL.revokeObjectURL(url)
-    } catch (err) {
-      addToast('danger', 'Download failed: ' + err.message)
-    } finally {
+    setDownloadProgress(prev => ({ ...prev, [filename]: 0 }))
+    
+    const xhr = new XMLHttpRequest()
+    
+    xhr.addEventListener('progress', (e) => {
+      if (e.lengthComputable) {
+        const percentComplete = (e.loaded / e.total) * 100
+        setDownloadProgress(prev => ({ ...prev, [filename]: percentComplete }))
+      }
+    })
+    
+    xhr.addEventListener('load', () => {
+      if (xhr.status === 200) {
+        const blob = xhr.response
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = filename
+        document.body.appendChild(a)
+        a.click()
+        window.URL.revokeObjectURL(url)
+        document.body.removeChild(a)
+        addToast('success', `"${filename}" downloaded`)
+      } else {
+        addToast('danger', 'Download failed')
+      }
       setDownloadingFile(null)
-    }
+      setDownloadProgress(prev => { const newState = { ...prev }; delete newState[filename]; return newState })
+    })
+    
+    xhr.addEventListener('error', () => {
+      addToast('danger', 'Download error')
+      setDownloadingFile(null)
+      setDownloadProgress(prev => { const newState = { ...prev }; delete newState[filename]; return newState })
+    })
+    
+    xhr.open('GET', `${API_BASE}/files/download/${encodeURIComponent(filename)}`)
+    xhr.setRequestHeader('Authorization', authHeaders.Authorization)
+    xhr.responseType = 'blob'
+    xhr.send()
   }
 
   return (
@@ -172,40 +198,59 @@ export default function FilesPage({ authToken, username }) {
                 <thead>
                   <tr style={{ background: '#f8f9fa', fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#6c757d' }}>
                     <th style={{ width: 48 }} className="ps-4"></th>
-                    <th>Filename</th>
-                    <th style={{ width: 200 }} className="text-end pe-4">Actions</th>
+                    <th colSpan="2">Filename</th>
                   </tr>
                 </thead>
                 <tbody>
                   {files.map(f => (
-                    <tr key={f}>
-                      <td className="ps-4">
-                        <i className={`bi ${fileIcon(f)} fs-5`}></i>
-                      </td>
-                      <td>
-                        <span className="fw-medium" style={{ wordBreak: 'break-all' }}>{f}</span>
-                      </td>
-                      <td className="text-end pe-3">
-                        <button
-                          className="btn btn-sm btn-outline-primary me-2"
-                          onClick={() => onDownload(f)}
-                          disabled={downloadingFile === f}
-                          title="Download">
-                          {downloadingFile === f
-                            ? <span className="spinner-border spinner-border-sm"></span>
-                            : <><i className="bi bi-download me-1"></i>Download</>}
-                        </button>
-                        <button
-                          className="btn btn-sm btn-outline-danger"
-                          onClick={() => onDelete(f)}
-                          disabled={deletingFile === f}
-                          title="Delete">
-                          {deletingFile === f
-                            ? <span className="spinner-border spinner-border-sm"></span>
-                            : <><i className="bi bi-trash me-1"></i>Delete</>}
-                        </button>
-                      </td>
-                    </tr>
+                    <React.Fragment key={f}>
+                      <tr>
+                        <td className="ps-4">
+                          <i className={`bi ${fileIcon(f)} fs-5`}></i>
+                        </td>
+                        <td colSpan="2">
+                          <span className="fw-medium" style={{ wordBreak: 'break-all' }}>{f}</span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td colSpan="2" className="ps-4 py-2">
+                          <div className="d-flex justify-content-between align-items-center">
+                            {downloadingFile === f && downloadProgress[f] !== undefined ? (
+                              <div style={{ flex: 1, marginRight: '0.5rem' }}>
+                                <div className="progress" style={{ height: '1.5rem' }}>
+                                  <div
+                                    className="progress-bar progress-bar-striped progress-bar-animated"
+                                    style={{ width: `${downloadProgress[f]}%` }}
+                                    role="progressbar"
+                                    aria-valuenow={downloadProgress[f]}
+                                    aria-valuemin="0"
+                                    aria-valuemax="100">
+                                    {Math.round(downloadProgress[f])}%
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <button
+                                className="btn btn-sm btn-outline-primary"
+                                onClick={() => onDownload(f)}
+                                disabled={downloadingFile !== null}
+                                title="Download">
+                                <i className="bi bi-download me-1"></i>Download
+                              </button>
+                            )}
+                            <button
+                              className="btn btn-sm btn-outline-danger"
+                              onClick={() => onDelete(f)}
+                              disabled={deletingFile === f}
+                              title="Delete">
+                              {deletingFile === f
+                                ? <span className="spinner-border spinner-border-sm"></span>
+                                : <><i className="bi bi-trash me-1"></i>Delete</>}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    </React.Fragment>
                   ))}
                 </tbody>
               </table>
@@ -213,6 +258,8 @@ export default function FilesPage({ authToken, username }) {
           )}
         </div>
       </div>
+
+
     </>
   )
 }
