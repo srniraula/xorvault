@@ -174,6 +174,35 @@ func (wl *WebServerLogger) LogChunkUploadCleanup(username, uploadID string, tmpP
 }
 
 // ============================================================================
+// SIMPLE UPLOAD LOGGING (for files < 10MB, non-chunked)
+// ============================================================================
+
+// LogSimpleUploadStart logs the start of a simple file upload
+// filename: name of file being uploaded
+// fileSize: size of file in bytes
+func (wl *WebServerLogger) LogSimpleUploadStart(username, filename string, fileSize int64) error {
+	details := fmt.Sprintf("filename=%s, fileSize=%d bytes", filename, fileSize)
+	return wl.writeToUserLog(username, "SIMPLE_UPLOAD_START", details)
+}
+
+// LogSimpleUploadComplete logs when a simple file upload completes successfully
+// filename: name of file uploaded
+// fileSize: size of file in bytes
+func (wl *WebServerLogger) LogSimpleUploadComplete(username, filename string, fileSize int64) error {
+	details := fmt.Sprintf("filename=%s, fileSize=%d bytes", filename, fileSize)
+	return wl.writeToUserLog(username, "SIMPLE_UPLOAD_COMPLETE", details)
+}
+
+// LogSimpleUploadFailed logs when a simple file upload fails
+// filename: name of file that failed to upload
+// fileSize: size of file in bytes
+// reason: reason for failure
+func (wl *WebServerLogger) LogSimpleUploadFailed(username, filename string, fileSize int64, reason string) error {
+	details := fmt.Sprintf("filename=%s, fileSize=%d bytes, reason=%s", filename, fileSize, reason)
+	return wl.writeToUserLog(username, "SIMPLE_UPLOAD_FAILED", details)
+}
+
+// ============================================================================
 // DOWNLOAD SESSION LOGGING
 // ============================================================================
 
@@ -326,6 +355,30 @@ func (wl *WebServerLogger) LogIncompleteDownloadCleanup(sessionID, tmpPath strin
 
 	details := fmt.Sprintf("sessionId=%s, tmpPath=%s, sizeFreed=%d bytes, username=%s", sessionID, tmpPath, sizeFreed, session.Username)
 	return wl.writeToCleanupLog("INCOMPLETE_DOWNLOAD_CLEANUP", details)
+}
+
+// LogDownloadCleanup logs when a successful download is cleaned up from /tmp/
+// sessionID: download session that was cleaned
+// tmpPath: path to temporary file
+// sizeFreed: bytes freed
+func (wl *WebServerLogger) LogDownloadCleanup(sessionID, tmpPath string, sizeFreed int64) error {
+	wl.sessionMutex.Lock()
+	session, exists := wl.sessions[sessionID]
+	wl.sessionMutex.Unlock()
+
+	if !exists {
+		// Cleanup log for unknown session
+		return wl.writeToCleanupLog("DOWNLOAD_CLEANUP", fmt.Sprintf("sessionId=%s, tmpPath=%s, sizeFreed=%d bytes", sessionID, tmpPath, sizeFreed))
+	}
+
+	// Clean up session from memory after logging
+	wl.sessionMutex.Lock()
+	delete(wl.sessions, sessionID)
+	wl.sessionMutex.Unlock()
+
+	// Log to user log (not cleanup.log)
+	details := fmt.Sprintf("sessionId=%s, tmpPath=%s, sizeFreed=%d bytes", sessionID, tmpPath, sizeFreed)
+	return wl.writeToUserLog(session.Username, "DOWNLOAD_CLEANUP", details)
 }
 
 // LogAbandonedUploadCleanup logs when an abandoned upload is cleaned from /tmp/

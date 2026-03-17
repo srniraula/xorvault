@@ -106,12 +106,18 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 
 		size := fileHeader.Size
 
+		// Log simple upload start
+		logger := webserver.GetWebServerLogger()
+		_ = logger.LogSimpleUploadStart(username, filename, size)
+
 		// Use a request-scoped timeout for uploads
 		uctx, cancel := context.WithTimeout(cRequestContext(c), 10*time.Minute)
 		defer cancel()
 
 		assignedClient, err := cli.UploadFile(uctx, int64(clientID), filename, f, size, username)
 		if err != nil {
+			// Log upload failure
+			_ = logger.LogSimpleUploadFailed(username, filename, size, err.Error())
 			// Map common errors to HTTP status
 			if err.Error() == "no healthy chunkservers" {
 				c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": err.Error()})
@@ -139,6 +145,9 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 			c.JSON(http.StatusCreated, gin.H{"success": true, "clientId": assignedClient, "filename": filename, "warning": "uploaded but file not listed yet"})
 			return
 		}
+
+		// Log successful upload
+		_ = logger.LogSimpleUploadComplete(username, filename, size)
 
 		c.JSON(http.StatusCreated, gin.H{"success": true, "clientId": assignedClient, "filename": filename})
 	})
@@ -218,7 +227,12 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 			return
 		}
 
-		tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("download_%d_%s", requestedClientID, filename))
+		downloadDir := filepath.Join(os.TempDir(), "dfs_downloads")
+		if err := os.MkdirAll(downloadDir, 0755); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to create download directory"})
+			return
+		}
+		tmpPath := filepath.Join(downloadDir, filename)
 		_ = os.Remove(tmpPath)
 
 		// Initialize download session logging
@@ -256,7 +270,7 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 		// Clean up download file after response is sent
 		defer func() {
 			if sizeFreed, _ := getFileSize(tmpPath); sizeFreed > 0 {
-				_ = logger.LogIncompleteDownloadCleanup(sessionID, tmpPath, sizeFreed)
+				_ = logger.LogDownloadCleanup(sessionID, tmpPath, sizeFreed)
 			}
 			os.Remove(tmpPath)
 		}()
@@ -352,7 +366,12 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 			return
 		}
 
-		tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("download_%d_%s", clientID, filename))
+		downloadDir := filepath.Join(os.TempDir(), "dfs_downloads")
+		if err := os.MkdirAll(downloadDir, 0755); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to create download directory"})
+			return
+		}
+		tmpPath := filepath.Join(downloadDir, filename)
 		_ = os.Remove(tmpPath)
 
 		// Initialize download session logging
@@ -390,7 +409,7 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 		// Clean up download file after response is sent
 		defer func() {
 			if sizeFreed, _ := getFileSize(tmpPath); sizeFreed > 0 {
-				_ = logger.LogIncompleteDownloadCleanup(sessionID, tmpPath, sizeFreed)
+				_ = logger.LogDownloadCleanup(sessionID, tmpPath, sizeFreed)
 			}
 			os.Remove(tmpPath)
 		}()
@@ -455,6 +474,7 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 // ChunkUploadStatus tracks the status of chunked uploads
 type ChunkUploadStatus struct {
 	UploadId       string    `json:"uploadId"`
+	Username       string    `json:"username"`
 	TotalChunks    int       `json:"totalChunks"`
 	UploadedChunks []int     `json:"uploadedChunks"`
 	Filename       string    `json:"filename"`
@@ -525,6 +545,7 @@ func handleChunkUpload(c *gin.Context) {
 	if !exists {
 		status = &ChunkUploadStatus{
 			UploadId:       uploadId,
+			Username:       username,
 			TotalChunks:    totalChunks,
 			UploadedChunks: make([]int, 0),
 			Filename:       filename,
@@ -801,6 +822,7 @@ func startUploadSweeper(sweepInterval, maxAge time.Duration) {
 		logger := webserver.GetWebServerLogger()
 
 		for _, id := range expired {
+			status := uploadStatuses[id]
 			delete(uploadStatuses, id)
 			uploadDir := filepath.Join(os.TempDir(), "dfs_uploads", id)
 
@@ -815,8 +837,11 @@ func startUploadSweeper(sweepInterval, maxAge time.Duration) {
 
 			_ = os.RemoveAll(uploadDir)
 
-			// Log abandoned upload cleanup
+			// Log abandoned upload cleanup to cleanup log
 			_ = logger.LogAbandonedUploadCleanup(id, uploadDir, sizeFreed)
+
+			// Log abandoned upload to user's personal log file
+			_ = logger.LogChunkUploadAbandoned(status.Username, id, uploadDir, sizeFreed)
 
 			uploadsDeleted++
 			totalSizeFreed += sizeFreed
