@@ -1,4 +1,6 @@
 class ChunkedUploader {
+    static CONCURRENCY_WINDOW = 5;  // Upload 5 chunks in parallel
+
     constructor(file, apiBase, authToken, chunkSize = 1024 * 1024) { // 1MB chunks
         this.file = file;
         this.apiBase = apiBase;
@@ -9,6 +11,7 @@ class ChunkedUploader {
         this.onProgress = null;
         this.onError = null;
         this.onComplete = null;
+        this.completedChunks = 0;  // Track completed chunks for progress
     }
 
     generateUploadId() {
@@ -23,15 +26,15 @@ class ChunkedUploader {
 
     async upload(filename) {
         try {
-            for (let chunkIndex = 0; chunkIndex < this.totalChunks; chunkIndex++) {
-                await this.uploadChunk(chunkIndex, filename);
-                
-                // Update progress
-                const progress = Math.round(((chunkIndex + 1) / this.totalChunks) * 100);
-                if (this.onProgress) {
-                    this.onProgress(progress);
-                }
-            }
+            // Create array of chunk indices [0, 1, 2, ..., totalChunks-1]
+            const chunkIndices = Array.from({ length: this.totalChunks }, (_, i) => i);
+            
+            // Execute concurrent uploads with sliding window
+            await this.executeWithConcurrency(
+                chunkIndices,
+                (chunkIndex) => this.uploadChunk(chunkIndex, filename),
+                ChunkedUploader.CONCURRENCY_WINDOW
+            );
             
             // Finalize upload
             const result = await this.finalizeUpload(filename);
@@ -74,6 +77,52 @@ class ChunkedUploader {
         }
         
         return await response.json();
+    }
+
+    async executeWithConcurrency(indices, asyncFn, windowSize) {
+        const inFlight = new Map();  // Map of index -> promise
+        const queue = [...indices];
+        
+        while (queue.length > 0 || inFlight.size > 0) {
+            // Fill the window with new tasks
+            while (inFlight.size < windowSize && queue.length > 0) {
+                const idx = queue.shift();
+                
+                // Wrap the promise to capture completion and handle errors
+                const promise = asyncFn(idx)
+                    .then((result) => {
+                        inFlight.delete(idx);
+                        this.completedChunks++;
+                        this.updateProgress();
+                        return result;
+                    })
+                    .catch((error) => {
+                        inFlight.delete(idx);
+                        throw { chunkIdx: idx, error };
+                    });
+                
+                inFlight.set(idx, promise);
+            }
+            
+            // If no tasks in flight, we're done
+            if (inFlight.size === 0) break;
+            
+            // Wait for at least one task to complete
+            try {
+                await Promise.race([...inFlight.values()]);
+            } catch (e) {
+                // Error occurred—clean up all in-flight promises and propagate
+                inFlight.clear();
+                throw new Error(`Chunk ${e.chunkIdx} upload failed: ${e.error.message}`);
+            }
+        }
+    }
+
+    updateProgress() {
+        if (this.onProgress) {
+            const progress = Math.round((this.completedChunks / this.totalChunks) * 100);
+            this.onProgress(progress);
+        }
     }
 
     async finalizeUpload(filename) {

@@ -13,13 +13,13 @@ import (
 
 // mockClient implements dfsclient.Client for tests
 type mockClient struct {
-	UploadFunc   func(ctxCtx context.Context, clientID int64, filename string, data io.Reader, size int64, username string) (int64, error)
+	UploadFunc   func(ctxCtx context.Context, clientID int64, filename string, data io.ReadSeeker, size int64, username string) (int64, error)
 	ListFunc     func(ctxCtx context.Context, clientID int64) ([]string, error)
 	DownloadFunc func(ctxCtx context.Context, clientID int64, filename string, destPath string, username string) error
 	DeleteFunc   func(ctxCtx context.Context, clientID int64, filename string, username string) (int, error)
 }
 
-func (m *mockClient) UploadFile(ctx context.Context, clientID int64, filename string, data io.Reader, size int64, username string) (int64, error) {
+func (m *mockClient) UploadFile(ctx context.Context, clientID int64, filename string, data io.ReadSeeker, size int64, username string) (int64, error) {
 	if m.UploadFunc != nil {
 		return m.UploadFunc(ctx, clientID, filename, data, size, username)
 	}
@@ -68,7 +68,7 @@ func TestListHandler(t *testing.T) {
 
 func TestUploadHandler(t *testing.T) {
 	mc := &mockClient{}
-	mc.UploadFunc = func(ctx context.Context, clientID int64, filename string, data io.Reader, size int64, username string) (int64, error) {
+	mc.UploadFunc = func(ctx context.Context, clientID int64, filename string, data io.ReadSeeker, size int64, username string) (int64, error) {
 		return 123, nil
 	}
 	mc.ListFunc = func(ctx context.Context, clientID int64) ([]string, error) { return []string{"test.txt"}, nil }

@@ -52,6 +52,10 @@ func main() {
 func NewRouter(cli dfsclient.Client) *gin.Engine {
 	r := gin.Default()
 
+	// Start background goroutine that cleans up abandoned uploads.
+	// Runs every 5 minutes and removes uploads older than 10 minutes.
+	go startUploadSweeper(5*time.Minute, 10*time.Minute)
+
 	// Simple CORS for dev: allow requests from frontend dev server
 	r.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
@@ -212,6 +216,7 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 
 		tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("download_%d_%s", requestedClientID, filename))
 		_ = os.Remove(tmpPath)
+		defer os.Remove(tmpPath)
 
 		dctx, dcancel := context.WithTimeout(cRequestContext(c), 5*time.Minute)
 		defer dcancel()
@@ -226,11 +231,6 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 		c.File(tmpPath)
-		// remove temp file after a short delay to allow transfer to finish
-		go func() {
-			time.Sleep(1 * time.Second)
-			_ = os.Remove(tmpPath)
-		}()
 	})
 
 	r.DELETE("/files/:clientId/:filename", auth.AuthMiddleware(), func(c *gin.Context) {
@@ -315,6 +315,7 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 
 		tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("download_%d_%s", clientID, filename))
 		_ = os.Remove(tmpPath)
+		defer os.Remove(tmpPath)
 
 		dctx, dcancel := context.WithTimeout(cRequestContext(c), 5*time.Minute)
 		defer dcancel()
@@ -329,11 +330,6 @@ func NewRouter(cli dfsclient.Client) *gin.Engine {
 
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 		c.File(tmpPath)
-		// remove temp file after a short delay to allow transfer to finish
-		go func() {
-			time.Sleep(1 * time.Second)
-			_ = os.Remove(tmpPath)
-		}()
 	})
 
 	// Simplified delete endpoint that uses authentication
@@ -549,20 +545,29 @@ func handleFinalizeUpload(cli dfsclient.Client) gin.HandlerFunc {
 		uctx, cancel := context.WithTimeout(cRequestContext(c), 15*time.Minute) // Extended timeout for large files
 		defer cancel()
 
+		// cleanupUpload removes both the temp directory and the status map entry.
+		cleanupUpload := func() {
+			os.RemoveAll(uploadDir)
+			uploadStatusMu.Lock()
+			delete(uploadStatuses, uploadId)
+			uploadStatusMu.Unlock()
+		}
+
 		assignedClient, err := cli.UploadFile(uctx, int64(clientID), filename, file, totalSize, username)
 		if err != nil {
+			// Also clean up on failure — previously this was skipped, leaking /tmp
+			go func() {
+				time.Sleep(1 * time.Minute)
+				cleanupUpload()
+			}()
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
 			return
 		}
 
-		// Cleanup
+		// Cleanup after success
 		go func() {
-			time.Sleep(1 * time.Minute) // Give some time before cleanup
-			os.RemoveAll(uploadDir)
-
-			uploadStatusMu.Lock()
-			delete(uploadStatuses, uploadId)
-			uploadStatusMu.Unlock()
+			time.Sleep(1 * time.Minute) // Brief delay so the file handle is fully released
+			cleanupUpload()
 		}()
 
 		c.JSON(http.StatusCreated, gin.H{
@@ -631,3 +636,41 @@ func reassembleChunks(uploadDir, outputPath string, totalChunks int) error {
 }
 
 func cRequestContext(c *gin.Context) context.Context { return c.Request.Context() }
+
+// startUploadSweeper runs in a background goroutine and periodically evicts
+// abandoned chunked uploads — those where /files/chunk was called but
+// /files/finalize was never called (browser closed, network dropped, etc.).
+//
+// sweepInterval: how often to scan (e.g. every 5 minutes)
+// maxAge:        how old an upload must be before it is considered abandoned (e.g. 10 minutes)
+func startUploadSweeper(sweepInterval, maxAge time.Duration) {
+	ticker := time.NewTicker(sweepInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		now := time.Now()
+
+		// Collect expired upload IDs under a short read lock.
+		uploadStatusMu.RLock()
+		var expired []string
+		for id, status := range uploadStatuses {
+			if now.Sub(status.CreatedAt) > maxAge {
+				expired = append(expired, id)
+			}
+		}
+		uploadStatusMu.RUnlock()
+
+		if len(expired) == 0 {
+			continue
+		}
+
+		// Remove each expired entry from the map and from disk.
+		uploadStatusMu.Lock()
+		for _, id := range expired {
+			delete(uploadStatuses, id)
+			uploadDir := filepath.Join(os.TempDir(), "dfs_uploads", id)
+			_ = os.RemoveAll(uploadDir)
+		}
+		uploadStatusMu.Unlock()
+	}
+}

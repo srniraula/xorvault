@@ -3,7 +3,6 @@
 package dfsclient
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -18,13 +17,15 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-const CHUNK_SIZE = 1 * 1024 * 1024
+// CHUNK_SIZE is an alias for config.ChunkSize kept for internal readability.
+// To change the chunk size, edit pkg/config/config.go — do NOT touch this line.
+const CHUNK_SIZE = config.ChunkSize
 
 // Interface exposes high-level DFS operations used by HTTP handlers
 type Client interface {
 	ListFiles(ctx context.Context, clientID int64) ([]string, error)
 	DeleteFile(ctx context.Context, clientID int64, filename string, username string) (int, error)
-	UploadFile(ctx context.Context, clientID int64, filename string, data io.Reader, size int64, username string) (int64, error)
+	UploadFile(ctx context.Context, clientID int64, filename string, data io.ReadSeeker, size int64, username string) (int64, error)
 	DownloadFile(ctx context.Context, clientID int64, filename string, destPath string, username string) error
 }
 
@@ -93,7 +94,7 @@ func (g *GrpcClient) DeleteFile(ctx context.Context, clientID int64, filename st
 }
 
 // UploadFile uploads content from reader to the DFS and returns the assigned clientID
-func (g *GrpcClient) UploadFile(ctx context.Context, clientID int64, filename string, data io.Reader, size int64, username string) (int64, error) {
+func (g *GrpcClient) UploadFile(ctx context.Context, clientID int64, filename string, data io.ReadSeeker, size int64, username string) (int64, error) {
 	// Create file (master may assign clientID if 0)
 	createReq := &dfspb.CreateFileRequest{Filename: filename, TotalSize: size, ClientId: clientID, Username: username}
 	createResp, err := g.masterCli.CreateFile(ctx, createReq)
@@ -148,32 +149,46 @@ func (g *GrpcClient) UploadFile(ctx context.Context, clientID int64, filename st
 	return assignedClient, nil
 }
 
-// UploadFileFromBytes retries safely because each attempt gets a fresh reader.
-func (g *GrpcClient) UploadFileFromBytes(ctx context.Context, clientID int64, filename string, payload []byte, username string) (int64, error) {
-	return g.UploadFile(ctx, clientID, filename, bytes.NewReader(payload), int64(len(payload)), username)
-}
+
 
 func writeChunkToServer(ctx context.Context, serverAddr string, chunkID string, data []byte, clientID int64, username string) error {
 	if serverAddr == "" {
 		return fmt.Errorf("empty server address")
 	}
 
-	// Use project convention: grpc.NewClient to create a connection
-	conn, err := grpc.NewClient(serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return fmt.Errorf("grpc new client failed: %w", err)
-	}
-	defer conn.Close()
-
-	chunkCli := dfspb.NewChunkServerClient(conn)
 	checksum := calculateChecksum(data)
+	var lastErr error
 
-	// Use same ctx for RPC; caller should set an appropriate timeout
-	_, err = chunkCli.WriteChunk(ctx, &dfspb.WriteChunkRequest{ChunkId: chunkID, Data: data, Checksum: checksum, ClientId: clientID, Username: username})
-	if err != nil {
+	for attempt := 0; attempt <= maxChunkRetries; attempt++ {
+		conn, err := defaultPool.Get(serverAddr)
+		if err != nil {
+			lastErr = err
+			defaultPool.Evict(serverAddr)
+			continue
+		}
+
+		chunkCli := dfspb.NewChunkServerClient(conn)
+		_, err = chunkCli.WriteChunk(ctx, &dfspb.WriteChunkRequest{
+			ChunkId:  chunkID,
+			Data:     data,
+			Checksum: checksum,
+			ClientId: clientID,
+			Username: username,
+		})
+		if err == nil {
+			return nil
+		}
+
+		lastErr = err
+		if isTransientErr(err) {
+			defaultPool.Evict(serverAddr)
+			continue
+		}
+		// Non-transient error (e.g. invalid chunk ID) — don't retry
 		return err
 	}
-	return nil
+
+	return fmt.Errorf("WriteChunk to %s failed after %d attempts: %w", serverAddr, maxChunkRetries+1, lastErr)
 }
 
 // chunkUploader is a test hook; by default points to real writeChunkToServer implementation

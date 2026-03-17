@@ -234,16 +234,15 @@ func (fc *FailoverClient) DeleteFile(ctx context.Context, clientID int64, filena
 	return result, err
 }
 
-func (fc *FailoverClient) UploadFile(ctx context.Context, clientID int64, filename string, data io.Reader, size int64, username string) (int64, error) {
-	payload, readErr := io.ReadAll(data)
-	if readErr != nil {
-		return 0, fmt.Errorf("failed to read upload input: %w", readErr)
-	}
-
+func (fc *FailoverClient) UploadFile(ctx context.Context, clientID int64, filename string, data io.ReadSeeker, size int64, username string) (int64, error) {
 	var result int64
 	err := fc.withRetry(func(c *GrpcClient) error {
+		// Rewind the reader to the beginning for each attempt (important on retry)
+		if _, seekErr := data.Seek(0, io.SeekStart); seekErr != nil {
+			return fmt.Errorf("failed to rewind upload data: %w", seekErr)
+		}
 		var e error
-		result, e = c.UploadFileFromBytes(ctx, clientID, filename, payload, username)
+		result, e = c.UploadFile(ctx, clientID, filename, data, size, username)
 		return e
 	})
 	return result, err

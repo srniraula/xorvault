@@ -642,9 +642,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// CHUNK_SIZE defines how large each chunk should be (1 MB = 1024 * 1024 bytes)
-// Files are split into chunks of this size before uploading to chunk servers
-const CHUNK_SIZE = 1 * 1024 * 1024
+// CHUNK_SIZE is an alias for config.ChunkSize. Edit pkg/config/config.go to change it.
+const CHUNK_SIZE = config.ChunkSize
 
 // resolveFilePath checks if file exists as-is, otherwise prepends files/ directory
 // For upload: looks in files/ directory if not found in current dir
@@ -797,6 +796,22 @@ func upload(localPath string, myID int64) {
 		}
 	}
 
+	// rollbackUpload removes the file entry from master metadata so the user
+	// can retry the upload. Without this, a failed upload permanently reserves
+	// the filename ("file already exists" on next attempt).
+	rollbackUpload := func() {
+		rctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if _, derr := master.DeleteFile(rctx, &dfspb.DeleteFileRequest{
+			ClientId: createResp.ClientId,
+			Filename: filename,
+		}); derr != nil {
+			log.Printf("Warning: rollback DeleteFile failed: %v", derr)
+		} else {
+			log.Printf("Rolled back metadata for %s after failed upload", filename)
+		}
+	}
+
 	// ── METRICS: record stripe count from master allocation ──────────────────
 	opCtx.AddStripes(len(createResp.Stripes))
 	// ────────────────────────────────────────────────────────────────────────
@@ -812,6 +827,7 @@ func upload(localPath string, myID int64) {
 	select {
 	case err := <-errChan:
 		if err != nil {
+			rollbackUpload()
 			RecordMetrics(opCtx.Finalise(err.Error()))
 			log.Fatal("Failed to stream file:", err)
 		}
@@ -825,6 +841,7 @@ func upload(localPath string, myID int64) {
 	opCtx.AddParity(DrainParityMs()) // drain XOR parity time accumulated in stripe_reader
 	// ────────────────────────────────────────────────────────────────────────
 	if err != nil {
+		rollbackUpload()
 		RecordMetrics(opCtx.Finalise(err.Error()))
 		log.Fatal("Streaming upload failed:", err)
 	}
@@ -832,6 +849,7 @@ func upload(localPath string, myID int64) {
 	select {
 	case err := <-errChan:
 		if err != nil {
+			rollbackUpload()
 			RecordMetrics(opCtx.Finalise(err.Error()))
 			log.Fatal("Error during file streaming:", err)
 		}
@@ -841,6 +859,7 @@ func upload(localPath string, myID int64) {
 	if !ackQueue.IsEmpty() {
 		pendingChunks := ackQueue.GetPending()
 		log.Printf("Warning: %d chunks failed to upload: %v", len(pendingChunks), pendingChunks)
+		rollbackUpload()
 		RecordMetrics(opCtx.Finalise("upload incomplete — not all chunks confirmed"))
 		log.Fatal("Upload incomplete - not all chunks were confirmed")
 	}
@@ -862,6 +881,7 @@ func upload(localPath string, myID int64) {
 	opCtx.AddMasterRPC(t3.ElapsedMs())
 	// ────────────────────────────────────────────────────────────────────────
 	if err != nil {
+		rollbackUpload()
 		RecordMetrics(opCtx.Finalise(err.Error()))
 		log.Fatal("ConfirmWrite failed:", err)
 	}
