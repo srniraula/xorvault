@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"dfs-project/pkg/config"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -287,11 +288,8 @@ func (m *MasterServer) ReadFileContent(ctx context.Context, req *dfspb.ReadFileC
 	}
 
 	// Calculate which stripe(s) we need
-	const CHUNK_SIZE = 1 * 1024 * 1024
-	const STRIPE_SIZE = 2 * CHUNK_SIZE
-
-	startStripe := int32((offset / STRIPE_SIZE) + 1)
-	endStripe := int32(((offset + length - 1) / STRIPE_SIZE) + 1)
+	startStripe := int32((offset/config.StripeSize)+1)
+	endStripe := int32(((offset+length-1)/config.StripeSize)+1)
 
 	// Collect data from required stripes
 	result := []byte{}
@@ -310,7 +308,7 @@ func (m *MasterServer) ReadFileContent(ctx context.Context, req *dfspb.ReadFileC
 		}
 
 		// Extract the needed portion from this stripe
-		stripeStart := (int64(stripeNum) - 1) * STRIPE_SIZE
+		stripeStart := (int64(stripeNum) - 1) * config.StripeSize
 		stripeEnd := stripeStart + int64(len(stripeData))
 
 		// Calculate overlap with requested range
@@ -331,7 +329,7 @@ func (m *MasterServer) ReadFileContent(ctx context.Context, req *dfspb.ReadFileC
 
 // downloadStripeData downloads and reconstructs a stripe's data
 func (m *MasterServer) downloadStripeData(stripe *dfspb.StripeMetadata, clientID int64) []byte {
-	const CHUNK_SIZE = 1 * 1024 * 1024
+	_ = config.ChunkSize // chunk size comes from central config
 
 	// Try to download data chunks
 	var data1, data2 []byte

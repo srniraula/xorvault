@@ -2,10 +2,11 @@ package dfsclient
 
 import (
 	"context"
+	"dfs-project/pkg/config"
 	"fmt"
 	"sync"
-	"time"
 )
+
 
 // uploadStripesStreaming uploads stripes read from stripeChan using parallel chunk uploads
 func (g *GrpcClient) uploadStripesStreaming(stripeChan <-chan Stripe, ack *AckQueue, clientID int64, username string, filename string) ([]string, error) {
@@ -58,7 +59,7 @@ func (g *GrpcClient) uploadStripesStreaming(stripeChan <-chan Stripe, ack *AckQu
 			wg.Add(1)
 			go func(server, cid string, payload []byte, chunkIndex int) {
 				defer wg.Done()
-				cctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+				cctx, cancel := context.WithTimeout(context.Background(), config.ChunkWriteTimeout)
 				defer cancel()
 				if err := chunkUploader(cctx, server, cid, payload, clientID, username); err != nil {
 					resCh <- res{chunkID: cid, err: err, index: chunkIndex}

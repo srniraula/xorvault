@@ -12,13 +12,13 @@ import (
 	"sync"
 	"time"
 
+	"dfs-project/pkg/config"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// CHUNK_SIZE defines how large each chunk should be (1 MB = 1024 * 1024 bytes)
-// Files are split into chunks of this size before uploading to chunk servers
-const CHUNK_SIZE = 1 * 1024 * 1024
+// CHUNK_SIZE is the size of each data chunk. Edit pkg/config/config.go to change it.
+const CHUNK_SIZE = config.ChunkSize
 
 // ServerInfo tracks the health status of a chunk server
 // Used to detect when chunk servers go offline

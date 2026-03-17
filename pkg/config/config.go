@@ -5,7 +5,29 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 )
+
+// ── Chunk / Stripe sizing ──────────────────────────────────────────────────
+// ChunkSize is the size of a single data chunk in bytes.
+// This is the ONLY place you need to change it — all components import it.
+// Current: 1 MB. To use 2 MB chunks: change to 2 * 1024 * 1024.
+const ChunkSize = 1 * 1024 * 1024
+
+// StripeSize is the amount of user data stored per stripe (two data chunks).
+// Always derived from ChunkSize — do NOT set this independently.
+const StripeSize = 2 * ChunkSize
+
+// ── Per-chunk RPC timeouts ─────────────────────────────────────────────────
+// ChunkWriteTimeout is the gRPC deadline for a single WriteChunk RPC.
+// Covers: TCP round-trip + chunkserver disk write + ack.
+// To adjust for slower networks or higher load, change only this constant.
+const ChunkWriteTimeout = 30 * time.Second
+
+// ChunkReadTimeout is the gRPC deadline for a single ReadChunk RPC.
+// Covers: TCP round-trip + chunkserver disk read + response transfer.
+const ChunkReadTimeout = 30 * time.Second
+
 
 // GetMasterAddr returns the master server address
 // Defaults to localhost for local development, can be overridden with env var

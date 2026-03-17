@@ -3,13 +3,10 @@ package dfsclient
 import (
 	"context"
 	"dfs-project/dfspb"
+	"dfs-project/pkg/config"
 	"fmt"
 	"os"
 	"sync"
-	"time"
-
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // DownloadStripeInfo maps stripe metadata
@@ -47,38 +44,53 @@ type StripeDownload struct {
 	ChunksOK    int
 }
 
-// downloadChunkFromServer downloads a single chunk
+// downloadChunkFromServer downloads a single chunk using the connection pool
+// with retry on transient errors.
 func (g *GrpcClient) downloadChunkFromServer(chunkID, serverAddr string, clientID int64, username string, isData1, isData2, isParity bool) DownloadedChunk {
 	res := DownloadedChunk{ChunkID: chunkID, IsData1: isData1, IsData2: isData2, IsParity: isParity}
-	// Use project convention: grpc.NewClient to create connection
-	conn, err := grpc.NewClient(serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		res.Success = false
-		res.Error = fmt.Errorf("connection failed: %v", err)
-		return res
-	}
-	defer conn.Close()
 
-	cli := dfspb.NewChunkServerClient(conn)
-	rpcCtx, rpcCancel := context.WithTimeout(context.Background(), 8*time.Second)
-	resp, err := cli.ReadChunk(rpcCtx, &dfspb.ReadChunkRequest{ChunkId: chunkID, ClientId: clientID, Username: username})
-	rpcCancel()
-	if err != nil {
-		res.Success = false
-		res.Error = fmt.Errorf("ReadChunk RPC failed: %v", err)
-		return res
-	}
+	var lastErr error
+	for attempt := 0; attempt <= maxChunkRetries; attempt++ {
+		conn, err := defaultPool.Get(serverAddr)
+		if err != nil {
+			lastErr = err
+			defaultPool.Evict(serverAddr)
+			continue
+		}
 
-	if resp.Checksum != "" {
-		if calculateChecksum(resp.Data) != resp.Checksum {
+		cli := dfspb.NewChunkServerClient(conn)
+		rpcCtx, rpcCancel := context.WithTimeout(context.Background(), config.ChunkReadTimeout)
+		resp, err := cli.ReadChunk(rpcCtx, &dfspb.ReadChunkRequest{ChunkId: chunkID, ClientId: clientID, Username: username})
+		rpcCancel()
+
+		if err != nil {
+			lastErr = err
+			if isTransientErr(err) {
+				defaultPool.Evict(serverAddr)
+				continue
+			}
+			// Non-transient error — don't retry
 			res.Success = false
-			res.Error = fmt.Errorf("checksum mismatch: expected %s got %s", resp.Checksum, calculateChecksum(resp.Data))
+			res.Error = fmt.Errorf("ReadChunk RPC failed: %v", err)
 			return res
 		}
+
+		if resp.Checksum != "" {
+			if calculateChecksum(resp.Data) != resp.Checksum {
+				res.Success = false
+				res.Error = fmt.Errorf("checksum mismatch: expected %s got %s", resp.Checksum, calculateChecksum(resp.Data))
+				return res
+			}
+		}
+
+		res.Data = resp.Data
+		res.Success = true
+		return res
 	}
 
-	res.Data = resp.Data
-	res.Success = true
+	// All retries exhausted
+	res.Success = false
+	res.Error = fmt.Errorf("ReadChunk from %s failed after %d attempts: %v", serverAddr, maxChunkRetries+1, lastErr)
 	return res
 }
 
