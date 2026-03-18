@@ -51,7 +51,7 @@ type DeleteFileData struct {
 }
 
 // AppendWAL writes an entry to the Write-Ahead Log with durability guarantees
-// and then synchronously replicates to the secondary (best-effort, 2 s timeout).
+// and then synchronously replicates to the secondary (best-effort, bounded deadline).
 // This ensures operations are persisted to disk before updating in-memory state.
 func (m *MasterServer) AppendWAL(operation string, data interface{}) error {
 	m.walMu.Lock()
@@ -104,8 +104,8 @@ func (m *MasterServer) AppendWAL(operation string, data interface{}) error {
 	// Release lock BEFORE network I/O so other callers are not blocked
 	m.walMu.Unlock()
 
-	// Synchronous replication to secondary — uses a 2 s deadline so a slow/dead
-	// secondary never stalls the primary for more than 2 s per operation.
+	// Synchronous replication to secondary — uses a bounded deadline so a slow/dead
+	// secondary never stalls the primary for long per operation.
 	// Errors are logged but do NOT fail the primary write (best-effort HA).
 	m.replicateWALToSecondary(entryCopy, seq)
 
