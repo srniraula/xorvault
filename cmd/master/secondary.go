@@ -1061,11 +1061,11 @@ func (s *SecondaryMaster) primaryIsReachable(addr string) bool {
 }
 
 // WatchdogLoop runs in a goroutine on the secondary.
-// On reliable host-only networking the timing is tight:
+// On reliable host-only networking the timing is:
 //   - Heartbeat every 1s from primary
-//   - Timeout = 6s = 6 missed beats → likely dead
+//   - Timeout = 15s = 15 missed beats → likely dead
 //   - Confirmation = 3 probes × 1s = 3s window to rule out a momentary hiccup
-//   - Total time from primary death to promotion: ~9s worst case
+//   - Total time from primary death to promotion: ~18s worst case
 func (s *SecondaryMaster) WatchdogLoop(timeoutSeconds int) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
