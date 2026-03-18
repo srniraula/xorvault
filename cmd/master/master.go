@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"dfs-project/pkg/config"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -65,6 +66,12 @@ type MasterServer struct {
 	walSeq        uint64 // monotonically increasing WAL sequence number
 	isPrimary     bool   // true if this instance is the active primary
 	generation    uint64 // epoch counter: incremented every time a new master promotes itself
+
+	// Persistent replication client to avoid per-WAL dial churn under high write concurrency.
+	replMu           sync.Mutex
+	secondaryConn    *grpc.ClientConn
+	secondaryClient  dfspb.SecondaryMasterServerClient
+	secondaryConnFor string
 }
 
 // ensureClientMaps makes sure the per-client nested maps exist to avoid nil-map panics
@@ -571,8 +578,48 @@ func (m *MasterServer) GetActiveMaster(ctx context.Context, req *dfspb.GetActive
 	}, nil
 }
 
+// getOrCreateSecondaryClient returns a cached client for secondaryAddr, creating it when needed.
+func (m *MasterServer) getOrCreateSecondaryClient(secondaryAddr string) (dfspb.SecondaryMasterServerClient, error) {
+	m.replMu.Lock()
+	defer m.replMu.Unlock()
+
+	if m.secondaryClient != nil && m.secondaryConn != nil && m.secondaryConnFor == secondaryAddr {
+		return m.secondaryClient, nil
+	}
+
+	if m.secondaryConn != nil {
+		_ = m.secondaryConn.Close()
+		m.secondaryConn = nil
+		m.secondaryClient = nil
+		m.secondaryConnFor = ""
+	}
+
+	conn, err := grpc.NewClient(secondaryAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, err
+	}
+
+	m.secondaryConn = conn
+	m.secondaryClient = dfspb.NewSecondaryMasterServerClient(conn)
+	m.secondaryConnFor = secondaryAddr
+	return m.secondaryClient, nil
+}
+
+// resetSecondaryClient closes and clears the cached secondary client so next use re-dials.
+func (m *MasterServer) resetSecondaryClient() {
+	m.replMu.Lock()
+	defer m.replMu.Unlock()
+
+	if m.secondaryConn != nil {
+		_ = m.secondaryConn.Close()
+	}
+	m.secondaryConn = nil
+	m.secondaryClient = nil
+	m.secondaryConnFor = ""
+}
+
 // replicateWALToSecondary sends a single WAL entry to the secondary master.
-// Called synchronously from AppendWAL (after releasing walMu) with a 2 s deadline.
+// Called synchronously from AppendWAL (after releasing walMu) with bounded deadlines and one retry.
 // Errors are logged but do NOT fail the primary operation.
 func (m *MasterServer) replicateWALToSecondary(entry WALEntry, seq uint64) {
 	if m.secondaryAddr == "" {
@@ -586,31 +633,37 @@ func (m *MasterServer) replicateWALToSecondary(entry WALEntry, seq uint64) {
 		return
 	}
 
-	conn, err := grpc.NewClient(m.secondaryAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		m.logger.Printf("WAL replication: cannot connect to secondary %s: %v", m.secondaryAddr, err)
+	// Retry once on transient channel failures. Keep bounded timeout per attempt.
+	for attempt := 1; attempt <= 2; attempt++ {
+		client, err := m.getOrCreateSecondaryClient(m.secondaryAddr)
+		if err != nil {
+			m.logger.Printf("WAL replication: cannot connect to secondary %s (attempt %d/2): %v", m.secondaryAddr, attempt, err)
+			m.resetSecondaryClient()
+			continue
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		resp, err := client.ReplicateWAL(ctx, &dfspb.ReplicateWALRequest{
+			Entry: &dfspb.WALEntry{
+				SequenceNumber: seq,
+				EntryType:      walEntryTypeFromOp(entry.Operation),
+				Payload:        payload,
+				TimestampUnix:  entry.Timestamp,
+			},
+		}, grpc.WaitForReady(true))
+		cancel()
+
+		if err != nil {
+			m.logger.Printf("WAL replication RPC failed (seq %d, attempt %d/2): %v", seq, attempt, err)
+			m.resetSecondaryClient()
+			continue
+		}
+
+		m.logger.Printf("WAL seq %d replicated (secondary ack=%d)", seq, resp.LastSequenceAck)
 		return
 	}
-	defer conn.Close()
 
-	// Use a bounded deadline so a slow secondary never stalls the primary
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	client := dfspb.NewSecondaryMasterServerClient(conn)
-	resp, err := client.ReplicateWAL(ctx, &dfspb.ReplicateWALRequest{
-		Entry: &dfspb.WALEntry{
-			SequenceNumber: seq,
-			EntryType:      walEntryTypeFromOp(entry.Operation),
-			Payload:        payload,
-			TimestampUnix:  entry.Timestamp,
-		},
-	})
-	if err != nil {
-		m.logger.Printf("WAL replication RPC failed (seq %d): %v", seq, err)
-		return
-	}
-	m.logger.Printf("WAL seq %d replicated (secondary ack=%d)", seq, resp.LastSequenceAck)
+	m.logger.Printf("WAL replication failed after retries (seq %d)", seq)
 }
 
 // walEntryTypeFromOp converts our string op constants to the proto WALEntryType enum.

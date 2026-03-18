@@ -905,6 +905,9 @@ func (s *SecondaryMaster) ReplicateWAL(ctx context.Context, req *dfspb.Replicate
 
 	s.mu.Lock()
 	s.lastSeqReceived = entry.SequenceNumber
+	// WAL traffic itself proves the primary is alive. Updating lastHeartbeat here
+	// prevents false promotion when heartbeat RPCs are delayed under heavy upload load.
+	s.lastHeartbeat = time.Now()
 	s.mu.Unlock()
 
 	s.master.logger.Printf("Secondary: applied WAL seq %d (op type %v)", entry.SequenceNumber, entry.EntryType)
@@ -1045,7 +1048,7 @@ func (s *SecondaryMaster) RequestStateSync(ctx context.Context, req *dfspb.GetAc
 // primaryIsReachable dials the primary with a 1s timeout — fast enough for
 // host-only networking where a dead process answers within milliseconds.
 func (s *SecondaryMaster) primaryIsReachable(addr string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -1056,7 +1059,7 @@ func (s *SecondaryMaster) primaryIsReachable(addr string) bool {
 
 	client := dfspb.NewMasterServerClient(conn)
 	// Use GetActiveMaster as a lightweight ping — every master implements it.
-	_, err = client.GetActiveMaster(ctx, &dfspb.GetActiveMasterRequest{})
+	_, err = client.GetActiveMaster(ctx, &dfspb.GetActiveMasterRequest{}, grpc.WaitForReady(true))
 	return err == nil
 }
 
@@ -1077,6 +1080,9 @@ func (s *SecondaryMaster) WatchdogLoop(timeoutSeconds int) {
 		elapsed := time.Since(s.lastHeartbeat)
 		primaryAddr := s.primaryAddr
 		s.mu.Unlock()
+		if primaryAddr == "" {
+			primaryAddr = s.master.peerAddr
+		}
 
 		if elapsed <= time.Duration(timeoutSeconds)*time.Second {
 			continue
