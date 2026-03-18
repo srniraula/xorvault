@@ -104,15 +104,14 @@ func main() {
 
 	//yaa samma thik xa nothing new
 
-	
 	// --- ROLE-BASED STATE SYNC ---
 	// SECONDARY: Always start in standby. Never contact the peer at startup to decide
-	//            role — the WatchdogLoop will promote us only after 6s of silence + 3 probes.
+	//            role — the WatchdogLoop will promote us only after 15s of silence + 3 probes.
 	// PRIMARY:   Check if the peer promoted itself while we were down and pull its
 	//            full state if so. If peer unreachable, use local WAL state and proceed.
 	if *role == "secondary" {
 		server.isPrimary = false
-		masterLogger.Printf("Starting as SECONDARY (standby). Will promote only if primary silent for 30s.")
+		masterLogger.Printf("Starting as SECONDARY (standby). Will promote only if primary silent for 15s + 3 probes.")
 	} else if *peerAddr != "" {
 		if err := trySyncStateFromPeer(server, *peerAddr, masterLogger); err != nil {
 			masterLogger.Printf("State sync from peer failed (peer unreachable; using local WAL state as primary): %v", err)
@@ -141,8 +140,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "╚══════════════════════════════════════════════╝\n\n")
 		} else {
 			// We synced state from the active master — run as standby
-			go secondary.WatchdogLoop(6) // 6s timeout: 6 missed 1s heartbeats → confirmation probes
-			masterLogger.Printf("Standby mode: watchdog started (will promote if master silent for 6s + 3 probes)")
+			go secondary.WatchdogLoop(15) // 15s timeout: 15 missed 1s heartbeats → confirmation probes
+			masterLogger.Printf("Standby mode: watchdog started (will promote if master silent for 15s + 3 probes)")
 			fmt.Fprintf(os.Stderr, "\n╔══════════════════════════════════════════════╗\n")
 			fmt.Fprintf(os.Stderr, "║  ⏳  STANDBY MASTER: %-23s  ║\n", *myAddr)
 			fmt.Fprintf(os.Stderr, "║     Watching primary: %-24s  ║\n", *peerAddr)
@@ -224,7 +223,7 @@ func startStatusPrinter(server *MasterServer, secondary *SecondaryMaster, myAddr
 // KEY DESIGN: We re-dial from scratch on every failure rather than reusing a
 // stuck connection. When the peer was down and comes back up, gRPC's internal
 // reconnect backoff on a shared connection can take 30-120s to recover — far
-// longer than our 6s watchdog timeout on the secondary. By closing the broken
+// longer than our 15s watchdog timeout on the secondary. By closing the broken
 // connection and dialing fresh, we reach the recovered peer within 1-2s.
 func (m *MasterServer) SendHeartbeatsToSecondary(secondaryAddr string) {
 	ticker := time.NewTicker(1 * time.Second)
