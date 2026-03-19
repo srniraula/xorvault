@@ -6,12 +6,18 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 var (
 	storageMutex sync.RWMutex
 	dataDir      = "data"
 	usersFile    = "users.json"
+)
+
+const (
+	defaultAdminUsername = "admin"
+	defaultAdminPassword = "admin"
 )
 
 // SetStorageDir sets the base directory for user data storage
@@ -35,6 +41,42 @@ func InitStorage() error {
 		if err := saveUsers(storage); err != nil {
 			return err
 		}
+	}
+
+	if err := ensureDefaultAdminUser(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ensureDefaultAdminUser ensures admin/admin exists for admin metrics login.
+func ensureDefaultAdminUser() error {
+	storageMutex.Lock()
+	defer storageMutex.Unlock()
+
+	storage, err := loadUsersUnsafe()
+	if err != nil {
+		return fmt.Errorf("failed to load users while ensuring admin user: %v", err)
+	}
+
+	if _, exists := storage.Users[defaultAdminUsername]; exists {
+		return nil
+	}
+
+	hashedPassword, err := HashPassword(defaultAdminPassword)
+	if err != nil {
+		return fmt.Errorf("failed to hash default admin password: %v", err)
+	}
+
+	storage.Users[defaultAdminUsername] = &User{
+		Password:  hashedPassword,
+		ClientID:  usernameToClientID(defaultAdminUsername),
+		CreatedAt: time.Now(),
+	}
+
+	if err := saveUsers(storage); err != nil {
+		return fmt.Errorf("failed to persist default admin user: %v", err)
 	}
 
 	return nil
