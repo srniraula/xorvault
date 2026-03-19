@@ -1,3 +1,63 @@
+// package dfsclient
+
+// import (
+// 	"context"
+// 	"testing"
+// )
+
+// func TestUploadStripesStreamingSuccess(t *testing.T) {
+// 	// Prepare a stripe channel with one stripe
+// 	stripe := Stripe{StripeNum: 1, ChunkIDs: [3]string{"c1", "c2", "p1"}, Servers: [3]string{"s1", "s2", "s3"}, DataChunk1: []byte{1}, DataChunk2: []byte{2}, ParityChunk: []byte{3}}
+// 	ch := make(chan Stripe, 1)
+// 	ch <- stripe
+// 	close(ch)
+
+// 	ack := NewAckQueue()
+
+// 	// stub uploader
+// 	orig := chunkUploader
+// 	chunkUploader = func(ctx context.Context, serverAddr string, chunkID string, data []byte, clientID int64, username string) error {
+// 		return nil
+// 	}
+// 	defer func() { chunkUploader = orig }()
+
+// 	g := &GrpcClient{}
+// 	ok, err := g.uploadStripesStreaming(ch, ack, 42, "", "testfile.bin")
+// 	if err != nil {
+// 		t.Fatalf("unexpected error: %v", err)
+// 	}
+// 	if len(ok) != 3 {
+// 		t.Fatalf("expected 3 successful chunks, got %d", len(ok))
+// 	}
+// 	if !ack.IsEmpty() {
+// 		t.Fatalf("expected ack queue empty after successful uploads")
+// 	}
+// }
+
+// func TestUploadStripesStreamingFailure(t *testing.T) {
+// 	stripe := Stripe{StripeNum: 1, ChunkIDs: [3]string{"c1", "c2", "p1"}, Servers: [3]string{"s1", "s2", "s3"}, DataChunk1: []byte{1}, DataChunk2: []byte{2}, ParityChunk: []byte{3}}
+// 	ch := make(chan Stripe, 1)
+// 	ch <- stripe
+// 	close(ch)
+
+// 	ack := NewAckQueue()
+
+// 	orig := chunkUploader
+// 	chunkUploader = func(ctx context.Context, serverAddr string, chunkID string, data []byte, clientID int64, username string) error {
+// 		if chunkID == "c2" {
+// 			return context.Canceled
+// 		}
+// 		return nil
+// 	}
+// 	defer func() { chunkUploader = orig }()
+
+// 	g := &GrpcClient{}
+// 	_, err := g.uploadStripesStreaming(ch, ack, 42, "", "testfile.bin")
+// 	if err == nil {
+// 		t.Fatalf("expected error due to one failed chunk")
+// 	}
+// }
+
 package dfsclient
 
 import (
@@ -6,15 +66,20 @@ import (
 )
 
 func TestUploadStripesStreamingSuccess(t *testing.T) {
-	// Prepare a stripe channel with one stripe
-	stripe := Stripe{StripeNum: 1, ChunkIDs: [3]string{"c1", "c2", "p1"}, Servers: [3]string{"s1", "s2", "s3"}, DataChunk1: []byte{1}, DataChunk2: []byte{2}, ParityChunk: []byte{3}}
+	stripe := Stripe{
+		StripeNum:   1,
+		ChunkIDs:    [3]string{"c1", "c2", "p1"},
+		Servers:     [3]string{"s1", "s2", "s3"},
+		DataChunk1:  []byte{1},
+		DataChunk2:  []byte{2},
+		ParityChunk: []byte{3},
+	}
 	ch := make(chan Stripe, 1)
 	ch <- stripe
 	close(ch)
 
 	ack := NewAckQueue()
 
-	// stub uploader
 	orig := chunkUploader
 	chunkUploader = func(ctx context.Context, serverAddr string, chunkID string, data []byte, clientID int64, username string) error {
 		return nil
@@ -22,12 +87,21 @@ func TestUploadStripesStreamingSuccess(t *testing.T) {
 	defer func() { chunkUploader = orig }()
 
 	g := &GrpcClient{}
-	ok, err := g.uploadStripesStreaming(ch, ack, 42, "", "testfile.bin")
+	ok, stats, err := g.uploadStripesStreaming(ch, ack, 42, "", "testfile.bin")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(ok) != 3 {
 		t.Fatalf("expected 3 successful chunks, got %d", len(ok))
+	}
+	if stats.ChunksAttempted != 3 {
+		t.Fatalf("expected 3 chunks attempted, got %d", stats.ChunksAttempted)
+	}
+	if stats.ChunksSucceeded != 3 {
+		t.Fatalf("expected 3 chunks succeeded, got %d", stats.ChunksSucceeded)
+	}
+	if stats.StripeCount != 2 { // StripeNum=1, so StripeCount = StripeNum+1 = 2
+		t.Fatalf("expected StripeCount=2, got %d", stats.StripeCount)
 	}
 	if !ack.IsEmpty() {
 		t.Fatalf("expected ack queue empty after successful uploads")
@@ -35,7 +109,14 @@ func TestUploadStripesStreamingSuccess(t *testing.T) {
 }
 
 func TestUploadStripesStreamingFailure(t *testing.T) {
-	stripe := Stripe{StripeNum: 1, ChunkIDs: [3]string{"c1", "c2", "p1"}, Servers: [3]string{"s1", "s2", "s3"}, DataChunk1: []byte{1}, DataChunk2: []byte{2}, ParityChunk: []byte{3}}
+	stripe := Stripe{
+		StripeNum:   1,
+		ChunkIDs:    [3]string{"c1", "c2", "p1"},
+		Servers:     [3]string{"s1", "s2", "s3"},
+		DataChunk1:  []byte{1},
+		DataChunk2:  []byte{2},
+		ParityChunk: []byte{3},
+	}
 	ch := make(chan Stripe, 1)
 	ch <- stripe
 	close(ch)
@@ -52,7 +133,7 @@ func TestUploadStripesStreamingFailure(t *testing.T) {
 	defer func() { chunkUploader = orig }()
 
 	g := &GrpcClient{}
-	_, err := g.uploadStripesStreaming(ch, ack, 42, "", "testfile.bin")
+	_, _, err := g.uploadStripesStreaming(ch, ack, 42, "", "testfile.bin")
 	if err == nil {
 		t.Fatalf("expected error due to one failed chunk")
 	}

@@ -1,8 +1,417 @@
+// package main
+
+// import (
+// 	"encoding/csv"
+// 	"fmt"
+// 	"os"
+// 	"strconv"
+// 	"sync"
+// 	"time"
+// )
+
+// // ─────────────────────────────────────────────────────────────────────────────
+// // Core data structure
+// // ─────────────────────────────────────────────────────────────────────────────
+
+// // OperationMetrics holds every measurement for a single client operation.
+// type OperationMetrics struct {
+// 	// Identity
+// 	Operation string    // "upload" | "download" | "delete" | "ls"
+// 	Filename  string    // file or path involved
+// 	Timestamp time.Time // wall-clock start of operation
+
+// 	// File dimensions
+// 	FileSizeBytes int64 // original file size (0 for ls/delete)
+// 	ChunkCount    int   // total chunks (data + parity)
+// 	StripeCount   int   // number of RAID-5 stripes
+
+// 	// Wall-clock phase breakdown (all milliseconds)
+// 	TotalLatencyMs     float64 // end-to-end wall time
+// 	MasterRPCLatencyMs float64 // cumulative time in master RPCs
+// 	DataTransferMs     float64 // time spent in chunk read/write RPCs
+// 	ParityComputeMs    float64 // time computing XOR parity (upload only)
+
+// 	// Derived throughput metrics
+// 	ThroughputMBps    float64 // FileSizeBytes / TotalLatencyMs  — end-to-end rate
+// 	BandwidthMBps     float64 // FileSizeBytes / DataTransferMs  — wire-only rate
+// 	ParallelSpeedup   float64 // theoretical sequential / actual parallel
+// 	MasterOverheadPct float64 // MasterRPCLatencyMs / TotalLatencyMs * 100
+
+// 	// RAID-5 reconstruction overhead (download only — zero when all chunks healthy)
+// 	ReconstructionMs          float64 // total XOR compute time for recovered chunks (ms)
+// 	ReconstructionOverheadPct float64 // ReconstructionMs / TotalLatencyMs * 100
+// 	DegradedDownload          bool    // true if any chunk was missing and reconstructed
+
+// 	// Reliability
+// 	TotalChunksAttempted int
+// 	SuccessfulChunks     int
+// 	ReconstructedChunks  int     // chunks recovered via RAID-5 XOR
+// 	SuccessRate          float64 // percentage
+
+// 	// Error (empty on success)
+// 	Error string
+// }
+
+// // ─────────────────────────────────────────────────────────────────────────────
+// // OperationContext — accumulates measurements during an operation
+// // ─────────────────────────────────────────────────────────────────────────────
+
+// // OperationContext is created at the start of each operation and threaded
+// // through the call stack to accumulate phase timings and counts.
+// type OperationContext struct {
+// 	mu sync.Mutex
+
+// 	operation string
+// 	filename  string
+// 	fileSize  int64
+// 	startTime time.Time
+
+// 	masterRPCMs   float64
+// 	dataXferMs    float64
+// 	parityMs      float64
+// 	reconstrMs    float64 // RAID-5 reconstruction XOR time (download only)
+// 	stripeCount   int
+// 	chunkAttempts int
+// 	chunkSuccess  int
+// 	chunkReconstr int
+// }
+
+// // NewOpCtx starts a new operation measurement context.
+// func NewOpCtx(operation, filename string, fileSize int64) *OperationContext {
+// 	return &OperationContext{
+// 		operation: operation,
+// 		filename:  filename,
+// 		fileSize:  fileSize,
+// 		startTime: time.Now(),
+// 	}
+// }
+
+// // SetFileSize updates the file size once it becomes known (e.g. after GetFileMetadata).
+// func (c *OperationContext) SetFileSize(n int64) {
+// 	c.mu.Lock()
+// 	c.fileSize = n
+// 	c.mu.Unlock()
+// }
+
+// // AddMasterRPC accumulates milliseconds spent in a master RPC.
+// func (c *OperationContext) AddMasterRPC(ms float64) {
+// 	c.mu.Lock()
+// 	c.masterRPCMs += ms
+// 	c.mu.Unlock()
+// }
+
+// // AddDataXfer accumulates milliseconds spent transferring chunk data.
+// func (c *OperationContext) AddDataXfer(ms float64) {
+// 	c.mu.Lock()
+// 	c.dataXferMs += ms
+// 	c.mu.Unlock()
+// }
+
+// // AddParity accumulates milliseconds spent computing XOR parity.
+// func (c *OperationContext) AddParity(ms float64) {
+// 	c.mu.Lock()
+// 	c.parityMs += ms
+// 	c.mu.Unlock()
+// }
+
+// // AddReconstruction accumulates milliseconds spent on RAID-5 XOR reconstruction
+// // during a degraded download (one chunkserver dead).
+// func (c *OperationContext) AddReconstruction(ms float64) {
+// 	c.mu.Lock()
+// 	c.reconstrMs += ms
+// 	c.mu.Unlock()
+// }
+
+// // AddStripes increments the stripe counter by n.
+// func (c *OperationContext) AddStripes(n int) {
+// 	c.mu.Lock()
+// 	c.stripeCount += n
+// 	c.mu.Unlock()
+// }
+
+// // AddChunkResult records the outcome of one chunk transfer attempt.
+// // reconstructed should be true when the chunk was recovered via RAID-5 XOR.
+// func (c *OperationContext) AddChunkResult(success, reconstructed bool) {
+// 	c.mu.Lock()
+// 	c.chunkAttempts++
+// 	if success {
+// 		c.chunkSuccess++
+// 	}
+// 	if reconstructed {
+// 		c.chunkReconstr++
+// 	}
+// 	c.mu.Unlock()
+// }
+
+// // Finalise closes the context, computes derived metrics, and returns
+// // a completed OperationMetrics ready for recording.
+// func (c *OperationContext) Finalise(errMsg string) OperationMetrics {
+// 	totalMs := float64(time.Since(c.startTime).Nanoseconds()) / 1e6
+
+// 	chunkCount := c.stripeCount * 3 // 2 data + 1 parity per stripe
+
+// 	// Throughput: file bytes / total wall time (MB/s)
+// 	throughput := 0.0
+// 	if totalMs > 0 && c.fileSize > 0 {
+// 		throughput = (float64(c.fileSize) / 1_000_000.0) / (totalMs / 1_000.0)
+// 	}
+
+// 	// Bandwidth: file bytes / data-transfer time only (wire rate, excludes master overhead)
+// 	bandwidth := 0.0
+// 	if c.dataXferMs > 0 && c.fileSize > 0 {
+// 		bandwidth = (float64(c.fileSize) / 1_000_000.0) / (c.dataXferMs / 1_000.0)
+// 	}
+
+// 	// Parallel speedup: 3 chunks uploaded/downloaded concurrently per stripe.
+// 	// Sequential equivalent = dataXferMs * 3 (one chunk at a time).
+// 	// Actual = dataXferMs. Perfect speedup = 3.0x.
+// 	parallelSpeedup := 3.0
+// 	if c.dataXferMs <= 0 {
+// 		parallelSpeedup = 0.0
+// 	}
+
+// 	// Master overhead as % of total latency
+// 	masterOverheadPct := 0.0
+// 	if totalMs > 0 {
+// 		masterOverheadPct = (c.masterRPCMs / totalMs) * 100.0
+// 	}
+
+// 	// Reconstruction overhead as % of total latency
+// 	reconstrOverheadPct := 0.0
+// 	if totalMs > 0 && c.reconstrMs > 0 {
+// 		reconstrOverheadPct = (c.reconstrMs / totalMs) * 100.0
+// 	}
+
+// 	// DegradedDownload: true only if XOR reconstruction actually ran (reconstrMs > 0)
+// 	// This is the ground truth — chunkReconstr count can be wrong for odd-stripe files
+// 	degraded := c.reconstrMs > 0
+
+// 	successRate := 0.0
+// 	if c.chunkAttempts > 0 {
+// 		successRate = float64(c.chunkSuccess) / float64(c.chunkAttempts) * 100.0
+// 	}
+
+// 	return OperationMetrics{
+// 		Operation:                 c.operation,
+// 		Filename:                  c.filename,
+// 		Timestamp:                 c.startTime,
+// 		FileSizeBytes:             c.fileSize,
+// 		ChunkCount:                chunkCount,
+// 		StripeCount:               c.stripeCount,
+// 		TotalLatencyMs:            totalMs,
+// 		MasterRPCLatencyMs:        c.masterRPCMs,
+// 		DataTransferMs:            c.dataXferMs,
+// 		ParityComputeMs:           c.parityMs,
+// 		ThroughputMBps:            throughput,
+// 		BandwidthMBps:             bandwidth,
+// 		ParallelSpeedup:           parallelSpeedup,
+// 		MasterOverheadPct:         masterOverheadPct,
+// 		ReconstructionMs:          c.reconstrMs,
+// 		ReconstructionOverheadPct: reconstrOverheadPct,
+// 		DegradedDownload:          degraded,
+// 		TotalChunksAttempted:      c.chunkAttempts,
+// 		SuccessfulChunks:          c.chunkSuccess,
+// 		ReconstructedChunks:       c.chunkReconstr,
+// 		SuccessRate:               successRate,
+// 		Error:                     errMsg,
+// 	}
+// }
+
+// // ─────────────────────────────────────────────────────────────────────────────
+// // phaseTimer — lightweight sub-phase stopwatch
+// // ─────────────────────────────────────────────────────────────────────────────
+
+// type phaseTimer struct{ start time.Time }
+
+// func newPhaseTimer() *phaseTimer         { return &phaseTimer{start: time.Now()} }
+// func (p *phaseTimer) ElapsedMs() float64 { return float64(time.Since(p.start).Nanoseconds()) / 1e6 }
+
+// // ─────────────────────────────────────────────────────────────────────────────
+// // Terminal output
+// // ─────────────────────────────────────────────────────────────────────────────
+
+// // PrintMetrics writes a formatted metrics report to stderr.
+// func PrintMetrics(m OperationMetrics) {
+// 	statusIcon := "✅ SUCCESS"
+// 	if m.Error != "" {
+// 		statusIcon = "❌ FAILED: " + m.Error
+// 	}
+
+// 	w := os.Stderr
+// 	row := func(label, val string) {
+// 		fmt.Fprintf(w, "║  %-22s: %-36s║\n", label, val)
+// 	}
+// 	sep := func() {
+// 		fmt.Fprintln(w, "╠══════════════════════════════════════════════════════════════╣")
+// 	}
+// 	hdr := func(title string) {
+// 		fmt.Fprintf(w, "╠  %-59s╣\n", "── "+title)
+// 	}
+
+// 	fmt.Fprintln(w)
+// 	fmt.Fprintln(w, "╔══════════════════════════════════════════════════════════════╗")
+// 	fmt.Fprintf(w, "║  📊  XorFS PERFORMANCE METRICS                               ║\n")
+// 	sep()
+// 	row("Operation", m.Operation)
+// 	row("File", m.Filename)
+// 	row("Status", statusIcon)
+// 	row("Timestamp", m.Timestamp.Format("2006-01-02 15:04:05.000"))
+// 	sep()
+
+// 	hdr("FILE SIZE")
+// 	row("Bytes", fmt.Sprintf("%d B", m.FileSizeBytes))
+// 	row("Human-readable", formatSize(m.FileSizeBytes))
+// 	row("Stripes", strconv.Itoa(m.StripeCount))
+// 	row("Chunks", fmt.Sprintf("%d  (data=%d  parity=%d)",
+// 		m.ChunkCount, m.StripeCount*2, m.StripeCount))
+// 	sep()
+
+// 	hdr("LATENCY  (milliseconds)")
+// 	row("Total (end-to-end)", fmt.Sprintf("%.3f ms", m.TotalLatencyMs))
+// 	row("Master RPC total", fmt.Sprintf("%.3f ms  (%.1f%% overhead)", m.MasterRPCLatencyMs, m.MasterOverheadPct))
+// 	row("Data transfer", fmt.Sprintf("%.3f ms", m.DataTransferMs))
+// 	if m.Operation == "upload" {
+// 		row("Parity compute", fmt.Sprintf("%.3f ms", m.ParityComputeMs))
+// 		if m.TotalLatencyMs > 0 {
+// 			parityPct := m.ParityComputeMs / m.TotalLatencyMs * 100.0
+// 			row("  └ parity overhead", fmt.Sprintf("%.1f%% of total", parityPct))
+// 		}
+// 	}
+// 	sep()
+
+// 	hdr("THROUGHPUT & BANDWIDTH")
+// 	row("Throughput", fmt.Sprintf("%.4f MB/s  (end-to-end)", m.ThroughputMBps))
+// 	row("Bandwidth", fmt.Sprintf("%.4f MB/s  (wire only)", m.BandwidthMBps))
+// 	row("Parallel speedup", fmt.Sprintf("%.2f×  (ideal = 3.00×)", m.ParallelSpeedup))
+// 	sep()
+
+// 	hdr("RELIABILITY")
+// 	row("Chunks attempted", strconv.Itoa(m.TotalChunksAttempted))
+// 	row("Chunks succeeded", strconv.Itoa(m.SuccessfulChunks))
+// 	row("RAID-5 reconstructed", strconv.Itoa(m.ReconstructedChunks))
+// 	row("Success rate", fmt.Sprintf("%.1f%%", m.SuccessRate))
+// 	sep()
+
+// 	hdr("RAID-5 RECONSTRUCTION OVERHEAD  (download only)")
+// 	if m.DegradedDownload {
+// 		row("Mode", "⚠️  DEGRADED  (chunkserver missing)")
+// 		row("Reconstruction time", fmt.Sprintf("%.3f ms", m.ReconstructionMs))
+// 		row("Reconstruction overhead", fmt.Sprintf("%.2f%% of total latency", m.ReconstructionOverheadPct))
+// 		row("Chunks recovered", strconv.Itoa(m.ReconstructedChunks))
+// 	} else {
+// 		row("Mode", "✅ NORMAL  (all chunkservers healthy)")
+// 		row("Reconstruction time", "0.000 ms  (no recovery needed)")
+// 	}
+// 	fmt.Fprintln(w, "╚══════════════════════════════════════════════════════════════╝")
+// 	fmt.Fprintln(w)
+// }
+
+// // ─────────────────────────────────────────────────────────────────────────────
+// // CSV output
+// // ─────────────────────────────────────────────────────────────────────────────
+
+// const metricsCSVFile = "dfs_metrics.csv"
+
+// var csvHeader = []string{
+// 	"timestamp", "operation", "filename",
+// 	"file_size_bytes", "file_size_human",
+// 	"stripe_count", "chunk_count",
+// 	"total_latency_ms", "master_rpc_latency_ms", "data_transfer_ms", "parity_compute_ms",
+// 	"master_overhead_pct",
+// 	"throughput_mbps", "bandwidth_mbps", "parallel_speedup",
+// 	"chunks_attempted", "chunks_succeeded", "chunks_reconstructed",
+// 	"success_rate_pct",
+// 	"degraded_download", "reconstruction_ms", "reconstruction_overhead_pct",
+// 	"status", "error",
+// }
+
+// // AppendMetricsCSV appends one row to dfs_metrics.csv, writing the header
+// // first if the file does not yet exist.
+// func AppendMetricsCSV(m OperationMetrics) error {
+// 	needHeader := false
+// 	if _, err := os.Stat(metricsCSVFile); os.IsNotExist(err) {
+// 		needHeader = true
+// 	}
+
+// 	f, err := os.OpenFile(metricsCSVFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+// 	if err != nil {
+// 		return fmt.Errorf("metrics CSV open failed: %v", err)
+// 	}
+// 	defer f.Close()
+
+// 	cw := csv.NewWriter(f)
+// 	if needHeader {
+// 		if err := cw.Write(csvHeader); err != nil {
+// 			return err
+// 		}
+// 	}
+
+// 	statusStr := "success"
+// 	if m.Error != "" {
+// 		statusStr = "error"
+// 	}
+
+// 	degradedStr := "false"
+// 	if m.DegradedDownload {
+// 		degradedStr = "true"
+// 	}
+
+// 	row := []string{
+// 		m.Timestamp.Format(time.RFC3339Nano),
+// 		m.Operation,
+// 		m.Filename,
+// 		strconv.FormatInt(m.FileSizeBytes, 10),
+// 		formatSize(m.FileSizeBytes),
+// 		strconv.Itoa(m.StripeCount),
+// 		strconv.Itoa(m.ChunkCount),
+// 		fmt.Sprintf("%.3f", m.TotalLatencyMs),
+// 		fmt.Sprintf("%.3f", m.MasterRPCLatencyMs),
+// 		fmt.Sprintf("%.3f", m.DataTransferMs),
+// 		fmt.Sprintf("%.3f", m.ParityComputeMs),
+// 		fmt.Sprintf("%.2f", m.MasterOverheadPct),
+// 		fmt.Sprintf("%.4f", m.ThroughputMBps),
+// 		fmt.Sprintf("%.4f", m.BandwidthMBps),
+// 		fmt.Sprintf("%.4f", m.ParallelSpeedup),
+// 		strconv.Itoa(m.TotalChunksAttempted),
+// 		strconv.Itoa(m.SuccessfulChunks),
+// 		strconv.Itoa(m.ReconstructedChunks),
+// 		fmt.Sprintf("%.2f", m.SuccessRate),
+// 		degradedStr,
+// 		fmt.Sprintf("%.3f", m.ReconstructionMs),
+// 		fmt.Sprintf("%.2f", m.ReconstructionOverheadPct),
+// 		statusStr,
+// 		m.Error,
+// 	}
+
+// 	if err := cw.Write(row); err != nil {
+// 		return err
+// 	}
+// 	cw.Flush()
+// 	return cw.Error()
+// }
+
+// // ─────────────────────────────────────────────────────────────────────────────
+// // RecordMetrics — single call-site used by all operations
+// // ─────────────────────────────────────────────────────────────────────────────
+
+// // RecordMetrics prints to terminal AND appends to CSV.
+// // Call this at the end of every operation (success or failure).
+// func RecordMetrics(m OperationMetrics) {
+// 	PrintMetrics(m)
+// 	if err := AppendMetricsCSV(m); err != nil {
+// 		fmt.Fprintf(os.Stderr, "Warning: failed to write metrics CSV: %v\n", err)
+// 	} else {
+// 		fmt.Fprintf(os.Stderr, "📄  Metrics saved → %s\n\n", metricsCSVFile)
+// 	}
+// }
+
 package main
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"sync"
@@ -15,122 +424,97 @@ import (
 
 // OperationMetrics holds every measurement for a single client operation.
 type OperationMetrics struct {
-	// Identity
-	Operation string    // "upload" | "download" | "delete" | "ls"
-	Filename  string    // file or path involved
-	Timestamp time.Time // wall-clock start of operation
+	Operation string    `json:"operation"` // "upload"|"download"|"delete"|"ls"
+	Filename  string    `json:"filename"`
+	Username  string    `json:"username"` // web user; empty for CLI
+	Source    string    `json:"source"`   // "cli" | "web"
+	Timestamp time.Time `json:"timestamp"`
 
-	// File dimensions
-	FileSizeBytes int64 // original file size (0 for ls/delete)
-	ChunkCount    int   // total chunks (data + parity)
-	StripeCount   int   // number of RAID-5 stripes
+	FileSizeBytes int64 `json:"file_size_bytes"`
+	ChunkCount    int   `json:"chunk_count"`
+	StripeCount   int   `json:"stripe_count"`
 
-	// Wall-clock phase breakdown (all milliseconds)
-	TotalLatencyMs     float64 // end-to-end wall time
-	MasterRPCLatencyMs float64 // cumulative time in master RPCs
-	DataTransferMs     float64 // time spent in chunk read/write RPCs
-	ParityComputeMs    float64 // time computing XOR parity (upload only)
+	TotalLatencyMs     float64 `json:"total_latency_ms"`
+	MasterRPCLatencyMs float64 `json:"master_rpc_latency_ms"`
+	DataTransferMs     float64 `json:"data_transfer_ms"`
+	ParityComputeMs    float64 `json:"parity_compute_ms"`
 
-	// Derived throughput metrics
-	ThroughputMBps    float64 // FileSizeBytes / TotalLatencyMs  — end-to-end rate
-	BandwidthMBps     float64 // FileSizeBytes / DataTransferMs  — wire-only rate
-	ParallelSpeedup   float64 // theoretical sequential / actual parallel
-	MasterOverheadPct float64 // MasterRPCLatencyMs / TotalLatencyMs * 100
+	ThroughputMBps    float64 `json:"throughput_mbps"`
+	BandwidthMBps     float64 `json:"bandwidth_mbps"`
+	ParallelSpeedup   float64 `json:"parallel_speedup"`
+	MasterOverheadPct float64 `json:"master_overhead_pct"`
 
-	// RAID-5 reconstruction overhead (download only — zero when all chunks healthy)
-	ReconstructionMs          float64 // total XOR compute time for recovered chunks (ms)
-	ReconstructionOverheadPct float64 // ReconstructionMs / TotalLatencyMs * 100
-	DegradedDownload          bool    // true if any chunk was missing and reconstructed
+	ReconstructionMs          float64 `json:"reconstruction_ms"`
+	ReconstructionOverheadPct float64 `json:"reconstruction_overhead_pct"`
+	DegradedDownload          bool    `json:"degraded_download"`
 
-	// Reliability
-	TotalChunksAttempted int
-	SuccessfulChunks     int
-	ReconstructedChunks  int     // chunks recovered via RAID-5 XOR
-	SuccessRate          float64 // percentage
+	TotalChunksAttempted int     `json:"chunks_attempted"`
+	SuccessfulChunks     int     `json:"chunks_succeeded"`
+	ReconstructedChunks  int     `json:"chunks_reconstructed"`
+	SuccessRate          float64 `json:"success_rate_pct"`
 
-	// Error (empty on success)
-	Error string
+	ConcurrentUsers int    `json:"concurrent_users"` // web only; 0 for CLI
+	Error           string `json:"error"`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// OperationContext — accumulates measurements during an operation
+// OperationContext
 // ─────────────────────────────────────────────────────────────────────────────
 
-// OperationContext is created at the start of each operation and threaded
-// through the call stack to accumulate phase timings and counts.
 type OperationContext struct {
-	mu sync.Mutex
-
+	mu        sync.Mutex
 	operation string
 	filename  string
+	username  string
+	source    string
 	fileSize  int64
 	startTime time.Time
 
 	masterRPCMs   float64
 	dataXferMs    float64
 	parityMs      float64
-	reconstrMs    float64 // RAID-5 reconstruction XOR time (download only)
+	reconstrMs    float64
 	stripeCount   int
 	chunkAttempts int
 	chunkSuccess  int
 	chunkReconstr int
 }
 
-// NewOpCtx starts a new operation measurement context.
+// NewOpCtx — CLI operation.
 func NewOpCtx(operation, filename string, fileSize int64) *OperationContext {
 	return &OperationContext{
 		operation: operation,
 		filename:  filename,
+		source:    "cli",
 		fileSize:  fileSize,
 		startTime: time.Now(),
 	}
 }
 
-// SetFileSize updates the file size once it becomes known (e.g. after GetFileMetadata).
-func (c *OperationContext) SetFileSize(n int64) {
-	c.mu.Lock()
-	c.fileSize = n
-	c.mu.Unlock()
+// NewWebOpCtx — web operation; increments the active-user counter.
+func NewWebOpCtx(operation, filename, username string, fileSize int64) *OperationContext {
+	activeUsers.inc(username)
+	return &OperationContext{
+		operation: operation,
+		filename:  filename,
+		username:  username,
+		source:    "web",
+		fileSize:  fileSize,
+		startTime: time.Now(),
+	}
 }
 
-// AddMasterRPC accumulates milliseconds spent in a master RPC.
-func (c *OperationContext) AddMasterRPC(ms float64) {
-	c.mu.Lock()
-	c.masterRPCMs += ms
-	c.mu.Unlock()
-}
-
-// AddDataXfer accumulates milliseconds spent transferring chunk data.
-func (c *OperationContext) AddDataXfer(ms float64) {
-	c.mu.Lock()
-	c.dataXferMs += ms
-	c.mu.Unlock()
-}
-
-// AddParity accumulates milliseconds spent computing XOR parity.
-func (c *OperationContext) AddParity(ms float64) {
-	c.mu.Lock()
-	c.parityMs += ms
-	c.mu.Unlock()
-}
-
-// AddReconstruction accumulates milliseconds spent on RAID-5 XOR reconstruction
-// during a degraded download (one chunkserver dead).
+func (c *OperationContext) SetFileSize(n int64)     { c.mu.Lock(); c.fileSize = n; c.mu.Unlock() }
+func (c *OperationContext) AddMasterRPC(ms float64) { c.mu.Lock(); c.masterRPCMs += ms; c.mu.Unlock() }
+func (c *OperationContext) AddDataXfer(ms float64)  { c.mu.Lock(); c.dataXferMs += ms; c.mu.Unlock() }
+func (c *OperationContext) AddParity(ms float64)    { c.mu.Lock(); c.parityMs += ms; c.mu.Unlock() }
 func (c *OperationContext) AddReconstruction(ms float64) {
 	c.mu.Lock()
 	c.reconstrMs += ms
 	c.mu.Unlock()
 }
+func (c *OperationContext) AddStripes(n int) { c.mu.Lock(); c.stripeCount += n; c.mu.Unlock() }
 
-// AddStripes increments the stripe counter by n.
-func (c *OperationContext) AddStripes(n int) {
-	c.mu.Lock()
-	c.stripeCount += n
-	c.mu.Unlock()
-}
-
-// AddChunkResult records the outcome of one chunk transfer attempt.
-// reconstructed should be true when the chunk was recovered via RAID-5 XOR.
 func (c *OperationContext) AddChunkResult(success, reconstructed bool) {
 	c.mu.Lock()
 	c.chunkAttempts++
@@ -143,49 +527,39 @@ func (c *OperationContext) AddChunkResult(success, reconstructed bool) {
 	c.mu.Unlock()
 }
 
-// Finalise closes the context, computes derived metrics, and returns
-// a completed OperationMetrics ready for recording.
+// Finalise computes all derived metrics and returns a completed OperationMetrics.
+// For web contexts it decrements the active-user counter.
 func (c *OperationContext) Finalise(errMsg string) OperationMetrics {
 	totalMs := float64(time.Since(c.startTime).Nanoseconds()) / 1e6
 
-	chunkCount := c.stripeCount * 3 // 2 data + 1 parity per stripe
+	concurrent := 0
+	if c.source == "web" {
+		concurrent = activeUsers.count()
+		activeUsers.dec(c.username)
+	}
 
-	// Throughput: file bytes / total wall time (MB/s)
+	chunkCount := c.stripeCount * 3
+
 	throughput := 0.0
 	if totalMs > 0 && c.fileSize > 0 {
-		throughput = (float64(c.fileSize) / 1_000_000.0) / (totalMs / 1_000.0)
+		throughput = (float64(c.fileSize) / 1e6) / (totalMs / 1e3)
 	}
-
-	// Bandwidth: file bytes / data-transfer time only (wire rate, excludes master overhead)
 	bandwidth := 0.0
 	if c.dataXferMs > 0 && c.fileSize > 0 {
-		bandwidth = (float64(c.fileSize) / 1_000_000.0) / (c.dataXferMs / 1_000.0)
+		bandwidth = (float64(c.fileSize) / 1e6) / (c.dataXferMs / 1e3)
 	}
-
-	// Parallel speedup: 3 chunks uploaded/downloaded concurrently per stripe.
-	// Sequential equivalent = dataXferMs * 3 (one chunk at a time).
-	// Actual = dataXferMs. Perfect speedup = 3.0x.
 	parallelSpeedup := 3.0
 	if c.dataXferMs <= 0 {
 		parallelSpeedup = 0.0
 	}
-
-	// Master overhead as % of total latency
-	masterOverheadPct := 0.0
+	masterOH := 0.0
 	if totalMs > 0 {
-		masterOverheadPct = (c.masterRPCMs / totalMs) * 100.0
+		masterOH = c.masterRPCMs / totalMs * 100.0
 	}
-
-	// Reconstruction overhead as % of total latency
-	reconstrOverheadPct := 0.0
+	reconstrOH := 0.0
 	if totalMs > 0 && c.reconstrMs > 0 {
-		reconstrOverheadPct = (c.reconstrMs / totalMs) * 100.0
+		reconstrOH = c.reconstrMs / totalMs * 100.0
 	}
-
-	// DegradedDownload: true only if XOR reconstruction actually ran (reconstrMs > 0)
-	// This is the ground truth — chunkReconstr count can be wrong for odd-stripe files
-	degraded := c.reconstrMs > 0
-
 	successRate := 0.0
 	if c.chunkAttempts > 0 {
 		successRate = float64(c.chunkSuccess) / float64(c.chunkAttempts) * 100.0
@@ -194,6 +568,8 @@ func (c *OperationContext) Finalise(errMsg string) OperationMetrics {
 	return OperationMetrics{
 		Operation:                 c.operation,
 		Filename:                  c.filename,
+		Username:                  c.username,
+		Source:                    c.source,
 		Timestamp:                 c.startTime,
 		FileSizeBytes:             c.fileSize,
 		ChunkCount:                chunkCount,
@@ -205,20 +581,86 @@ func (c *OperationContext) Finalise(errMsg string) OperationMetrics {
 		ThroughputMBps:            throughput,
 		BandwidthMBps:             bandwidth,
 		ParallelSpeedup:           parallelSpeedup,
-		MasterOverheadPct:         masterOverheadPct,
+		MasterOverheadPct:         masterOH,
 		ReconstructionMs:          c.reconstrMs,
-		ReconstructionOverheadPct: reconstrOverheadPct,
-		DegradedDownload:          degraded,
+		ReconstructionOverheadPct: reconstrOH,
+		DegradedDownload:          c.reconstrMs > 0,
 		TotalChunksAttempted:      c.chunkAttempts,
 		SuccessfulChunks:          c.chunkSuccess,
 		ReconstructedChunks:       c.chunkReconstr,
 		SuccessRate:               successRate,
+		ConcurrentUsers:           concurrent,
 		Error:                     errMsg,
 	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// phaseTimer — lightweight sub-phase stopwatch
+// Active-user tracker
+// ─────────────────────────────────────────────────────────────────────────────
+
+type activeUserTracker struct {
+	mu    sync.Mutex
+	users map[string]int
+}
+
+func (t *activeUserTracker) inc(u string) { t.mu.Lock(); t.users[u]++; t.mu.Unlock() }
+func (t *activeUserTracker) dec(u string) {
+	t.mu.Lock()
+	t.users[u]--
+	if t.users[u] <= 0 {
+		delete(t.users, u)
+	}
+	t.mu.Unlock()
+}
+func (t *activeUserTracker) count() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.users)
+}
+func (t *activeUserTracker) snapshot() map[string]int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := make(map[string]int, len(t.users))
+	for k, v := range t.users {
+		s[k] = v
+	}
+	return s
+}
+
+var activeUsers = &activeUserTracker{users: make(map[string]int)}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// In-memory store — last 1000 operations for the /metrics API
+// ─────────────────────────────────────────────────────────────────────────────
+
+const maxStored = 1000
+
+type metricsStore struct {
+	mu      sync.RWMutex
+	entries []OperationMetrics
+}
+
+func (s *metricsStore) push(m OperationMetrics) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.entries = append(s.entries, m)
+	if len(s.entries) > maxStored {
+		s.entries = s.entries[len(s.entries)-maxStored:]
+	}
+}
+
+func (s *metricsStore) all() []OperationMetrics {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cp := make([]OperationMetrics, len(s.entries))
+	copy(cp, s.entries)
+	return cp
+}
+
+var mstore = &metricsStore{}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// phaseTimer
 // ─────────────────────────────────────────────────────────────────────────────
 
 type phaseTimer struct{ start time.Time }
@@ -227,139 +669,106 @@ func newPhaseTimer() *phaseTimer         { return &phaseTimer{start: time.Now()}
 func (p *phaseTimer) ElapsedMs() float64 { return float64(time.Since(p.start).Nanoseconds()) / 1e6 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Terminal output
+// Terminal output (CLI)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// PrintMetrics writes a formatted metrics report to stderr.
 func PrintMetrics(m OperationMetrics) {
-	statusIcon := "✅ SUCCESS"
+	statusIcon := "SUCCESS"
 	if m.Error != "" {
-		statusIcon = "❌ FAILED: " + m.Error
+		statusIcon = "FAILED: " + m.Error
 	}
-
 	w := os.Stderr
-	row := func(label, val string) {
-		fmt.Fprintf(w, "║  %-22s: %-36s║\n", label, val)
-	}
-	sep := func() {
-		fmt.Fprintln(w, "╠══════════════════════════════════════════════════════════════╣")
-	}
-	hdr := func(title string) {
-		fmt.Fprintf(w, "╠  %-59s╣\n", "── "+title)
-	}
+	row := func(label, val string) { fmt.Fprintf(w, "  %-24s: %s\n", label, val) }
 
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "╔══════════════════════════════════════════════════════════════╗")
-	fmt.Fprintf(w, "║  📊  XorFS PERFORMANCE METRICS                               ║\n")
-	sep()
+	fmt.Fprintln(w, "\n=== XorFS PERFORMANCE METRICS ===")
 	row("Operation", m.Operation)
 	row("File", m.Filename)
+	if m.Username != "" {
+		row("User", m.Username)
+	}
+	row("Source", m.Source)
 	row("Status", statusIcon)
 	row("Timestamp", m.Timestamp.Format("2006-01-02 15:04:05.000"))
-	sep()
-
-	hdr("FILE SIZE")
-	row("Bytes", fmt.Sprintf("%d B", m.FileSizeBytes))
-	row("Human-readable", formatSize(m.FileSizeBytes))
+	if m.ConcurrentUsers > 0 {
+		row("Concurrent users", strconv.Itoa(m.ConcurrentUsers))
+	}
+	fmt.Fprintln(w, "--- FILE ---")
+	row("Size", formatSize(m.FileSizeBytes))
 	row("Stripes", strconv.Itoa(m.StripeCount))
-	row("Chunks", fmt.Sprintf("%d  (data=%d  parity=%d)",
-		m.ChunkCount, m.StripeCount*2, m.StripeCount))
-	sep()
-
-	hdr("LATENCY  (milliseconds)")
-	row("Total (end-to-end)", fmt.Sprintf("%.3f ms", m.TotalLatencyMs))
-	row("Master RPC total", fmt.Sprintf("%.3f ms  (%.1f%% overhead)", m.MasterRPCLatencyMs, m.MasterOverheadPct))
+	row("Chunks", fmt.Sprintf("%d (data=%d parity=%d)", m.ChunkCount, m.StripeCount*2, m.StripeCount))
+	fmt.Fprintln(w, "--- LATENCY ---")
+	row("Total", fmt.Sprintf("%.3f ms", m.TotalLatencyMs))
+	row("Master RPC", fmt.Sprintf("%.3f ms (%.1f%%)", m.MasterRPCLatencyMs, m.MasterOverheadPct))
 	row("Data transfer", fmt.Sprintf("%.3f ms", m.DataTransferMs))
 	if m.Operation == "upload" {
 		row("Parity compute", fmt.Sprintf("%.3f ms", m.ParityComputeMs))
-		if m.TotalLatencyMs > 0 {
-			parityPct := m.ParityComputeMs / m.TotalLatencyMs * 100.0
-			row("  └ parity overhead", fmt.Sprintf("%.1f%% of total", parityPct))
-		}
 	}
-	sep()
-
-	hdr("THROUGHPUT & BANDWIDTH")
-	row("Throughput", fmt.Sprintf("%.4f MB/s  (end-to-end)", m.ThroughputMBps))
-	row("Bandwidth", fmt.Sprintf("%.4f MB/s  (wire only)", m.BandwidthMBps))
-	row("Parallel speedup", fmt.Sprintf("%.2f×  (ideal = 3.00×)", m.ParallelSpeedup))
-	sep()
-
-	hdr("RELIABILITY")
+	fmt.Fprintln(w, "--- THROUGHPUT ---")
+	row("Throughput", fmt.Sprintf("%.4f MB/s", m.ThroughputMBps))
+	row("Bandwidth", fmt.Sprintf("%.4f MB/s", m.BandwidthMBps))
+	fmt.Fprintln(w, "--- RELIABILITY ---")
 	row("Chunks attempted", strconv.Itoa(m.TotalChunksAttempted))
 	row("Chunks succeeded", strconv.Itoa(m.SuccessfulChunks))
 	row("RAID-5 reconstructed", strconv.Itoa(m.ReconstructedChunks))
 	row("Success rate", fmt.Sprintf("%.1f%%", m.SuccessRate))
-	sep()
-
-	hdr("RAID-5 RECONSTRUCTION OVERHEAD  (download only)")
 	if m.DegradedDownload {
-		row("Mode", "⚠️  DEGRADED  (chunkserver missing)")
-		row("Reconstruction time", fmt.Sprintf("%.3f ms", m.ReconstructionMs))
-		row("Reconstruction overhead", fmt.Sprintf("%.2f%% of total latency", m.ReconstructionOverheadPct))
-		row("Chunks recovered", strconv.Itoa(m.ReconstructedChunks))
-	} else {
-		row("Mode", "✅ NORMAL  (all chunkservers healthy)")
-		row("Reconstruction time", "0.000 ms  (no recovery needed)")
+		fmt.Fprintln(w, "--- RECONSTRUCTION ---")
+		row("Mode", "DEGRADED")
+		row("Recon time", fmt.Sprintf("%.3f ms", m.ReconstructionMs))
+		row("Recon overhead", fmt.Sprintf("%.2f%%", m.ReconstructionOverheadPct))
 	}
-	fmt.Fprintln(w, "╚══════════════════════════════════════════════════════════════╝")
-	fmt.Fprintln(w)
+	fmt.Fprintln(w, "=================================\n")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CSV output
+// CSV — mutex-protected for concurrent web requests
 // ─────────────────────────────────────────────────────────────────────────────
 
 const metricsCSVFile = "dfs_metrics.csv"
 
+var csvMu sync.Mutex
+
 var csvHeader = []string{
-	"timestamp", "operation", "filename",
-	"file_size_bytes", "file_size_human",
-	"stripe_count", "chunk_count",
+	"timestamp", "source", "username", "operation", "filename",
+	"file_size_bytes", "file_size_human", "stripe_count", "chunk_count",
 	"total_latency_ms", "master_rpc_latency_ms", "data_transfer_ms", "parity_compute_ms",
-	"master_overhead_pct",
-	"throughput_mbps", "bandwidth_mbps", "parallel_speedup",
-	"chunks_attempted", "chunks_succeeded", "chunks_reconstructed",
-	"success_rate_pct",
+	"master_overhead_pct", "throughput_mbps", "bandwidth_mbps", "parallel_speedup",
+	"chunks_attempted", "chunks_succeeded", "chunks_reconstructed", "success_rate_pct",
 	"degraded_download", "reconstruction_ms", "reconstruction_overhead_pct",
-	"status", "error",
+	"concurrent_users", "status", "error",
 }
 
-// AppendMetricsCSV appends one row to dfs_metrics.csv, writing the header
-// first if the file does not yet exist.
 func AppendMetricsCSV(m OperationMetrics) error {
+	csvMu.Lock()
+	defer csvMu.Unlock()
+
 	needHeader := false
 	if _, err := os.Stat(metricsCSVFile); os.IsNotExist(err) {
 		needHeader = true
 	}
-
 	f, err := os.OpenFile(metricsCSVFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
-		return fmt.Errorf("metrics CSV open failed: %v", err)
+		return fmt.Errorf("metrics CSV: %v", err)
 	}
 	defer f.Close()
 
 	cw := csv.NewWriter(f)
 	if needHeader {
-		if err := cw.Write(csvHeader); err != nil {
-			return err
-		}
+		cw.Write(csvHeader)
 	}
 
 	statusStr := "success"
 	if m.Error != "" {
 		statusStr = "error"
 	}
-
 	degradedStr := "false"
 	if m.DegradedDownload {
 		degradedStr = "true"
 	}
 
-	row := []string{
+	cw.Write([]string{
 		m.Timestamp.Format(time.RFC3339Nano),
-		m.Operation,
-		m.Filename,
+		m.Source, m.Username, m.Operation, m.Filename,
 		strconv.FormatInt(m.FileSizeBytes, 10),
 		formatSize(m.FileSizeBytes),
 		strconv.Itoa(m.StripeCount),
@@ -379,28 +788,146 @@ func AppendMetricsCSV(m OperationMetrics) error {
 		degradedStr,
 		fmt.Sprintf("%.3f", m.ReconstructionMs),
 		fmt.Sprintf("%.2f", m.ReconstructionOverheadPct),
-		statusStr,
-		m.Error,
-	}
-
-	if err := cw.Write(row); err != nil {
-		return err
-	}
+		strconv.Itoa(m.ConcurrentUsers),
+		statusStr, m.Error,
+	})
 	cw.Flush()
 	return cw.Error()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RecordMetrics — single call-site used by all operations
+// Record helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-// RecordMetrics prints to terminal AND appends to CSV.
-// Call this at the end of every operation (success or failure).
+// RecordMetrics — CLI: prints to stderr + CSV.
 func RecordMetrics(m OperationMetrics) {
+	mstore.push(m)
 	PrintMetrics(m)
 	if err := AppendMetricsCSV(m); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to write metrics CSV: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: metrics CSV write failed: %v\n", err)
 	} else {
-		fmt.Fprintf(os.Stderr, "📄  Metrics saved → %s\n\n", metricsCSVFile)
+		fmt.Fprintf(os.Stderr, "Metrics saved to %s\n\n", metricsCSVFile)
 	}
+}
+
+// RecordWebMetrics — web: CSV only (no terminal spam for concurrent requests).
+func RecordWebMetrics(m OperationMetrics) {
+	mstore.push(m)
+	if err := AppendMetricsCSV(m); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: web metrics CSV write failed: %v\n", err)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HTTP handlers — plug into your existing router
+// ─────────────────────────────────────────────────────────────────────────────
+
+// MetricsSummary aggregates stats across all stored operations.
+type MetricsSummary struct {
+	TotalOps      int     `json:"total_ops"`
+	SuccessOps    int     `json:"success_ops"`
+	FailedOps     int     `json:"failed_ops"`
+	UploadOps     int     `json:"upload_ops"`
+	DownloadOps   int     `json:"download_ops"`
+	DeleteOps     int     `json:"delete_ops"`
+	LsOps         int     `json:"ls_ops"`
+	DegradedOps   int     `json:"degraded_ops"`
+	AvgLatencyMs  float64 `json:"avg_latency_ms"`
+	AvgThroughput float64 `json:"avg_throughput_mbps"`
+	TotalBytes    int64   `json:"total_bytes_transferred"`
+	MaxConcurrent int     `json:"max_concurrent_users_seen"`
+}
+
+// MetricsResponse is what GET /metrics returns.
+type MetricsResponse struct {
+	ActiveUsers     map[string]int     `json:"active_users"`
+	ActiveUserCount int                `json:"active_user_count"`
+	TotalRecorded   int                `json:"total_recorded"`
+	Summary         MetricsSummary     `json:"summary"`
+	Recent          []OperationMetrics `json:"recent"` // last 100 entries
+}
+
+// HandleGetMetrics serves GET /metrics
+// Register: mux.HandleFunc("/metrics", requireAuth(HandleGetMetrics))
+func HandleGetMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	all := mstore.all()
+	summary := MetricsSummary{}
+	var sumLatency, sumThroughput float64
+	tpCount := 0
+
+	for _, m := range all {
+		summary.TotalOps++
+		if m.Error == "" {
+			summary.SuccessOps++
+		} else {
+			summary.FailedOps++
+		}
+		sumLatency += m.TotalLatencyMs
+		if m.ThroughputMBps > 0 {
+			sumThroughput += m.ThroughputMBps
+			tpCount++
+		}
+		summary.TotalBytes += m.FileSizeBytes
+		if m.ConcurrentUsers > summary.MaxConcurrent {
+			summary.MaxConcurrent = m.ConcurrentUsers
+		}
+		if m.DegradedDownload {
+			summary.DegradedOps++
+		}
+		switch m.Operation {
+		case "upload":
+			summary.UploadOps++
+		case "download":
+			summary.DownloadOps++
+		case "delete":
+			summary.DeleteOps++
+		case "ls":
+			summary.LsOps++
+		}
+	}
+	if summary.TotalOps > 0 {
+		summary.AvgLatencyMs = sumLatency / float64(summary.TotalOps)
+	}
+	if tpCount > 0 {
+		summary.AvgThroughput = sumThroughput / float64(tpCount)
+	}
+
+	recent := all
+	if len(recent) > 100 {
+		recent = recent[len(recent)-100:]
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(MetricsResponse{
+		ActiveUsers:     activeUsers.snapshot(),
+		ActiveUserCount: activeUsers.count(),
+		TotalRecorded:   len(all),
+		Summary:         summary,
+		Recent:          recent,
+	})
+}
+
+// HandleGetMetricsCSV serves GET /metrics/csv — downloads the raw CSV.
+func HandleGetMetricsCSV(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	csvMu.Lock()
+	data, err := os.ReadFile(metricsCSVFile)
+	csvMu.Unlock()
+	if err != nil {
+		http.Error(w, "no metrics data yet", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", `attachment; filename="dfs_metrics.csv"`)
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Write(data)
 }
