@@ -748,13 +748,15 @@ On restart, the master recovers all metadata: files, stripes, chunk locations, c
 ## File Structure
 
 ```
-dfs-project/
+xorfs/
 ├── cmd/
 │   ├── master/
 │   │   ├── main.go              # Master startup + role-based failover logic
 │   │   ├── master.go            # CreateFile, AllocateChunk, DeleteFile, etc.
 │   │   ├── secondary.go         # Standby logic, WatchdogLoop, promotion
 │   │   ├── master_helper.go     # Utility helpers
+│   │   ├── chunkserver_recovery.go  # Chunk server recovery logic
+│   │   ├── folder_operations.go # Folder CRUD operations
 │   │   ├── wal_operation.go     # WAL entry types and AppendWAL
 │   │   ├── wal_recovery.go      # WAL replay on startup
 │   │   └── checkpoint.go        # Checkpoint save/load + periodic checkpointing
@@ -763,20 +765,80 @@ dfs-project/
 │   │   ├── chunkservertask.go   # WriteChunk, ReadChunk, DeleteChunks
 │   │   ├── inventory.go         # Startup inventory scan and report to master
 │   │   ├── reconstruction.go    # XOR-based chunk reconstruction from peers
-│   │   └── checksum.go          # CRC32 calculation
-│   └── client/
-│       ├── main.go              # Client CLI — upload, download, ls, mkdir, mv, cat, etc.
-│       ├── stripe_reader.go     # File streaming in stripes
-│       ├── parallel_upload.go   # Parallel chunk uploads with ACK queue
-│       ├── download_stripe.go   # Parallel downloads with parity reconstruction
-│       ├── parity.go            # XOR parity calculation and chunk padding
-│       └── checksum.go          # CRC32 checksums
+│   │   └── checksum.go          # CRC32 calculation + verification
+│   ├── client/
+│   │   ├── main.go              # Client CLI — upload, download, ls, mkdir, mv, cat, etc.
+│   │   ├── stripe_reader.go     # File streaming in stripes
+│   │   ├── stripe.go            # Stripe data structure and utilities
+│   │   ├── parallel_upload.go   # Parallel chunk uploads with ACK queue
+│   │   ├── download_stripe.go   # Parallel downloads with parity reconstruction
+│   │   ├── parity.go            # XOR parity calculation and chunk padding
+│   │   ├── checksum.go          # CRC32 checksums
+│   │   ├── metrics.go           # Performance metrics collection
+│   │   ├── ack_queue.go         # ACK queue management for uploads
+│   │   └── client_id.go         # Client ID management
+│   └── webserver/
+│       ├── main.go              # REST API server and static file serving
+│       ├── main_test.go         # API tests
+│       └── metrics.go           # Metrics collection and reporting (JSON/CSV)
+├── pkg/
+│   ├── auth/
+│   │   ├── handlers.go          # Authentication HTTP handlers
+│   │   ├── jwt.go               # JWT token generation and validation
+│   │   ├── middleware.go        # Auth middleware
+│   │   ├── password.go          # Password hashing and verification
+│   │   ├── storage.go           # User credential storage
+│   │   └── types.go             # Auth type definitions
+│   ├── config/
+│   │   └── config.go            # Configuration helpers (master addr, etc.)
+│   ├── dfsclient/
+│   │   ├── dfsclient.go         # High-level DFS client wrapper
+│   │   ├── ack_queue.go         # ACK queue for upload acknowledgments
+│   │   ├── ack_queue_test.go    # ACK queue tests
+│   │   ├── checksum.go          # CRC32 verification
+│   │   ├── checksum_test.go     # Checksum tests
+│   │   ├── conn_pool.go         # Connection pooling for gRPC
+│   │   ├── stripe.go            # Stripe structure and operations
+│   │   ├── stripe_test.go       # Stripe tests
+│   │   ├── stripe_reader.go     # Stripe reader implementation
+│   │   ├── stripe_reader_test.go # Stripe reader tests
+│   │   ├── parallel_upload.go   # Parallel upload logic
+│   │   ├── parallel_upload_test.go # Upload tests
+│   │   ├── download_stripe.go   # Stripe download with reconstruction
+│   │   ├── download_stripe_test.go # Download tests
+│   │   ├── failover_client.go   # Master failover client logic
+│   │   ├── stats.go             # Statistics collection
+│   │   └── userlogger.go        # User action logging
+│   └── webserver/
+│       ├── analysis.go          # Metrics analysis and aggregation
+│       ├── webserver_logger.go  # Logging for web requests
+│       ├── webserver_logger_test.go # Logger tests
+│       └── types.go             # Type definitions for web API
+├── web/
+│   ├── package.json             # Frontend dependencies
+│   ├── index.html               # HTML entry point
+│   ├── main.jsx                 # Vite entry point
+│   ├── App.jsx                  # React app component
+│   ├── components/
+│   │   ├── Auth.jsx             # Authentication component
+│   │   ├── Auth.css             # Auth styles
+│   │   └── FileUpload.jsx       # File upload component
+│   ├── pages/
+│   │   ├── Files.jsx            # File management page
+│   │   └── MetricsDashboard.jsx # Performance metrics dashboard
+│   └── utils/
+│       └── ChunkedUploader.js   # Chunked file upload utility
 ├── dfspb/
 │   ├── dfs.pb.go               # Generated protobuf code
 │   └── dfs_grpc.pb.go          # Generated gRPC stubs
-├── pkg/
-│   └── config/                 # Shared config helpers (master addr, chunk servers)
+├── data/
+│   └── users.json              # User credentials (local storage)
+├── files/
+│   └── README.md               # Sample files directory
+├── log_files/
+│   └── readme.md               # Logs directory
 ├── dfs.proto                   # Protocol definitions
+├── go.mod                      # Go module definition
 ├── Makefile                    # Build and run commands
-└── README.md                   # This file
+└── readme.md                   # This file
 ```
