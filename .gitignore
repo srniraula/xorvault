@@ -80,3 +80,5 @@ Thumbs.db
 personal/
 web/node_modules/
 web/node_modules/.vite/
+
+data/

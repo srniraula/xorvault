@@ -522,38 +522,134 @@ make upload FILE=myfile.pdf
 
 ---
 
-## Makefile Commands
+## Makefile Commands Reference
+
+Run `make help` to see this interactive guide:
+
+### 📦 BUILD
 
 ```bash
-make build                    # Build all binaries
-make proto                    # Regenerate protobuf files
-make clean                    # Remove binaries and data
+make build         # Build all Go binaries (master, chunkserver, client, webserver)
+make clean         # Remove binaries, data, and logs
+make proto         # Regenerate protobuf files (if you modify dfs.proto)
+```
 
-# Master — standalone (no failover)
-make run-master
+### 🚀 SETUP FOR MULTI-MACHINE DEPLOYMENT
 
-# Master — with failover (start secondary FIRST)
-make run-master-secondary MY_ADDR=<ip:port> PRIMARY_ADDR=<primary-ip:port>
-make run-master-primary   MY_ADDR=<ip:port> SECONDARY_ADDR=<secondary-ip:port>
+This distributed file system is designed to run across **6 machines** for full redundancy and scalability:
 
-# Chunk servers
-make run-chunk_server1 MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>]
-make run-chunk_server2 MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>]
-make run-chunk_server3 MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>]
+#### MACHINE 1 - Primary Master (Replication + Failover)
+```bash
+make run-master-primary MY_ADDR=<this-machine-ip>:50051 SECONDARY_ADDR=<secondary-master-ip>:50052
+```
 
-# Client configuration
+**Example:**
+```bash
+make run-master-primary MY_ADDR=192.168.100.1:50051 SECONDARY_ADDR=192.168.100.2:50052
+```
+
+#### MACHINE 2 - Secondary Master (Standby + Auto-Promotion)
+> **Important:** Start this FIRST before the primary master
+```bash
+make run-master-secondary MY_ADDR=<this-machine-ip>:50052 PRIMARY_ADDR=<primary-master-ip>:50051
+```
+
+**Example:**
+```bash
+make run-master-secondary MY_ADDR=192.168.100.2:50052 PRIMARY_ADDR=192.168.100.1:50051
+```
+
+#### MACHINE 3 - Chunk Server 1
+```bash
+make run-chunk_server1 MASTER_ADDR=<primary-master-ip>:50051 SECONDARY_MASTER_ADDR=<secondary-master-ip>:50052 CHUNK_HOST=<this-machine-ip>
+```
+
+**Example:**
+```bash
+make run-chunk_server1 MASTER_ADDR=192.168.100.1:50051 SECONDARY_MASTER_ADDR=192.168.100.2:50052 CHUNK_HOST=192.168.100.3
+```
+
+#### MACHINE 4 - Chunk Server 2
+```bash
+make run-chunk_server2 MASTER_ADDR=<primary-master-ip>:50051 SECONDARY_MASTER_ADDR=<secondary-master-ip>:50052 CHUNK_HOST=<this-machine-ip>
+```
+
+**Example:**
+```bash
+make run-chunk_server2 MASTER_ADDR=192.168.100.1:50051 SECONDARY_MASTER_ADDR=192.168.100.2:50052 CHUNK_HOST=192.168.100.4
+```
+
+#### MACHINE 5 - Chunk Server 3
+```bash
+make run-chunk_server3 MASTER_ADDR=<primary-master-ip>:50051 SECONDARY_MASTER_ADDR=<secondary-master-ip>:50052 CHUNK_HOST=<this-machine-ip>
+```
+
+**Example:**
+```bash
+make run-chunk_server3 MASTER_ADDR=192.168.100.1:50051 SECONDARY_MASTER_ADDR=192.168.100.2:50052 CHUNK_HOST=192.168.100.5
+```
+
+#### MACHINE 6 - Webserver (REST API)
+
+1. Create configuration files with master addresses:
+```bash
+echo 'PRIMARY_MASTER_IP:50051' > .master_addr
+echo 'SECONDARY_MASTER_IP:50052' > .secondary_master_addr
+```
+
+2. Run the webserver:
+```bash
+make run-webserver
+```
+
+**Example:**
+```bash
+echo '192.168.100.1:50051' > .master_addr
+echo '192.168.100.2:50052' > .secondary_master_addr
+make run-webserver
+```
+
+#### MACHINE 6 (or separate) - Frontend (Vite Dev Server)
+```bash
+cd web && npm run dev -- --host 0.0.0.0
+```
+
+### 🌐 ACCESS POINTS
+
+| Component | Address |
+|-----------|---------|
+| Web UI | `http://<webserver-machine>:5173` |
+| REST API | `http://<webserver-machine>:8080` |
+| Primary Master | `<primary-master-ip>:50051` |
+| Secondary Master | `<secondary-master-ip>:50052` |
+| Chunk Server 1 | `<chunk-server-1-ip>:9001` |
+| Chunk Server 2 | `<chunk-server-2-ip>:9002` |
+| Chunk Server 3 | `<chunk-server-3-ip>:9003` |
+
+### 📋 FILE OPERATIONS (Client Commands)
+
+#### Client Configuration
+```bash
 make set-master MASTER_ADDR=<ip:port> [SECONDARY_MASTER_ADDR=<ip:port>]
+```
 
-# File operations
-make upload FILE=<filename>        # Upload file
-make download FILE=<filename>      # Download file
-make delete FILE=<filename>        # Delete file
-make ls                            # List uploaded files
-make ls-detailed [FOLDER=<path>]   # List with details
-make mkdir FOLDER=<path>           # Create folder
-make rmdir FOLDER=<path>           # Remove empty folder
-make mv SRC=<path> DEST=<path>     # Move or rename
-make cat FILE=<filename>           # Preview file content
+#### File Operations
+```bash
+make upload FILE=<filename>              # Upload file
+make download FILE=<filename>            # Download file
+make delete FILE=<filename>              # Delete file
+make ls                                  # List uploaded files
+make ls-detailed [FOLDER=<path>]         # List with details
+make mkdir FOLDER=<path>                 # Create folder
+make rmdir FOLDER=<path>                 # Remove empty folder
+make mv SRC=<path> DEST=<path>           # Move or rename file
+make cat FILE=<filename>                 # Preview file content
+```
+
+### 🧹 CLEANUP
+
+```bash
+make clean         # Remove all binaries, data, and logs
 ```
 
 ---
