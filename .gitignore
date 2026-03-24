@@ -65,7 +65,14 @@ clients/
 *.swo
 *~
 
+# --- Local Configuration and Credentials (SECURITY) ---
 .master_addr
+.secondary_master_addr
+data/users.json       # User credentials and passwords
+dfs_metrics.csv       # Local metrics data
+
+# --- Personal/Development Notes ---
+personal/             # Internal notes and development documentation
 
 # Operating System temporary files
 .DS_Store
