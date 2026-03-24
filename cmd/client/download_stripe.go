@@ -304,7 +304,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// globalReconstrNs accumulates RAID-5 reconstruction (XOR) time in nanoseconds.
+// globalReconstrNs accumulates RAID-4 reconstruction (XOR) time in nanoseconds.
 // Drained by download() via DrainReconstrMs() after all stripes are processed.
 var globalReconstrNs int64
 

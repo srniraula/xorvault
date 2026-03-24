@@ -1,10 +1,10 @@
-<!-- # XorFS - Distributed File System with RAID-5
+<!-- # XorFS - Distributed File System with RAID-4
 
-A distributed file system implementation in Go featuring RAID-5 erasure coding, client authentication, data integrity verification, and crash recovery through WAL and checkpointing.
+A distributed file system implementation in Go featuring RAID-4 erasure coding, client authentication, data integrity verification, and crash recovery through WAL and checkpointing.
 
 ## Features
 
-- **RAID-5 Erasure Coding**: Files split into 2 data chunks + 1 parity chunk per stripe (XOR-based)
+- **RAID-4 Erasure Coding**: Files split into 2 data chunks + 1 parity chunk per stripe (XOR-based)
 - **Client Authentication**: Persistent client IDs with ownership verification
 - **Physical Isolation**: Client data stored in separate subdirectories on chunk servers
 - **Data Integrity**: CRC32 checksums verified at upload, storage, and download
@@ -306,15 +306,15 @@ make upload FILE=<filename_inside_files>
  -->
 
 
-# XorFS - Distributed File System with RAID-5
+# XorFS - Distributed File System with RAID-4
 
-A distributed file system implementation in Go featuring RAID-5 erasure coding, client authentication, data integrity verification, and crash recovery through WAL and checkpointing.
+A distributed file system implementation in Go featuring RAID-4 erasure coding, client authentication, data integrity verification, and crash recovery through WAL and checkpointing.
 
 ---
 
 ## Features
 
-- **RAID-5 Erasure Coding**: Files split into 2 data chunks + 1 parity chunk per stripe (XOR-based)
+- **RAID-4 Erasure Coding**: Files split into 2 data chunks + 1 parity chunk per stripe (XOR-based)
 - **Client Authentication**: Persistent client IDs with ownership verification
 - **Physical Isolation**: Client data stored in separate subdirectories on chunk servers
 - **Data Integrity**: CRC32 checksums verified at upload, storage, and download

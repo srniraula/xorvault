@@ -23,7 +23,7 @@
 // 	// File dimensions
 // 	FileSizeBytes int64 // original file size (0 for ls/delete)
 // 	ChunkCount    int   // total chunks (data + parity)
-// 	StripeCount   int   // number of RAID-5 stripes
+// 	StripeCount   int   // number of RAID-4 stripes
 
 // 	// Wall-clock phase breakdown (all milliseconds)
 // 	TotalLatencyMs     float64 // end-to-end wall time
@@ -37,7 +37,7 @@
 // 	ParallelSpeedup   float64 // theoretical sequential / actual parallel
 // 	MasterOverheadPct float64 // MasterRPCLatencyMs / TotalLatencyMs * 100
 
-// 	// RAID-5 reconstruction overhead (download only — zero when all chunks healthy)
+// 	// RAID-4 reconstruction overhead (download only — zero when all chunks healthy)
 // 	ReconstructionMs          float64 // total XOR compute time for recovered chunks (ms)
 // 	ReconstructionOverheadPct float64 // ReconstructionMs / TotalLatencyMs * 100
 // 	DegradedDownload          bool    // true if any chunk was missing and reconstructed
@@ -45,7 +45,7 @@
 // 	// Reliability
 // 	TotalChunksAttempted int
 // 	SuccessfulChunks     int
-// 	ReconstructedChunks  int     // chunks recovered via RAID-5 XOR
+// 	ReconstructedChunks  int     // chunks recovered via RAID-4 XOR
 // 	SuccessRate          float64 // percentage
 
 // 	// Error (empty on success)
@@ -69,7 +69,7 @@
 // 	masterRPCMs   float64
 // 	dataXferMs    float64
 // 	parityMs      float64
-// 	reconstrMs    float64 // RAID-5 reconstruction XOR time (download only)
+// 	reconstrMs    float64 // RAID-4 reconstruction XOR time (download only)
 // 	stripeCount   int
 // 	chunkAttempts int
 // 	chunkSuccess  int
@@ -114,7 +114,7 @@
 // 	c.mu.Unlock()
 // }
 
-// // AddReconstruction accumulates milliseconds spent on RAID-5 XOR reconstruction
+// // AddReconstruction accumulates milliseconds spent on RAID-4 XOR reconstruction
 // // during a degraded download (one chunkserver dead).
 // func (c *OperationContext) AddReconstruction(ms float64) {
 // 	c.mu.Lock()
@@ -130,7 +130,7 @@
 // }
 
 // // AddChunkResult records the outcome of one chunk transfer attempt.
-// // reconstructed should be true when the chunk was recovered via RAID-5 XOR.
+// // reconstructed should be true when the chunk was recovered via RAID-4 XOR.
 // func (c *OperationContext) AddChunkResult(success, reconstructed bool) {
 // 	c.mu.Lock()
 // 	c.chunkAttempts++
@@ -288,11 +288,11 @@
 // 	hdr("RELIABILITY")
 // 	row("Chunks attempted", strconv.Itoa(m.TotalChunksAttempted))
 // 	row("Chunks succeeded", strconv.Itoa(m.SuccessfulChunks))
-// 	row("RAID-5 reconstructed", strconv.Itoa(m.ReconstructedChunks))
+// 	row("RAID-4 reconstructed", strconv.Itoa(m.ReconstructedChunks))
 // 	row("Success rate", fmt.Sprintf("%.1f%%", m.SuccessRate))
 // 	sep()
 
-// 	hdr("RAID-5 RECONSTRUCTION OVERHEAD  (download only)")
+// 	hdr("RAID-4 RECONSTRUCTION OVERHEAD  (download only)")
 // 	if m.DegradedDownload {
 // 		row("Mode", "⚠️  DEGRADED  (chunkserver missing)")
 // 		row("Reconstruction time", fmt.Sprintf("%.3f ms", m.ReconstructionMs))
@@ -709,7 +709,7 @@ func PrintMetrics(m OperationMetrics) {
 	fmt.Fprintln(w, "--- RELIABILITY ---")
 	row("Chunks attempted", strconv.Itoa(m.TotalChunksAttempted))
 	row("Chunks succeeded", strconv.Itoa(m.SuccessfulChunks))
-	row("RAID-5 reconstructed", strconv.Itoa(m.ReconstructedChunks))
+	row("RAID-4 reconstructed", strconv.Itoa(m.ReconstructedChunks))
 	row("Success rate", fmt.Sprintf("%.1f%%", m.SuccessRate))
 	if m.DegradedDownload {
 		fmt.Fprintln(w, "--- RECONSTRUCTION ---")

@@ -363,7 +363,7 @@
 
 // 	// ── METRICS: stop data-transfer timer and drain reconstruction accumulator
 // 	opCtx.AddDataXfer(t2.ElapsedMs())
-// 	opCtx.AddReconstruction(DrainReconstrMs()) // XOR time for any RAID-5 recovered chunks
+// 	opCtx.AddReconstruction(DrainReconstrMs()) // XOR time for any RAID-4 recovered chunks
 // 	// ────────────────────────────────────────────────────────────────────────
 
 // 	if bytesWritten != meta.FileSize {
@@ -1013,7 +1013,7 @@ func download(filename string, myID int64) {
 
 	// ── METRICS: stop data-transfer timer and drain reconstruction accumulator
 	opCtx.AddDataXfer(t2.ElapsedMs())
-	opCtx.AddReconstruction(DrainReconstrMs()) // XOR time for any RAID-5 recovered chunks
+	opCtx.AddReconstruction(DrainReconstrMs()) // XOR time for any RAID-4 recovered chunks
 	// ────────────────────────────────────────────────────────────────────────
 
 	if bytesWritten != meta.FileSize {

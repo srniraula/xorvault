@@ -302,7 +302,7 @@
 // 	fmt.Fprintln(w, "--- RELIABILITY ---")
 // 	row("Chunks attempted", strconv.Itoa(m.TotalChunksAttempted))
 // 	row("Chunks succeeded", strconv.Itoa(m.SuccessfulChunks))
-// 	row("RAID-5 reconstructed", strconv.Itoa(m.ReconstructedChunks))
+// 	row("RAID-4 reconstructed", strconv.Itoa(m.ReconstructedChunks))
 // 	row("Success rate", fmt.Sprintf("%.1f%%", m.SuccessRate))
 // 	if m.DegradedDownload {
 // 		fmt.Fprintln(w, "--- RECONSTRUCTION ---")
@@ -848,7 +848,7 @@
 // 	fmt.Fprintln(w, "--- RELIABILITY ---")
 // 	row("Chunks attempted", strconv.Itoa(m.TotalChunksAttempted))
 // 	row("Chunks succeeded", strconv.Itoa(m.SuccessfulChunks))
-// 	row("RAID-5 reconstructed", strconv.Itoa(m.ReconstructedChunks))
+// 	row("RAID-4 reconstructed", strconv.Itoa(m.ReconstructedChunks))
 // 	row("Success rate", fmt.Sprintf("%.1f%%", m.SuccessRate))
 // 	if m.DegradedDownload {
 // 		fmt.Fprintln(w, "--- RECONSTRUCTION ---")
@@ -1411,7 +1411,7 @@ func PrintMetrics(m OperationMetrics) {
 	fmt.Fprintln(w, "--- RELIABILITY ---")
 	row("Chunks attempted", strconv.Itoa(m.TotalChunksAttempted))
 	row("Chunks succeeded", strconv.Itoa(m.SuccessfulChunks))
-	row("RAID-5 reconstructed", strconv.Itoa(m.ReconstructedChunks))
+	row("RAID-4 reconstructed", strconv.Itoa(m.ReconstructedChunks))
 	row("Success rate", fmt.Sprintf("%.1f%%", m.SuccessRate))
 	if m.DegradedDownload {
 		fmt.Fprintln(w, "--- RECONSTRUCTION ---")
