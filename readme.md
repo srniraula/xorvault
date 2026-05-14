@@ -1,7 +1,7 @@
 
-# XORFS - Distributed File System with RAID-4
+#XORVAULT: CLIENT-ISOLATED PARITY-BASED DFS
 
-A distributed file system implementation in Go featuring RAID-4 erasure coding, client authentication, data integrity verification, and crash recovery through WAL and checkpointing.
+A distributed file storage system implementation in Go featuring RAID-4 erasure coding, client authentication, data integrity verification, and crash recovery through WAL and checkpointing.
 
 ---
 
@@ -152,7 +152,7 @@ XorFS supports automatic master failover using a primary/secondary pair.
 5. After promotion, secondary accepts all client and chunk server RPCs directly
 6. **Chunk servers and clients automatically detect failover** and switch to the secondary
 
-### ⚠️ Important: Start Order
+### Important: Start Order
 
 **Always start the secondary BEFORE the primary.**
 
@@ -185,7 +185,7 @@ You will see:
 ║  ✅  ACTIVE PRIMARY MASTER: 192.168.1.10:50051  ║
 ║     Standby peer: 192.168.1.20:50052            ║
 ╚══════════════════════════════════════════════╝
-[STATUS] 192.168.1.10:50051 → ✅ ACTIVE PRIMARY  (gen=1, wal_seq=0)
+[STATUS] 192.168.1.10:50051 →  ACTIVE PRIMARY  (gen=1, wal_seq=0)
 ```
 
 **Step 3 — Start chunk servers with both master addresses:**
@@ -219,7 +219,7 @@ make upload FILE=myfile.pdf
 
 Run `make help` to see this interactive guide:
 
-### 📦 BUILD
+### BUILD
 
 ```bash
 make build         # Build all Go binaries (master, chunkserver, client, webserver)
@@ -227,7 +227,7 @@ make clean         # Remove binaries, data, and logs
 make proto         # Regenerate protobuf files (if you modify dfs.proto)
 ```
 
-### 🚀 SETUP FOR MULTI-MACHINE DEPLOYMENT
+### SETUP FOR MULTI-MACHINE DEPLOYMENT
 
 This distributed file system is designed to run across **6 machines** for full redundancy and scalability:
 
@@ -307,7 +307,7 @@ make run-webserver
 cd web && npm run dev -- --host 0.0.0.0
 ```
 
-### 🌐 ACCESS POINTS
+### ACCESS POINTS
 
 | Component | Address |
 |-----------|---------|
@@ -319,7 +319,7 @@ cd web && npm run dev -- --host 0.0.0.0
 | Chunk Server 2 | `<chunk-server-2-ip>:9002` |
 | Chunk Server 3 | `<chunk-server-3-ip>:9003` |
 
-### 📋 FILE OPERATIONS (Client Commands)
+###  FILE OPERATIONS (Client Commands)
 
 #### Client Configuration
 ```bash
@@ -339,7 +339,7 @@ make mv SRC=<path> DEST=<path>           # Move or rename file
 make cat FILE=<filename>                 # Preview file content
 ```
 
-### 🧹 CLEANUP
+###  CLEANUP
 
 ```bash
 make clean         # Remove all binaries, data, and logs
