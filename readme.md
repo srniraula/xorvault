@@ -1,5 +1,5 @@
 
-#XORVAULT: CLIENT-ISOLATED PARITY-BASED DFS
+# XORVAULT: CLIENT-ISOLATED PARITY-BASED DFS
 
 A distributed file storage system implementation in Go featuring RAID-4 erasure coding, client authentication, data integrity verification, and crash recovery through WAL and checkpointing.
 
