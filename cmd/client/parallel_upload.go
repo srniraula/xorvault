@@ -1,218 +1,3 @@
-// package main
-
-// import (
-// 	"context"
-// 	"dfs-project/dfspb"
-// 	"log"
-// 	"sync"
-// 	"time"
-
-// 	"google.golang.org/grpc"
-// 	"google.golang.org/grpc/credentials/insecure"
-// )
-
-// // UploadTask represents a single chunk upload task
-// type UploadTask struct {
-// 	ServerAddr string
-// 	ChunkID    string
-// 	Data       []byte
-// 	Checksum   string
-// 	ClientID   int64
-// }
-
-// // UploadResult contains the result of a chunk upload
-// type UploadResult struct {
-// 	ChunkID  string
-// 	Success  bool
-// 	Error    error
-// 	Checksum string
-// }
-
-// // uploadStripesStreaming consumes stripes from a channel and uploads chunks in parallel
-// // Uses pipeline pattern - uploads chunks as stripes arrive, no memory accumulation
-// // Returns list of successfully uploaded chunk IDs
-// func uploadStripesStreaming(stripeChan <-chan Stripe, ackQueue *AckQueue, clientID int64) ([]string, error) {
-// 	var wg sync.WaitGroup
-
-// 	// Result channel - buffered to prevent upload goroutines from blocking
-// 	resultChan := make(chan UploadResult, 6)
-
-// 	// Result collector
-// 	successfulChunks := make([]string, 0)
-// 	var resultMu sync.Mutex
-// 	collectorDone := make(chan bool)
-// 	uploadedCount := 0
-
-// 	go func() {
-// 		for result := range resultChan {
-// 			uploadedCount++
-
-// 			if result.Success {
-// 				resultMu.Lock()
-// 				successfulChunks = append(successfulChunks, result.ChunkID)
-// 				resultMu.Unlock()
-
-// 				log.Printf("[%d] Uploaded %s (checksum: %s...)",
-// 					uploadedCount, result.ChunkID, result.Checksum[:8])
-// 			} else {
-// 				log.Printf("[%d] Failed %s: %v",
-// 					uploadedCount, result.ChunkID, result.Error)
-// 			}
-// 		}
-// 		collectorDone <- true
-// 	}()
-
-// 	// Consume stripes from channel and spawn upload goroutines
-// 	// this loop is blocking
-// 	stripeCount := 0
-// 	for stripe := range stripeChan {
-// 		stripeCount++
-// 		// Add all chunk IDs to ACK queue for this stripe
-// 		for _, chunkID := range stripe.ChunkIDs {
-// 			if len(chunkID) == 0 {
-// 				continue
-// 			}
-// 			ackQueue.Add(chunkID)
-// 		}
-
-// 		// Upload 3 chunks (2 data + 1 parity) for this stripe
-// 		tasks := []UploadTask{
-// 			{
-// 				ServerAddr: stripe.Servers[0],
-// 				ChunkID:    stripe.ChunkIDs[0],
-// 				Data:       stripe.DataChunk1,
-// 				Checksum:   stripe.Checksums[0],
-// 				ClientID:   clientID,
-// 			},
-// 			{
-// 				ServerAddr: stripe.Servers[1],
-// 				ChunkID:    stripe.ChunkIDs[1],
-// 				Data:       stripe.DataChunk2,
-// 				Checksum:   stripe.Checksums[1],
-// 				ClientID:   clientID,
-// 			},
-// 			{
-// 				ServerAddr: stripe.Servers[2],
-// 				ChunkID:    stripe.ChunkIDs[2],
-// 				Data:       stripe.ParityChunk,
-// 				Checksum:   stripe.Checksums[2],
-// 				ClientID:   clientID,
-// 			},
-// 		}
-
-// 		// Spawn 3 upload goroutines for this stripe
-// 		// for odd number of chunks of a file, we skip uploadchunk
-// 		// because chunk is empty
-// 		for _, task := range tasks {
-// 			if len(task.ChunkID) == 0 {
-// 				continue
-// 			}
-// 			if len(task.ServerAddr) == 0 {
-// 				// Master returned no server for this chunk — not enough chunk servers
-// 				// have re-registered yet after a failover.  Log and skip; the upload
-// 				// will be reported incomplete so the caller can retry.
-// 				log.Printf("Warning: no server assigned for chunk %s (chunk servers still re-registering after failover?)", task.ChunkID)
-// 				ackQueue.Remove(task.ChunkID) // don't leave it pending forever
-// 				continue
-// 			}
-// 			wg.Add(1)
-// 			go uploadChunk(task, &wg, resultChan, ackQueue)
-// 		}
-
-// 		// Stripe data can now be garbage collected - not held in memory
-// 	}
-
-// 	stripeWord := "stripe"
-// 	if stripeCount != 1 {
-// 		stripeWord = "stripes"
-// 	}
-// 	log.Printf("Received %d %s from stream, waiting for uploads to complete", stripeCount, stripeWord)
-
-// 	// Wait for all uploads to finish
-// 	wg.Wait()
-// 	close(resultChan)
-// 	<-collectorDone
-
-// 	return successfulChunks, nil
-// }
-
-// // chan<- Type    // Send-only (can only WRITE to it)
-// // <-chan Type    // Receive-only (can only READ from it)
-// // chan Type      // Bidirectional (can both read and write)
-
-// // uploadChunk uploads a single chunk to its designated server.
-// // Retries up to maxAttempts times with exponential backoff (500ms → 1s).
-// // Total worst-case wait: ~31 seconds before giving up.
-// // This handles transient WiFi packet drops without hanging too long.
-// func uploadChunk(task UploadTask, wg *sync.WaitGroup, resultChan chan<- UploadResult, ackQueue *AckQueue) {
-// 	defer wg.Done()
-
-// 	result := UploadResult{
-// 		ChunkID:  task.ChunkID,
-// 		Checksum: task.Checksum,
-// 	}
-
-// 	const (
-// 		initialBackoff = 500 * time.Millisecond
-// 		maxBackoff     = 10 * time.Second
-// 		maxAttempts    = 3 // worst case: ~31s total (3×10s RPC + 0.5+1s sleep)
-// 		rpcTimeout     = 10 * time.Second
-// 	)
-
-// 	backoff := initialBackoff
-// 	var lastErr error
-
-// 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-// 		conn, err := grpc.NewClient(task.ServerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-// 		if err != nil {
-// 			lastErr = err
-// 			log.Printf("[retry %d/%d] connection to %s failed: %v — retrying in %v",
-// 				attempt, maxAttempts, task.ServerAddr, err, backoff)
-// 			time.Sleep(backoff)
-// 			backoff *= 2
-// 			if backoff > maxBackoff {
-// 				backoff = maxBackoff
-// 			}
-// 			continue
-// 		}
-
-// 		client := dfspb.NewChunkServerClient(conn)
-// 		ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
-// 		_, err = client.WriteChunk(ctx, &dfspb.WriteChunkRequest{
-// 			ChunkId:  task.ChunkID,
-// 			Data:     task.Data,
-// 			Checksum: task.Checksum,
-// 			ClientId: task.ClientID,
-// 		})
-// 		cancel()
-// 		conn.Close()
-
-// 		if err == nil {
-// 			// Success — remove from ACK queue and report
-// 			ackQueue.Remove(task.ChunkID)
-// 			result.Success = true
-// 			resultChan <- result
-// 			return
-// 		}
-
-// 		lastErr = err
-// 		log.Printf("[retry %d/%d] WriteChunk %s → %s failed: %v — retrying in %v",
-// 			attempt, maxAttempts, task.ChunkID, task.ServerAddr, err, backoff)
-// 		time.Sleep(backoff)
-// 		backoff *= 2
-// 		if backoff > maxBackoff {
-// 			backoff = maxBackoff
-// 		}
-// 	}
-
-// 	// All attempts exhausted — report failure, chunk stays in ACK queue
-// 	log.Printf("[FAILED] chunk %s → %s gave up after %d attempts. Last error: %v",
-// 		task.ChunkID, task.ServerAddr, maxAttempts, lastErr)
-// 	result.Success = false
-// 	result.Error = lastErr
-// 	resultChan <- result
-// }
-
 package main
 
 import (
@@ -246,26 +31,16 @@ type UploadResult struct {
 // Concurrency limits — tune these to match your network:
 //
 //	concurrencyLocal  : goroutines per chunkserver when it's on the same machine
-//	                    or a virtual interface (UTM/VM). No real network = unlimited
-//	                    is fine, but 8 is already saturating disk I/O.
+//	                    or a virtual interface (UTM/VM).
 //	concurrencyWiFi   : goroutines per chunkserver over WiFi or slow LAN.
 //	                    Formula: WiFi_MB/s / 1MB_chunk_size = safe concurrent count
-//	                    Example: 3 MB/s WiFi → 2 concurrent (44× safety margin vs 30s timeout)
-//
-// IF WIFI SPEED DROPS FURTHER — change only concurrencyWiFi:
-//
-//	~5 MB/s  WiFi → concurrencyWiFi = 3  (safe)
-//	~3 MB/s  WiFi → concurrencyWiFi = 2  (current, safe)
-//	~1 MB/s  WiFi → concurrencyWiFi = 1  (very slow WiFi / congested)
-//	<1 MB/s  WiFi → concurrencyWiFi = 1  + increase rpcTimeout to 60s in uploadChunk
 const (
 	concurrencyLocal = 8 // mac↔VM: virtual network, max speed
 	concurrencyWiFi  = 2 // mac↔Lenovo: real WiFi, conservative
 )
 
 // localPrefixes contains network prefixes that are considered "local" —
-// same machine or virtual interfaces. Connections to these get concurrencyLocal.
-// Add any UTM/VM subnet your setup uses.
+// same machine or virtual interfaces.
 var localPrefixes = []string{
 	"127.",         // loopback
 	"192.168.128.", // UTM host-only (Mac↔VM)
@@ -277,7 +52,6 @@ var localPrefixes = []string{
 func concurrencyForAddr(addr string) int {
 	host := addr
 	if i := len(addr) - 1; i >= 0 {
-		// Strip port — addr is "host:port"
 		for i >= 0 && addr[i] != ':' {
 			i--
 		}
@@ -294,7 +68,6 @@ func concurrencyForAddr(addr string) int {
 }
 
 // serverSemaphores holds one buffered channel (semaphore) per chunkserver address.
-// Acquiring = send to channel; releasing = receive from channel.
 var (
 	semMu  sync.Mutex
 	semMap = make(map[string]chan struct{})
@@ -310,9 +83,8 @@ func getServerSem(addr string) chan struct{} {
 	return semMap[addr]
 }
 
-// uploadStripesStreaming consumes stripes from a channel and uploads chunks in parallel
-// Uses pipeline pattern - uploads chunks as stripes arrive, no memory accumulation
-// Returns list of successfully uploaded chunk IDs
+// uploadStripesStreaming consumes stripes from a channel and uploads chunks in parallel.
+// Uses pipeline pattern - uploads chunks as stripes arrive, no memory accumulation.
 func uploadStripesStreaming(stripeChan <-chan Stripe, ackQueue *AckQueue, clientID int64) ([]string, error) {
 	var wg sync.WaitGroup
 
@@ -344,12 +116,10 @@ func uploadStripesStreaming(stripeChan <-chan Stripe, ackQueue *AckQueue, client
 		collectorDone <- true
 	}()
 
-	// Consume stripes from channel and spawn upload goroutines
-	// this loop is blocking
 	stripeCount := 0
 	for stripe := range stripeChan {
 		stripeCount++
-		// Add all chunk IDs to ACK queue for this stripe
+
 		for _, chunkID := range stripe.ChunkIDs {
 			if len(chunkID) == 0 {
 				continue
@@ -357,7 +127,6 @@ func uploadStripesStreaming(stripeChan <-chan Stripe, ackQueue *AckQueue, client
 			ackQueue.Add(chunkID)
 		}
 
-		// Upload 3 chunks (2 data + 1 parity) for this stripe
 		tasks := []UploadTask{
 			{
 				ServerAddr: stripe.Servers[0],
@@ -382,19 +151,15 @@ func uploadStripesStreaming(stripeChan <-chan Stripe, ackQueue *AckQueue, client
 			},
 		}
 
-		// Spawn 3 upload goroutines for this stripe
-		// for odd number of chunks of a file, we skip uploadchunk
-		// because chunk is empty
 		for _, task := range tasks {
 			if len(task.ChunkID) == 0 {
 				continue
 			}
 			if len(task.ServerAddr) == 0 {
 				// Master returned no server for this chunk — not enough chunk servers
-				// have re-registered yet after a failover.  Log and skip; the upload
-				// will be reported incomplete so the caller can retry.
+				// have re-registered yet after a failover.
 				log.Printf("Warning: no server assigned for chunk %s (chunk servers still re-registering after failover?)", task.ChunkID)
-				ackQueue.Remove(task.ChunkID) // don't leave it pending forever
+				ackQueue.Remove(task.ChunkID)
 				continue
 			}
 			wg.Add(1)
@@ -410,7 +175,6 @@ func uploadStripesStreaming(stripeChan <-chan Stripe, ackQueue *AckQueue, client
 	}
 	log.Printf("Received %d %s from stream, waiting for uploads to complete", stripeCount, stripeWord)
 
-	// Wait for all uploads to finish
 	wg.Wait()
 	close(resultChan)
 	<-collectorDone
@@ -418,15 +182,10 @@ func uploadStripesStreaming(stripeChan <-chan Stripe, ackQueue *AckQueue, client
 	return successfulChunks, nil
 }
 
-// chan<- Type    // Send-only (can only WRITE to it)
-// <-chan Type    // Receive-only (can only READ from it)
-// chan Type      // Bidirectional (can both read and write)
-
 // uploadChunk uploads a single chunk to its designated server.
 // Acquires a per-server semaphore to limit concurrent uploads to any one
 // server (prevents overwhelming a remote WiFi chunkserver).
-// Retries up to maxAttempts times with exponential backoff (500ms → 1s).
-// Total worst-case wait: ~31 seconds before giving up.
+// Retries up to maxAttempts times with exponential backoff.
 func uploadChunk(task UploadTask, wg *sync.WaitGroup, resultChan chan<- UploadResult, ackQueue *AckQueue) {
 	defer wg.Done()
 

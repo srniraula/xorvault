@@ -19,7 +19,6 @@ func (m *MasterServer) ReportInventory(ctx context.Context, req *dfspb.Inventory
 
 	m.logger.Printf("Received inventory from %s: %d chunks reported", addr, len(req.ChunkIds))
 
-	// Build expected chunks for this server from fileInfo
 	expectedChunks := make(map[string]bool)
 	for _, cliendIDtoFiles := range m.fileInfo {
 		for _, stripes := range cliendIDtoFiles {
@@ -36,7 +35,6 @@ func (m *MasterServer) ReportInventory(ctx context.Context, req *dfspb.Inventory
 
 	m.logger.Printf("Expected chunks for %s: %d chunks", addr, len(expectedChunks))
 
-	// Find missing chunks (expected but not reported)
 	var missingChunks []string
 	for chunkID := range expectedChunks {
 		if !reportedChunks[chunkID] {
@@ -44,7 +42,6 @@ func (m *MasterServer) ReportInventory(ctx context.Context, req *dfspb.Inventory
 		}
 	}
 
-	// Find extra chunks (reported but not expected - orphaned)
 	var extraChunks []string
 	for chunkID := range reportedChunks {
 		if !expectedChunks[chunkID] {
@@ -55,7 +52,6 @@ func (m *MasterServer) ReportInventory(ctx context.Context, req *dfspb.Inventory
 	m.logger.Printf("Inventory analysis for %s: %d missing, %d extra",
 		addr, len(missingChunks), len(extraChunks))
 
-	// Build reconstruction tasks for missing chunks
 	var reconstructionTasks []*dfspb.ReconstructionTask
 	if len(missingChunks) > 0 {
 		reconstructionTasks = m.buildReconstructionTasks(missingChunks, addr)
@@ -94,7 +90,6 @@ func (m *MasterServer) ReportInventory(ctx context.Context, req *dfspb.Inventory
 func (m *MasterServer) buildReconstructionTasks(missingChunks []string, recoveringServer string) []*dfspb.ReconstructionTask {
 	var tasks []*dfspb.ReconstructionTask
 
-	// For each missing chunk, find its stripe and build reconstruction task
 	for _, missingChunkID := range missingChunks {
 		task := m.buildTaskForChunk(missingChunkID, recoveringServer)
 		if task != nil {
@@ -108,11 +103,9 @@ func (m *MasterServer) buildReconstructionTasks(missingChunks []string, recoveri
 // buildTaskForChunk creates a single reconstruction task
 // Finds the stripe, identifies the 2 available chunks, and returns metadata
 func (m *MasterServer) buildTaskForChunk(missingChunkID string, recoveringServer string) *dfspb.ReconstructionTask {
-	// Find which file and stripe this chunk belongs to
 	for _, ClientIDtoFilenames := range m.fileInfo {
 		for filename, stripes := range ClientIDtoFilenames {
 			for stripeNum, stripe := range stripes {
-				// Check if this chunk is in this stripe
 				var missingIndex int = -1
 				for i, chunkID := range stripe.ChunkIds {
 					if chunkID == missingChunkID && stripe.Servers[i] == recoveringServer {
@@ -122,15 +115,13 @@ func (m *MasterServer) buildTaskForChunk(missingChunkID string, recoveringServer
 				}
 
 				if missingIndex == -1 {
-					continue // Not in this stripe
+					continue
 				}
 
-				// Found it! Build reconstruction task with the other 2 chunks
 				var otherChunkIDs []string
 				var otherServers []string
 				var clientID int64
 
-				// Get client ID from filename
 				for cid, files := range m.clientIDs {
 					for _, f := range files {
 						if f == filename {
@@ -141,10 +132,8 @@ func (m *MasterServer) buildTaskForChunk(missingChunkID string, recoveringServer
 				}
 			found:
 
-				// Look up username for directory naming
 				username := m.clientUsernames[clientID]
 
-				// Collect the other 2 chunks (not the missing one)
 				for i := 0; i < 3; i++ {
 					if i != missingIndex {
 						otherChunkIDs = append(otherChunkIDs, stripe.ChunkIds[i])

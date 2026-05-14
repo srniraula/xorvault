@@ -229,7 +229,7 @@ service MasterServer {
   rpc ListFilesDetailed(ListFilesDetailedRequest)     returns (ListFilesDetailedResponse);
   rpc ReadFileContent(ReadFileContentRequest)         returns (ReadFileContentResponse);
 }
-
+ 
 service ChunkServer {
   rpc WriteChunk(WriteChunkRequest) returns (WriteChunkResponse);
   rpc ReadChunk(ReadChunkRequest) returns (ReadChunkResponse);

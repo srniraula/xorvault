@@ -22,7 +22,6 @@ type ChunkConnPool struct {
 	conns map[string]*grpc.ClientConn
 }
 
-// NewChunkConnPool creates a new empty connection pool.
 func NewChunkConnPool() *ChunkConnPool {
 	return &ChunkConnPool{
 		conns: make(map[string]*grpc.ClientConn),

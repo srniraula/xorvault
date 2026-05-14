@@ -6,14 +6,14 @@ import (
 	"io"
 )
 
-// streamFileInStripes reads from io.Reader and emits Stripe objects based on master's stripes map
+// streamFileInStripes reads from io.Reader and emits Stripe objects based on master's stripes map.
+// It handles RAID-4 stripe formation, padding, and parity calculation.
 func (g *GrpcClient) streamFileInStripes(r io.Reader, stripes map[int32]*dfspb.StripeMetadata, stripeChan chan<- Stripe, errChan chan<- error) {
 	defer close(stripeChan)
 	defer close(errChan)
 
 	stripeNum := int32(1)
 	for {
-		// read chunk1
 		buf1 := make([]byte, CHUNK_SIZE)
 		n1, err1 := io.ReadFull(r, buf1)
 		if err1 == io.EOF || (err1 == io.ErrUnexpectedEOF && n1 == 0) {
@@ -25,7 +25,6 @@ func (g *GrpcClient) streamFileInStripes(r io.Reader, stripes map[int32]*dfspb.S
 		}
 		buf1 = buf1[:n1]
 
-		// read chunk2
 		buf2 := make([]byte, CHUNK_SIZE)
 		n2, err2 := io.ReadFull(r, buf2)
 		if err2 != nil && err2 != io.ErrUnexpectedEOF && err2 != io.EOF {
@@ -38,7 +37,6 @@ func (g *GrpcClient) streamFileInStripes(r io.Reader, stripes map[int32]*dfspb.S
 			buf2 = buf2[:n2]
 		}
 
-		// pad
 		if len(buf1) < CHUNK_SIZE {
 			buf1 = padChunk(buf1, CHUNK_SIZE)
 		}
@@ -46,10 +44,8 @@ func (g *GrpcClient) streamFileInStripes(r io.Reader, stripes map[int32]*dfspb.S
 			buf2 = padChunk(buf2, CHUNK_SIZE)
 		}
 
-		// parity
 		parity := calculateParity(buf1, buf2)
 
-		// lookup stripe metadata
 		sm, ok := stripes[stripeNum]
 		if !ok {
 			errChan <- fmt.Errorf("no allocation for stripe %d", stripeNum)

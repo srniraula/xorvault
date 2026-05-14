@@ -21,16 +21,11 @@ import (
 
 // main starts the master server and background health monitoring
 func main() {
-	// --- command-line flags for failover ---
-	// peerAddr := flag.String("secondary", "", "peer master address e.g. 192.168.1.20:50052 (leave empty if standalone)")
-	// myAddr := flag.String("addr", "0.0.0.0:50051", "this master's own listen address e.g. 192.168.1.10:50051")
-	// flag.Parse()
 	peerAddr := flag.String("secondary", "", "peer master address e.g. 192.168.1.20:50052 (leave empty if standalone)")
 	myAddr := flag.String("addr", "0.0.0.0:50051", "this master's own listen address e.g. 192.168.1.10:50051")
 	role := flag.String("role", "primary", "startup role: 'primary' or 'secondary'. Secondary always starts in standby.")
 	flag.Parse()
 
-	// Setup log file for Master - all logs will be written to master.log
 	if err := os.MkdirAll("log_files", 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "FATAL: failed to create log_files directory: %v\n", err)
 		os.Exit(1)
@@ -42,10 +37,8 @@ func main() {
 	}
 	defer logFile.Close()
 
-	// Create custom logger with prefix "MASTER: " and timestamp
 	masterLogger := log.New(logFile, fmt.Sprintf("MASTER(%s): ", *myAddr), log.LstdFlags|log.Lshortfile)
 
-	// Write to both file and stderr so startup errors are always visible
 	log.SetOutput(io.MultiWriter(os.Stderr, logFile))
 
 	// Start listening — use the -addr flag so secondary can bind its own port
@@ -55,22 +48,14 @@ func main() {
 	}
 	fmt.Printf("Master listening on %s\n", *myAddr)
 
-	// Create gRPC server instance
 	s := grpc.NewServer()
 
-	// Open WAL file for write-ahead logging
-	// In standby mode, we open read-only initially, but for simplicity we keep it append
-	// (Standby won't write unless promoted, but needs to read)
-	// Actually, if we are on the same filesystem, only one writer allowed usually if using lock
-	// But append mode is generally safe for single writer. Standby should probably just READ.
-	// For now, let's open it same way.
 	walFile, err := os.OpenFile("master.wal", os.O_CREATE|os.O_RDWR|os.O_APPEND, 0666)
 	if err != nil {
 		log.Fatalf("Failed to open WAL file: %v", err)
 	}
 	defer walFile.Close()
 
-	// Initialize the MasterServer with empty maps
 	server := &MasterServer{
 		fileInfo:        make(map[int64]map[string]map[int32]*dfspb.StripeMetadata),
 		clientIDs:       make(map[int64][]string),
@@ -84,27 +69,20 @@ func main() {
 		logger:          masterLogger,
 		walFile:         walFile,
 		walWriter:       bufio.NewWriter(walFile),
-		// --- failover fields ---
-		peerAddr:      *peerAddr,
-		secondaryAddr: *peerAddr, // will be used for WAL replication when primary
-		myAddr:        *myAddr,
-		isPrimary:     *role != "secondary", // secondary always starts in standby
-		generation:    1,                    // starting generation; LoadCheckpoint may overwrite
+		peerAddr:        *peerAddr,
+		secondaryAddr:   *peerAddr,
+		myAddr:          *myAddr,
+		isPrimary:       *role != "secondary",
+		generation:      1,
 	}
 
-	// Restore from checkpoint first (if exists)
 	if err := server.LoadCheckpoint("master.checkpoint"); err != nil {
 		log.Fatalf("Checkpoint loading failed: %v", err)
 	}
 
-	// Then replay WAL entries after checkpoint
 	if err := server.RecoverFromWAL("master.wal"); err != nil {
 		log.Fatalf("WAL recovery failed: %v", err)
 	}
-
-	//yaa samma thik xa nothing new
-
-	// --- ROLE-BASED STATE SYNC ---
 	// SECONDARY: Always start in standby. Never contact the peer at startup to decide
 	//            role — the WatchdogLoop will promote us only after 15s of silence + 3 probes.
 	// PRIMARY:   Check if the peer promoted itself while we were down and pull its
@@ -119,17 +97,13 @@ func main() {
 		}
 	}
 
-	// Register MasterServer to handle client/chunkserver gRPC requests
 	dfspb.RegisterMasterServerServer(s, server)
 
-	// --- NEW: register SecondaryMasterServer so this node can also act as standby ---
 	secondary := NewSecondaryMaster(server)
 	dfspb.RegisterSecondaryMasterServerServer(s, secondary)
 
-	// Start background goroutine for periodic checkpointing (every 5 minutes)
 	go server.PeriodicCheckpoint(5, "master.checkpoint", "master.wal")
 
-	// --- Start heartbeats or watchdog based on actual role ---
 	if *peerAddr != "" {
 		if server.isPrimary {
 			go server.SendHeartbeatsToSecondary(*peerAddr)
@@ -139,8 +113,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "║     Standby peer: %-26s  ║\n", *peerAddr)
 			fmt.Fprintf(os.Stderr, "╚══════════════════════════════════════════════╝\n\n")
 		} else {
-			// We synced state from the active master — run as standby
-			go secondary.WatchdogLoop(15) // 15s timeout: 15 missed 1s heartbeats → confirmation probes
+			go secondary.WatchdogLoop(15)
 			masterLogger.Printf("Standby mode: watchdog started (will promote if master silent for 15s + 3 probes)")
 			fmt.Fprintf(os.Stderr, "\n╔══════════════════════════════════════════════╗\n")
 			fmt.Fprintf(os.Stderr, "║  ⏳  STANDBY MASTER: %-23s  ║\n", *myAddr)
@@ -148,7 +121,6 @@ func main() {
 			fmt.Fprintf(os.Stderr, "╚══════════════════════════════════════════════╝\n\n")
 		}
 	} else {
-		// No peer configured — standalone primary
 		masterLogger.Printf("Standalone mode: no peer configured")
 		fmt.Fprintf(os.Stderr, "\n╔══════════════════════════════════════════════╗\n")
 		fmt.Fprintf(os.Stderr, "║  ✅  STANDALONE PRIMARY: %-20s  ║\n", *myAddr)
@@ -156,10 +128,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "╚══════════════════════════════════════════════╝\n\n")
 	}
 
-	// Start periodic status printer — prints current role to terminal every 5 seconds
 	go startStatusPrinter(server, secondary, *myAddr, *peerAddr)
 
-	// Start background goroutine for dead chunk-server detection
 	go func() {
 		for {
 			time.Sleep(10 * time.Second)
@@ -178,7 +148,6 @@ func main() {
 
 	log.Printf("Master running on %s — Logs to master.log", *myAddr)
 
-	// Start serving - this blocks until server shuts down
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("Failed to serve: %v", err)
 	}
@@ -201,7 +170,6 @@ func startStatusPrinter(server *MasterServer, secondary *SecondaryMaster, myAddr
 			fmt.Fprintf(os.Stderr, "[STATUS] %s → ✅ ACTIVE PRIMARY  (gen=%d, wal_seq=%d)\n",
 				myAddr, gen, walSeq)
 		} else {
-			// Show how long since last heartbeat from primary
 			secondary.mu.Lock()
 			lastHB := secondary.lastHeartbeat
 			primAddr := secondary.primaryAddr
@@ -248,12 +216,10 @@ func (m *MasterServer) SendHeartbeatsToSecondary(secondaryAddr string) {
 		return true
 	}
 
-	// Initial dial
 	dial()
 
 	for range ticker.C {
 		if client == nil {
-			// Previous dial failed — retry
 			if !dial() {
 				continue
 			}
@@ -268,7 +234,6 @@ func (m *MasterServer) SendHeartbeatsToSecondary(secondaryAddr string) {
 
 		if err != nil {
 			m.logger.Printf("Heartbeat to secondary %s failed — will re-dial next tick: %v", secondaryAddr, err)
-			// Close the broken connection; dial() on next tick
 			conn.Close()
 			conn = nil
 			client = nil
@@ -293,7 +258,6 @@ func (m *MasterServer) SendHeartbeatsToSecondary(secondaryAddr string) {
 //	B says IsPrimary:true → A pulls B's state (has C, D, and all deletes).
 //	A then starts serving as primary with correct metadata.
 func trySyncStateFromPeer(server *MasterServer, peerAddr string, logger *log.Logger) error {
-	// creates a new Go context that will automatically expire after 5 seconds
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -303,7 +267,6 @@ func trySyncStateFromPeer(server *MasterServer, peerAddr string, logger *log.Log
 	}
 	defer conn.Close()
 
-	// Ask the peer whether it is currently acting as primary
 	masterClient := dfspb.NewMasterServerClient(conn)
 	activeResp, err := masterClient.GetActiveMaster(ctx, &dfspb.GetActiveMasterRequest{})
 	if err != nil {
@@ -311,15 +274,12 @@ func trySyncStateFromPeer(server *MasterServer, peerAddr string, logger *log.Log
 	}
 
 	if !activeResp.IsPrimary {
-		// Peer is still in standby — we are the rightful primary, use local state
 		logger.Printf("Peer %s is not primary (isPrimary=false) — keeping local state (gen=%d)",
 			peerAddr, server.generation)
 		server.isPrimary = true
 		return nil
 	}
 
-	// Peer has promoted itself (or was always primary).  Pull its full state
-	// and demote ourselves to standby so there is only one active master.
 	logger.Printf("Peer %s is the active primary — pulling full state sync (we will be standby)...", peerAddr)
 
 	syncCtx, syncCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -341,7 +301,6 @@ func trySyncStateFromPeer(server *MasterServer, peerAddr string, logger *log.Log
 		checkpoint.Generation, checkpoint.WALSeq,
 		len(checkpoint.ClientIDs), len(checkpoint.ChunkStatus))
 
-	// Apply peer state into our server (same path as LoadCheckpoint)
 	server.mu.Lock()
 	server.generation = checkpoint.Generation
 	server.walSeq = checkpoint.WALSeq
@@ -358,7 +317,6 @@ func trySyncStateFromPeer(server *MasterServer, peerAddr string, logger *log.Log
 		server.clientUsernames = checkpoint.ClientUsernames
 	}
 
-	// Rebuild fileInfo from checkpoint
 	server.fileInfo = make(map[int64]map[string]map[int32]*dfspb.StripeMetadata)
 	for clientID, filesJSON := range checkpoint.FileInfo {
 		server.fileInfo[clientID] = make(map[string]map[int32]*dfspb.StripeMetadata)
@@ -375,10 +333,8 @@ func trySyncStateFromPeer(server *MasterServer, peerAddr string, logger *log.Log
 	}
 	server.mu.Unlock()
 
-	// Demote ourselves: peer is the active master, we are standby
 	server.isPrimary = false
 
-	// Persist this synced state locally so we survive our own crash
 	if err := server.CreateCheckpoint("master.checkpoint"); err != nil {
 		logger.Printf("WARNING: failed to save synced checkpoint locally: %v", err)
 	}

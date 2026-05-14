@@ -7,11 +7,9 @@ import (
 )
 
 func TestStreamFileInStripes(t *testing.T) {
-	// prepare a small reader of size 1.5 * CHUNK_SIZE => 2 stripes (last stripe with one data chunk)
 	buf := bytes.Repeat([]byte{0xAA}, CHUNK_SIZE+CHUNK_SIZE/2)
 	r := bytes.NewReader(buf)
 
-	// Prepare stripes map for two stripes
 	stripes := make(map[int32]*dfspb.StripeMetadata)
 	stripes[1] = &dfspb.StripeMetadata{StripeNum: 1, ChunkIds: []string{"c1", "c2", "p1"}, Servers: []string{"s1", "s2", "s3"}}
 	stripes[2] = &dfspb.StripeMetadata{StripeNum: 2, ChunkIds: []string{"c3", "", "p2"}, Servers: []string{"s1", "", "s3"}}
@@ -19,7 +17,7 @@ func TestStreamFileInStripes(t *testing.T) {
 	stripeChan := make(chan Stripe, 4)
 	errChan := make(chan error, 1)
 
-	g := &GrpcClient{} // not used by stream
+	g := &GrpcClient{}
 	go g.streamFileInStripes(r, stripes, stripeChan, errChan)
 
 	count := 0
@@ -37,15 +35,14 @@ func TestStreamFileInStripes(t *testing.T) {
 	}
 }
 
-// TestStreamFileInStripes_SmallFile tests files smaller than 1MB (CHUNK_SIZE)
-// This test verifies the fix for the EOF issue when chunk2 has no data
+// TestStreamFileInStripes_SmallFile tests files smaller than 1MB (CHUNK_SIZE).
+// This test verifies the fix for the EOF issue when chunk2 has no data.
 func TestStreamFileInStripes_SmallFile(t *testing.T) {
 	// Test case 1: Very small file (100 bytes)
 	t.Run("VerySmallFile_100bytes", func(t *testing.T) {
 		testData := []byte("This is a small test file with less than 100 bytes of data for testing purposes.")
 		r := bytes.NewReader(testData)
 		
-		// Prepare stripes map for one stripe
 		stripes := make(map[int32]*dfspb.StripeMetadata)
 		stripes[1] = &dfspb.StripeMetadata{StripeNum: 1, ChunkIds: []string{"c1", "c2", "p1"}, Servers: []string{"s1", "s2", "s3"}}
 		
@@ -55,7 +52,6 @@ func TestStreamFileInStripes_SmallFile(t *testing.T) {
 		g := &GrpcClient{}
 		go g.streamFileInStripes(r, stripes, stripeChan, errChan)
 		
-		// Should produce exactly 1 stripe without errors
 		count := 0
 		var stripe Stripe
 		for s := range stripeChan {
@@ -63,7 +59,6 @@ func TestStreamFileInStripes_SmallFile(t *testing.T) {
 			stripe = s
 		}
 		
-		// Check for errors
 		select {
 		case err := <-errChan:
 			if err != nil {
@@ -76,27 +71,22 @@ func TestStreamFileInStripes_SmallFile(t *testing.T) {
 			t.Fatalf("expected 1 stripe for small file, got %d", count)
 		}
 		
-		// Verify stripe content
 		if stripe.StripeNum != 1 {
 			t.Fatalf("expected stripe number 1, got %d", stripe.StripeNum)
 		}
 		
-		// chunk1 should contain the data (padded to CHUNK_SIZE)
 		if len(stripe.DataChunk1) != CHUNK_SIZE {
 			t.Fatalf("expected chunk1 size %d, got %d", CHUNK_SIZE, len(stripe.DataChunk1))
 		}
 		
-		// chunk2 should be empty (padded to CHUNK_SIZE with zeros)
 		if len(stripe.DataChunk2) != CHUNK_SIZE {
 			t.Fatalf("expected chunk2 size %d, got %d", CHUNK_SIZE, len(stripe.DataChunk2))
 		}
 		
-		// Original data should be at beginning of chunk1
 		if !bytes.Equal(testData, stripe.DataChunk1[:len(testData)]) {
 			t.Fatalf("data mismatch in chunk1")
 		}
 		
-		// chunk2 should be all zeros after padding
 		expectedEmptyChunk := make([]byte, CHUNK_SIZE)
 		if !bytes.Equal(stripe.DataChunk2, expectedEmptyChunk) {
 			t.Fatalf("chunk2 should be all zeros for small file")
@@ -105,7 +95,7 @@ func TestStreamFileInStripes_SmallFile(t *testing.T) {
 	
 	// Test case 2: Medium small file (500KB)  
 	t.Run("MediumSmallFile_500KB", func(t *testing.T) {
-		testData := bytes.Repeat([]byte{0xBB}, 500*1024) // 500KB
+		testData := bytes.Repeat([]byte{0xBB}, 500*1024)
 		r := bytes.NewReader(testData)
 		
 		stripes := make(map[int32]*dfspb.StripeMetadata)
@@ -122,7 +112,6 @@ func TestStreamFileInStripes_SmallFile(t *testing.T) {
 			count++
 		}
 		
-		// Check for errors
 		select {
 		case err := <-errChan:
 			if err != nil {

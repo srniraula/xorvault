@@ -5,7 +5,7 @@ import Auth from './components/Auth'
 
 const API_BASE = import.meta.env.VITE_API_BASE || `${window.location.protocol}//${window.location.hostname}:8080`
 const ADMIN_USERNAME = 'admin'
-const ADMIN_PASSWORD = 'admin'
+const ADMIN_PASSWORD = 'YourNewPassword123!'
 const ADMIN_AUTH_KEY = 'isAdminAuthenticated'
 
 function AdminLogin({ onAdminAuthSuccess }) {

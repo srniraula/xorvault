@@ -45,7 +45,6 @@ func (m *MasterServer) CreateCheckpoint(checkpointPath string) error {
 	// Convert protobuf StripeMetadata to JSON-serializable format
 	fileInfoJSON := make(map[int64]map[string]map[int32]*StripeMetadataJSON)
 	for clientID, _ := range m.fileInfo {
-		// initialize per-client entry
 		if _, ok := fileInfoJSON[clientID]; !ok {
 			fileInfoJSON[clientID] = make(map[string]map[int32]*StripeMetadataJSON)
 		}
@@ -62,7 +61,6 @@ func (m *MasterServer) CreateCheckpoint(checkpointPath string) error {
 		}
 	}
 
-	// Create checkpoint structure
 	checkpoint := Checkpoint{
 		Timestamp:       time.Now().Unix(),
 		Generation:      m.generation,
@@ -76,19 +74,16 @@ func (m *MasterServer) CreateCheckpoint(checkpointPath string) error {
 		ClientUsernames: m.clientUsernames,
 	}
 
-	// Serialize to JSON
 	data, err := json.MarshalIndent(checkpoint, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal checkpoint: %v", err)
 	}
 
-	// Write to temporary file first (atomic write pattern)
 	tmpPath := checkpointPath + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write checkpoint: %v", err)
 	}
 
-	// Atomic rename
 	if err := os.Rename(tmpPath, checkpointPath); err != nil {
 		return fmt.Errorf("failed to rename checkpoint: %v", err)
 	}
@@ -102,7 +97,6 @@ func (m *MasterServer) CreateCheckpoint(checkpointPath string) error {
 // LoadCheckpoint restores master state from a checkpoint file
 // Called before WAL replay to speed up recovery
 func (m *MasterServer) LoadCheckpoint(checkpointPath string) error {
-	// Check if checkpoint exists
 	data, err := os.ReadFile(checkpointPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -114,7 +108,6 @@ func (m *MasterServer) LoadCheckpoint(checkpointPath string) error {
 
 	m.logger.Printf("Loading checkpoint from %s", checkpointPath)
 
-	// Parse checkpoint
 	var checkpoint Checkpoint
 	if err := json.Unmarshal(data, &checkpoint); err != nil {
 		return fmt.Errorf("failed to unmarshal checkpoint: %v", err)
@@ -136,7 +129,6 @@ func (m *MasterServer) LoadCheckpoint(checkpointPath string) error {
 		m.clientUsernames = checkpoint.ClientUsernames
 	}
 
-	// Convert JSON format back to protobuf StripeMetadata
 	m.fileInfo = make(map[int64]map[string]map[int32]*dfspb.StripeMetadata)
 	// 	for filename, stripesJSON := range checkpoint.FileInfo {
 	// 		m.fileInfo[filename] = make(map[int32]*dfspb.StripeMetadata)
@@ -152,7 +144,6 @@ func (m *MasterServer) LoadCheckpoint(checkpointPath string) error {
 	for clientID, _ := range checkpoint.FileInfo {
 		m.fileInfo[clientID] = make(map[string]map[int32]*dfspb.StripeMetadata)
 		for filename, stripesJSON := range checkpoint.FileInfo[clientID] {
-			// initialize per-file map
 			if _, ok := m.fileInfo[clientID][filename]; !ok {
 				m.fileInfo[clientID][filename] = make(map[int32]*dfspb.StripeMetadata)
 			}
@@ -181,7 +172,6 @@ func (m *MasterServer) TruncateWAL(walPath string) error {
 
 	m.logger.Printf("Truncating WAL at %s", walPath)
 
-	// Flush and close current WAL writer
 	if err := m.walWriter.Flush(); err != nil {
 		return fmt.Errorf("failed to flush WAL before truncate: %v", err)
 	}
@@ -190,19 +180,16 @@ func (m *MasterServer) TruncateWAL(walPath string) error {
 		return fmt.Errorf("failed to close WAL before truncate: %v", err)
 	}
 
-	// Rename old WAL as backup
 	backupPath := walPath + ".old"
 	if err := os.Rename(walPath, backupPath); err != nil {
 		return fmt.Errorf("failed to backup old WAL: %v", err)
 	}
 
-	// Create new empty WAL
 	newWalFile, err := os.OpenFile(walPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
 		return fmt.Errorf("failed to create new WAL: %v", err)
 	}
 
-	// Update master's WAL references
 	m.walFile = newWalFile
 	m.walWriter = bufio.NewWriter(newWalFile)
 
@@ -225,27 +212,22 @@ func (m *MasterServer) PeriodicCheckpoint(intervalMinutes int, checkpointPath st
 	for {
 		select {
 		case <-ticker.C:
-			// If Standby, we skip checkpoint creation
 			if !m.isPrimary {
 				continue
 			}
-			// Create checkpoint
 			if err := m.CreateCheckpoint(checkpointPath); err != nil {
 				m.logger.Printf("ERROR: Failed to create checkpoint: %v", err)
 				continue
 			}
 
-			// Replicate checkpoint to peer (best-effort)
 			m.replicateCheckpointToPeer(checkpointPath)
 
-			// Truncate WAL after successful checkpoint
 			if err := m.TruncateWAL(walPath); err != nil {
 				m.logger.Printf("ERROR: Failed to truncate WAL: %v", err)
 			}
 			m.logger.Printf("Periodic checkpoint complete")
 
 		case <-walPoller.C:
-			// If Standby, poll WAL for new updates using incremental read
 			if !m.isPrimary {
 				if err := m.RecoverFromWALIncremental(walPath); err != nil {
 					m.logger.Printf("Standby incremental WAL error: %v", err)

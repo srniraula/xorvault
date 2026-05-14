@@ -89,3 +89,7 @@ web/node_modules/
 web/node_modules/.vite/
 
 data/
+
+dfs_metrics.csv
+start-all.sh
+

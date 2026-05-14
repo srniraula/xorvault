@@ -12,12 +12,11 @@ import (
 // RecoverFromWAL reads the WAL file and reconstructs master state
 // This is called on master startup to restore metadata after a crash
 func (m *MasterServer) RecoverFromWAL(walPath string) error {
-	// Check if WAL file exists
 	file, err := os.Open(walPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			m.logger.Printf("No WAL file found - starting fresh")
-			return nil // Not an error - fresh start
+			return nil
 		}
 		return fmt.Errorf("failed to open WAL file: %v", err)
 	}
@@ -33,19 +32,16 @@ func (m *MasterServer) RecoverFromWAL(walPath string) error {
 		lineNum++
 		line := scanner.Text()
 
-		// Skip empty lines
 		if len(line) == 0 {
 			continue
 		}
 
-		// Parse WAL entry
 		var entry WALEntry
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			m.logger.Printf("Warning: Failed to parse WAL line %d: %v", lineNum, err)
 			continue
 		}
 
-		// Replay operation based on type
 		if err := m.replayOperation(&entry); err != nil {
 			m.logger.Printf("Warning: Failed to replay operation at line %d: %v", lineNum, err)
 			continue
@@ -67,8 +63,6 @@ func (m *MasterServer) RecoverFromWAL(walPath string) error {
 // This is used by the standby master to stay in sync efficiently.
 // The caller must NOT hold m.walMu (this function acquires it briefly to read offset).
 func (m *MasterServer) RecoverFromWALIncremental(walPath string) error {
-	// Snapshot the current offset under the WAL mutex so we don't race with the
-	// primary's AppendWAL.
 	m.walMu.Lock()
 	startOffset := m.walOffset
 	m.walMu.Unlock()
@@ -76,13 +70,12 @@ func (m *MasterServer) RecoverFromWALIncremental(walPath string) error {
 	file, err := os.Open(walPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil // No WAL yet - nothing to do
+			return nil
 		}
 		return fmt.Errorf("failed to open WAL file: %v", err)
 	}
 	defer file.Close()
 
-	// Seek to where we left off
 	if startOffset > 0 {
 		if _, err := file.Seek(startOffset, io.SeekStart); err != nil {
 			return fmt.Errorf("WAL seek failed: %v", err)
@@ -98,7 +91,6 @@ func (m *MasterServer) RecoverFromWALIncremental(walPath string) error {
 		if len(line) > 0 {
 			bytesRead += int64(len(line))
 			trimmed := line
-			// Trim the trailing newline
 			if len(trimmed) > 0 && trimmed[len(trimmed)-1] == '\n' {
 				trimmed = trimmed[:len(trimmed)-1]
 			}
@@ -130,7 +122,6 @@ func (m *MasterServer) RecoverFromWALIncremental(walPath string) error {
 		}
 	}
 
-	// Advance the stored offset
 	if bytesRead > 0 {
 		m.walMu.Lock()
 		m.walOffset = startOffset + bytesRead
@@ -164,7 +155,6 @@ func (m *MasterServer) replayCreateFile(data json.RawMessage) error {
 		return fmt.Errorf("failed to unmarshal CreateFile data: %v", err)
 	}
 
-	// Restore clientID mapping (Check for duplicates to ensure idempotency)
 	exists := false
 	for _, f := range m.clientIDs[createData.ClientID] {
 		if f == createData.Filename {
@@ -176,19 +166,13 @@ func (m *MasterServer) replayCreateFile(data json.RawMessage) error {
 		m.clientIDs[createData.ClientID] = append(m.clientIDs[createData.ClientID], createData.Filename)
 	}
 
-	// Ensure per-client maps exist before assigning
 	m.ensureClientMaps(createData.ClientID)
 
-	// Initialize fileInfo map for this file
 	if _, ok := m.fileInfo[createData.ClientID][createData.Filename]; !ok {
 		m.fileInfo[createData.ClientID][createData.Filename] = make(map[int32]*dfspb.StripeMetadata)
 	}
 
-	// Restore file size
 	m.fileSizes[createData.ClientID][createData.Filename] = createData.TotalSize
-
-	// Only log if verbose or separate logger?
-	// m.logger.Printf("Recovered CREATE_FILE: client=%d, file=%s, size=%d", createData.ClientID, createData.Filename, createData.TotalSize)
 
 	return nil
 }
@@ -200,17 +184,14 @@ func (m *MasterServer) replayAllocateChunk(data json.RawMessage) error {
 		return fmt.Errorf("failed to unmarshal AllocateChunk data: %v", err)
 	}
 
-	// Ensure per-client and per-file maps exist
 	m.ensureClientMaps(allocData.ClientID)
 	if _, ok := m.fileInfo[allocData.ClientID][allocData.Filename]; !ok {
 		m.fileInfo[allocData.ClientID][allocData.Filename] = make(map[int32]*dfspb.StripeMetadata)
 	}
 
-	// Restore stripe metadata
 	for stripeNum, stripe := range allocData.Stripes {
 		m.fileInfo[allocData.ClientID][allocData.Filename][stripeNum] = stripe
 
-		// Restore chunk status (initially PENDING)
 		for _, chunkID := range stripe.ChunkIds {
 			m.chunkStatus[chunkID] = allocData.Status
 		}
@@ -229,7 +210,6 @@ func (m *MasterServer) replayConfirmWrite(data json.RawMessage) error {
 		return fmt.Errorf("failed to unmarshal ConfirmWrite data: %v", err)
 	}
 
-	// Update chunk status to SUCCESS
 	for _, chunkID := range confirmData.ChunkIDs {
 		m.chunkStatus[chunkID] = confirmData.Status
 	}
@@ -250,7 +230,6 @@ func (m *MasterServer) replayDeleteFile(data json.RawMessage) error {
 	filename := deleteData.Filename
 	clientID := deleteData.ClientID
 
-	// Collect all chunk IDs before deletion (guard for missing client/file)
 	allChunkIDs := []string{}
 	if clientFiles, clientExists := m.fileInfo[clientID]; clientExists {
 		if stripes, exists := clientFiles[filename]; exists {
@@ -260,11 +239,9 @@ func (m *MasterServer) replayDeleteFile(data json.RawMessage) error {
 		}
 	}
 
-	// Remove file metadata
 	delete(m.fileInfo[clientID], filename)
 	delete(m.fileSizes[clientID], filename)
 
-	// Remove from clientIDs
 	if ownedFiles, exists := m.clientIDs[clientID]; exists {
 		updatedFiles := []string{}
 		for _, f := range ownedFiles {
@@ -279,7 +256,6 @@ func (m *MasterServer) replayDeleteFile(data json.RawMessage) error {
 		}
 	}
 
-	// Remove chunk statuses
 	for _, chunkID := range allChunkIDs {
 		delete(m.chunkStatus, chunkID)
 	}

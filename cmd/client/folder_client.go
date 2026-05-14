@@ -17,7 +17,6 @@ func createFolder(clientID int64, folderPath string) {
 		log.Fatal("Cannot create folder: no client ID. Please upload a file first.")
 	}
 
-	// Connect to master server
 	conn, err := grpc.NewClient(getMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatal("Failed to connect to master:", err)
@@ -26,7 +25,6 @@ func createFolder(clientID int64, folderPath string) {
 
 	masterClient := dfspb.NewMasterServerClient(conn)
 
-	// Send create folder request
 	resp, err := masterClient.CreateFolder(context.Background(), &dfspb.CreateFolderRequest{
 		ClientId:   clientID,
 		FolderPath: folderPath,
@@ -49,7 +47,6 @@ func deleteFolder(clientID int64, folderPath string) {
 		log.Fatal("Cannot delete folder: no client ID. Please upload a file first.")
 	}
 
-	// Connect to master server
 	conn, err := grpc.NewClient(getMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatal("Failed to connect to master:", err)
@@ -58,7 +55,6 @@ func deleteFolder(clientID int64, folderPath string) {
 
 	masterClient := dfspb.NewMasterServerClient(conn)
 
-	// Send delete folder request
 	resp, err := masterClient.DeleteFolder(context.Background(), &dfspb.DeleteFolderRequest{
 		ClientId:   clientID,
 		FolderPath: folderPath,
@@ -81,7 +77,6 @@ func moveFile(clientID int64, sourcePath, destPath string) {
 		log.Fatal("Cannot move file: no client ID. Please upload a file first.")
 	}
 
-	// Connect to master server
 	conn, err := grpc.NewClient(getMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatal("Failed to connect to master:", err)
@@ -90,7 +85,6 @@ func moveFile(clientID int64, sourcePath, destPath string) {
 
 	masterClient := dfspb.NewMasterServerClient(conn)
 
-	// Send move file request
 	resp, err := masterClient.MoveFile(context.Background(), &dfspb.MoveFileRequest{
 		ClientId:        clientID,
 		SourcePath:      sourcePath,
@@ -115,7 +109,6 @@ func listFilesDetailed(clientID int64, folderPath string) {
 		return
 	}
 
-	// Connect to master server
 	conn, err := grpc.NewClient(getMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatal("Failed to connect to master:", err)
@@ -124,7 +117,6 @@ func listFilesDetailed(clientID int64, folderPath string) {
 
 	masterClient := dfspb.NewMasterServerClient(conn)
 
-	// Request detailed file list
 	resp, err := masterClient.ListFilesDetailed(context.Background(), &dfspb.ListFilesDetailedRequest{
 		ClientId:   clientID,
 		FolderPath: folderPath,
@@ -143,7 +135,6 @@ func listFilesDetailed(clientID int64, folderPath string) {
 		return
 	}
 
-	// Display header
 	if folderPath == "" {
 		fmt.Println("Files and folders:")
 	} else {
@@ -153,7 +144,6 @@ func listFilesDetailed(clientID int64, folderPath string) {
 	fmt.Printf("%-5s %-40s %12s %20s\n", "Type", "Path", "Size", "Upload Time")
 	fmt.Println("--------------------------------------------------------------------------------")
 
-	// Display each item
 	for _, item := range resp.Items {
 		itemType := "FILE"
 		size := formatSize(item.Size)
@@ -177,7 +167,6 @@ func catFile(clientID int64, filename string) {
 		log.Fatal("Cannot read file: no client ID. Please upload a file first.")
 	}
 
-	// Connect to master server
 	conn, err := grpc.NewClient(getMasterAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatal("Failed to connect to master:", err)
@@ -204,10 +193,8 @@ func catFile(clientID int64, filename string) {
 		return
 	}
 
-	// Display file info
 	fmt.Printf("File: %s (Total size: %s)\n", filename, formatSize(resp.TotalSize))
 
-	// Check if the data is likely text
 	if isTextData(resp.Data) {
 		fmt.Println("--- Content Preview ---")
 		fmt.Println(string(resp.Data))
@@ -251,20 +238,16 @@ func isTextData(data []byte) bool {
 	textChars := 0
 	for i := 0; i < len(data) && i < 512; i++ {
 		b := data[i]
-		// Check for common text characters
 		if (b >= 32 && b <= 126) || b == '\n' || b == '\r' || b == '\t' {
 			textChars++
 		} else if b >= 128 {
-			// Likely UTF-8 multibyte character
 			textChars++
 		}
 	}
 
-	// If more than 80% of chars are text-like, consider it text
 	return float64(textChars)/float64(min(len(data), 512)) > 0.8
 }
 
-// min returns the minimum of two integers
 func min(a, b int) int {
 	if a < b {
 		return a

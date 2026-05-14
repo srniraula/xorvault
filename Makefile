@@ -17,7 +17,7 @@ build:
 	@go build -o $(ROOT_DIR)bin/client $(ROOT_DIR)cmd/client
 	@go build -o $(ROOT_DIR)bin/webserver $(ROOT_DIR)cmd/webserver
 	@echo "Build complete: binaries in bin/"
- 
+  
 # Clean build artifacts and data
 clean:
 	@echo "Cleaning..."

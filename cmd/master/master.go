@@ -102,43 +102,35 @@ func (m *MasterServer) CreateFile(ctx context.Context, req *dfspb.CreateFileRequ
 		return nil, fmt.Errorf("master is in STANDBY mode. Write operations are disabled")
 	}
 
-	m.mu.Lock()         // Lock to prevent concurrent modifications
-	defer m.mu.Unlock() // Unlock when function returns
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if req.ClientId == 0 {
 		req.ClientId = RandomID()
 	}
 
-	// ensure nested maps for this client exist
 	m.ensureClientMaps(req.ClientId)
 
-	// Store username for this client (used for directory naming on chunkservers)
 	if req.Username != "" {
 		m.clientUsernames[req.ClientId] = req.Username
 	}
 
-	// Check if file already exists
 	if _, ok := m.fileInfo[req.ClientId][req.Filename]; ok {
 		return nil, fmt.Errorf("file %s already exists.", req.Filename)
 	}
 
-	// Log to WAL before updating in-memory state with benefit of data durability
 	if err := m.LogCreateFileToWAL(req.ClientId, req.Filename, req.TotalSize); err != nil {
 		return nil, err
 	}
 
-	//map client id with filename
 	m.clientIDs[req.ClientId] = append(m.clientIDs[req.ClientId], req.Filename)
 
-	// Initialize empty map for this filename
 	m.fileInfo[req.ClientId][req.Filename] = make(map[int32]*dfspb.StripeMetadata)
 
 	m.fileSizes[req.ClientId][req.Filename] = req.TotalSize
 
-	// Track upload time
 	m.fileUploadTimes[req.ClientId][req.Filename] = time.Now().Unix()
 
-	// Allocate chunks and get the chunk-to-server mapping
 	allocResp, err := m.allocateChunksInternal(int64(req.ClientId), int(req.TotalSize), req.Filename)
 
 	if err != nil {
@@ -169,24 +161,16 @@ func (m *MasterServer) AllocateChunk(ctx context.Context, req *dfspb.AllocateChu
 // Returns:
 //   - chunk allocation map: which chunks go to which servers
 func (m *MasterServer) allocateChunksInternal(clientID int64, totalSize int, fileName string) (*dfspb.AllocateChunkResponse, error) {
-	// Calculate how many chunks we'll need ==> (a+b-1)/b == ceil(a/b)
-	// Formula: (fileSize + chunkSize - 1) / chunkSize handles partial last chunk
 	totalChunks := (int(totalSize) + CHUNK_SIZE - 1) / CHUNK_SIZE
 
-	// find number of chunks, DONE
-	// find healthy chunkservers, DONE
-	// and calculate chunk_ids and return map of
-	// chunkservers: [chunk_ids] to client
 	filename := fileName
 
-	// Ensure client/map exists for storing stripe info
 	m.ensureClientMaps(clientID)
 	if _, ok := m.fileInfo[clientID][fileName]; !ok {
 		m.fileInfo[clientID][fileName] = make(map[int32]*dfspb.StripeMetadata)
 	}
 
-	// Find all healthy (alive) chunk servers
-	m.serversMu.RLock() // Read lock - multiple goroutines can read simultaneously
+	m.serversMu.RLock()
 	var healthy []string
 	for _, addr := range m.chunkServers {
 		if info, ok := m.servers[addr]; ok && info.Alive {
@@ -195,60 +179,44 @@ func (m *MasterServer) allocateChunksInternal(clientID int64, totalSize int, fil
 	}
 	m.serversMu.RUnlock()
 
-	// If no servers are available, cannot store the chunk
 	if len(healthy) < 3 {
 		return nil, fmt.Errorf("insufficient healthy chunkservers: need 3, got %d", len(healthy))
 	}
 
-	// Sort healthy servers by address so assignment is deterministic regardless of
-	// heartbeat arrival order. With ports 9001 < 9002 < 9003, this ensures:
-	//   healthy[0] = chunkserver1 (data chunks)
-	//   healthy[1] = chunkserver2 (data chunks)
-	//   healthy[2] = chunkserver3 (dedicated parity — RAID-4)
 	sort.Strings(healthy)
 
 	totalStripe := (totalChunks + 2 - 1) / 2
-	chunkCounter := 1 // Global chunk counter
+	chunkCounter := 1
 
-	// Generate chunk IDs and parity IDs for each stripe
 	for stripeNum := 1; stripeNum <= totalStripe; stripeNum++ {
-		// Build StripeMetadata for this stripe
 		stripe := &dfspb.StripeMetadata{
 			StripeNum: int32(stripeNum),
-			ChunkIds:  make([]string, 3), // [data1, data2, parity]
-			Servers:   make([]string, 3), // [server1, server2, server3]
+			ChunkIds:  make([]string, 3),
+			Servers:   make([]string, 3),
 		}
 
-		// Create 2 data chunks per stripe (or less for last stripe)
 		chunkIdx := 0
 		for chunkInStripe := 1; chunkInStripe <= 2 && chunkCounter <= totalChunks; chunkInStripe++ {
 			chunkID := fmt.Sprintf("%s_chunk%d_%04d", filename, stripeNum, chunkCounter)
 
-			// Assign to healthy[0] and healthy[1] dynamically based on heartbeat registrations
 			stripe.ChunkIds[chunkInStripe-1] = chunkID
 			stripe.Servers[chunkInStripe-1] = healthy[chunkInStripe-1]
 
-			// Mark chunk as PENDING
 			m.chunkStatus[chunkID] = "PENDING"
 
 			chunkCounter++
 			chunkIdx++
 		}
 
-		// Create parity for this stripe
 		parityID := fmt.Sprintf("%s_parity%d_%04d", filename, stripeNum, stripeNum)
 		stripe.ChunkIds[2] = parityID
 		stripe.Servers[2] = healthy[2]
 
-		// Mark parity as PENDING
 		m.chunkStatus[parityID] = "PENDING"
 
-		// Store stripe metadata
 		m.fileInfo[clientID][filename][int32(stripeNum)] = stripe
 	}
 
-	// Log chunk allocation to WAL with PENDING status
-	// Store full stripe metadata for ]recovery
 	walData := AllocateChunkData{
 		ClientID: clientID,
 		Filename: filename,
@@ -266,7 +234,6 @@ func (m *MasterServer) allocateChunksInternal(clientID int64, totalSize int, fil
 		m.logger.Printf("  Stripe %d: chunks=%v, servers=%v", stripeNum, stripe.ChunkIds, stripe.Servers)
 	}
 
-	// Return stripe metadata directly
 	return &dfspb.AllocateChunkResponse{
 		Stripes: m.fileInfo[clientID][filename],
 	}, nil
@@ -278,7 +245,6 @@ func (m *MasterServer) GetFileMetadata(ctx context.Context, req *dfspb.GetFileMe
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Guard against missing client or file maps
 	clientFiles, clientExists := m.fileInfo[req.ClientId]
 	if !clientExists {
 		return nil, fmt.Errorf("file not found: %s", req.Filename)
@@ -293,9 +259,6 @@ func (m *MasterServer) GetFileMetadata(ctx context.Context, req *dfspb.GetFileMe
 		size = fs[req.Filename]
 	}
 
-	// Already validated above that stripes exist
-
-	// Check ownership: does this client own the file?
 	ownedFiles, exists := m.clientIDs[req.ClientId]
 	if !exists {
 		return nil, fmt.Errorf("access denied: unknown client ID %d", req.ClientId)
@@ -327,12 +290,10 @@ func (m *MasterServer) GetFileMetadata(ctx context.Context, req *dfspb.GetFileMe
 func (m *MasterServer) ReceiveHeartbeat(ctx context.Context, req *dfspb.HeartbeatRequest) (*dfspb.HeartbeatResponse, error) {
 	addr := req.Address
 
-	m.serversMu.Lock() // Write lock - only one goroutine can modify at a time
-	// If this is a new chunk server we haven't seen before, register it
+	m.serversMu.Lock()
 	if _, exists := m.servers[addr]; !exists {
 		m.servers[addr] = &ServerInfo{}
 
-		// Check if really new to chunkServers slice (avoid duplicates)
 		found := false
 		for _, s := range m.chunkServers {
 			if s == addr {
@@ -346,7 +307,6 @@ func (m *MasterServer) ReceiveHeartbeat(ctx context.Context, req *dfspb.Heartbea
 
 		m.logger.Printf("New chunkserver registered: %s", addr)
 	}
-	// Update the heartbeat timestamp and mark server as alive
 	m.servers[addr].LastHeartbeat = time.Now()
 	m.servers[addr].Alive = true
 	m.serversMu.Unlock()
@@ -364,7 +324,6 @@ func (m *MasterServer) ConfirmWrite(ctx context.Context, req *dfspb.ConfirmWrite
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Update chunk status to SUCCESS
 	successfulChunks := []string{}
 	for _, chunkID := range req.ChunkIds {
 		if _, exists := m.chunkStatus[chunkID]; exists {
@@ -375,7 +334,6 @@ func (m *MasterServer) ConfirmWrite(ctx context.Context, req *dfspb.ConfirmWrite
 		}
 	}
 
-	// Log to WAL
 	walData := ConfirmWriteData{
 		Filename: req.Filename,
 		ChunkIDs: successfulChunks,
@@ -399,12 +357,10 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 		return &dfspb.DeleteFileResponse{Success: false, Message: "master is in STANDBY mode"}, nil
 	}
 	m.mu.Lock()
-	// Note: manually unlocking before checkpoint, no defer
 
 	filename := req.Filename
 	clientID := req.ClientId
 
-	// Check if file exists (guard for missing client)
 	clientFiles, clientExists := m.fileInfo[clientID]
 	if !clientExists {
 		m.mu.Unlock()
@@ -423,7 +379,6 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 		}, nil
 	}
 
-	// Verify client ownership
 	ownedFiles, clientExists := m.clientIDs[clientID]
 	if !clientExists {
 		m.mu.Unlock()
@@ -449,8 +404,7 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 		}, nil
 	}
 
-	// Group chunks by server address
-	serverChunks := make(map[string][]string) // server_addr -> [chunk_ids]
+	serverChunks := make(map[string][]string)
 	allChunkIDs := []string{}
 
 	for _, stripe := range stripes {
@@ -464,27 +418,22 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 	m.logger.Printf("Deleting %s for client %d: %d chunks across %d servers",
 		filename, clientID, len(allChunkIDs), len(serverChunks))
 
-	// Look up username for directory naming on chunkservers
 	username := m.clientUsernames[clientID]
 
-	// Send DeleteChunks RPC to each chunk server
 	totalDeleted := int32(0)
 	for serverAddr, chunkIDs := range serverChunks {
 		deleted, err := m.deleteChunksFromServer(serverAddr, chunkIDs, clientID, username)
 		if err != nil {
 			m.logger.Printf("Failed to delete chunks from %s: %v", serverAddr, err)
-			// Continue with other servers even if one fails
 		} else {
 			totalDeleted += deleted
 			m.logger.Printf("Deleted %d chunks from %s", deleted, serverAddr)
 		}
 	}
 
-	// Update metadata - remove file info :: change logic here
 	delete(m.fileInfo[clientID], filename)
 	delete(m.fileSizes[clientID], filename)
 
-	// Remove filename from clientIDs (but keep the client ID entry)
 	updatedFiles := []string{}
 	for _, f := range ownedFiles {
 		if f != filename {
@@ -493,12 +442,10 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 	}
 	m.clientIDs[clientID] = updatedFiles
 
-	// Remove chunk statuses
 	for _, chunkID := range allChunkIDs {
 		delete(m.chunkStatus, chunkID)
 	}
 
-	// Log to WAL
 	walData := DeleteFileData{
 		Filename: filename,
 		ClientID: clientID,
@@ -506,12 +453,10 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 
 	if err := m.AppendWAL(OpDeleteFile, walData); err != nil {
 		m.logger.Printf("WAL append failed for DeleteFile: %v", err)
-		// Metadata already updated, just log the error
 	}
 
 	m.logger.Printf("Successfully deleted %s: %d/%d chunks removed", filename, totalDeleted, len(allChunkIDs))
 
-	// Unlock before checkpoint to avoid deadlock (checkpoint also locks)
 	m.mu.Unlock()
 
 	// Trigger checkpoint
@@ -527,7 +472,6 @@ func (m *MasterServer) DeleteFile(ctx context.Context, req *dfspb.DeleteFileRequ
 
 // deleteChunksFromServer sends DeleteChunks RPC to a specific chunk server
 func (m *MasterServer) deleteChunksFromServer(serverAddr string, chunkIDs []string, clientID int64, username string) (int32, error) {
-	// Connect to chunk server
 	conn, err := grpc.NewClient(serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return 0, fmt.Errorf("failed to connect to %s: %v", serverAddr, err)
@@ -536,7 +480,6 @@ func (m *MasterServer) deleteChunksFromServer(serverAddr string, chunkIDs []stri
 
 	chunkClient := dfspb.NewChunkServerClient(conn)
 
-	// Send delete request
 	resp, err := chunkClient.DeleteChunks(context.Background(), &dfspb.DeleteChunksRequest{
 		ChunkIds: chunkIDs,
 		ClientId: clientID,

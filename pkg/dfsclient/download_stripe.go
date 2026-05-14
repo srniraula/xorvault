@@ -9,7 +9,6 @@ import (
 	"sync"
 )
 
-// DownloadStripeInfo maps stripe metadata
 type DownloadStripeInfo struct {
 	StripeNum   int
 	DataChunk1  ChunkServerPair
@@ -22,7 +21,7 @@ type ChunkServerPair struct {
 	Server  string
 }
 
-// DownloadedChunk represents result of downloading a single chunk
+// DownloadedChunk represents the result of downloading a single chunk
 type DownloadedChunk struct {
 	ChunkID   string
 	Data      []byte
@@ -31,11 +30,11 @@ type DownloadedChunk struct {
 	IsData1   bool
 	IsData2   bool
 	IsParity  bool
-	Filename  string // for logging
-	StripeNum int    // for logging
+	Filename  string
+	StripeNum int
 }
 
-// StripeDownload holds downloaded chunks
+// StripeDownload holds the actual data retrieved for a stripe
 type StripeDownload struct {
 	StripeNum   int
 	DataChunk1  []byte
@@ -88,7 +87,6 @@ func (g *GrpcClient) downloadChunkFromServer(chunkID, serverAddr string, clientI
 		return res
 	}
 
-	// All retries exhausted
 	res.Success = false
 	res.Error = fmt.Errorf("ReadChunk from %s failed after %d attempts: %v", serverAddr, maxChunkRetries+1, lastErr)
 	return res
@@ -141,12 +139,10 @@ func (g *GrpcClient) downloadStripe(info DownloadStripeInfo, clientID int64, use
 			if r.IsParity {
 				sd.ParityChunk = r.Data
 			}
-			// Log successful chunk download
 			if username != "" && filename != "" {
 				_ = logger.LogChunkDownloaded(username, filename, r.ChunkID, int64(len(r.Data)), r.StripeNum)
 			}
 		} else {
-			// Log failed chunk download
 			if username != "" && filename != "" {
 				errMsg := "unknown error"
 				if r.Error != nil {
@@ -159,7 +155,7 @@ func (g *GrpcClient) downloadStripe(info DownloadStripeInfo, clientID int64, use
 	return sd
 }
 
-// reconstructMissingChunk uses XOR to rebuild missing data chunk
+// reconstructMissingChunk uses XOR to rebuild a missing data chunk in RAID-4
 func reconstructMissingChunk(stripe *StripeDownload) error {
 	if stripe.ChunksOK == 3 {
 		return nil
@@ -181,7 +177,7 @@ func reconstructMissingChunk(stripe *StripeDownload) error {
 	return fmt.Errorf("unexpected chunk combination for reconstruction")
 }
 
-// writeStripeToFile writes chunk data, trimming padding on last stripe
+// writeStripeToFile writes chunk data to disk, trimming parity padding on the last stripe
 func writeStripeToFile(file *os.File, stripe *StripeDownload, isLast bool, originalSize int64, bytesWritten int64) (int, error) {
 	total := 0
 	if stripe.DataChunk1 != nil {

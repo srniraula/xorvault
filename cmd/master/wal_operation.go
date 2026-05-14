@@ -56,57 +56,46 @@ type DeleteFileData struct {
 func (m *MasterServer) AppendWAL(operation string, data interface{}) error {
 	m.walMu.Lock()
 
-	// Serialize the operation data to JSON
 	dataBytes, err := json.Marshal(data)
 	if err != nil {
 		m.walMu.Unlock()
 		return fmt.Errorf("failed to marshal WAL data: %v", err)
 	}
 
-	// Create WAL entry
 	entry := WALEntry{
 		Operation: operation,
 		Timestamp: time.Now().Unix(),
 		Data:      dataBytes,
 	}
 
-	// Serialize the entire entry to JSON
 	entryBytes, err := json.Marshal(entry)
 	if err != nil {
 		m.walMu.Unlock()
 		return fmt.Errorf("failed to marshal WAL entry: %v", err)
 	}
 
-	// Write entry as a single line (newline-delimited JSON)
 	_, err = m.walWriter.WriteString(string(entryBytes) + "\n")
 	if err != nil {
 		m.walMu.Unlock()
 		return fmt.Errorf("failed to write to WAL: %v", err)
 	}
 
-	// Flush buffer to OS
 	if err := m.walWriter.Flush(); err != nil {
 		m.walMu.Unlock()
 		return fmt.Errorf("failed to flush WAL: %v", err)
 	}
 
-	// Sync to disk for durability (survives crash/power loss)
 	if err := m.walFile.Sync(); err != nil {
 		m.walMu.Unlock()
 		return fmt.Errorf("failed to sync WAL: %v", err)
 	}
 
-	// Increment sequence and capture values before releasing the lock
 	m.walSeq++
 	seq := m.walSeq
 	entryCopy := entry
 
-	// Release lock BEFORE network I/O so other callers are not blocked
 	m.walMu.Unlock()
 
-	// Synchronous replication to secondary — uses a bounded deadline so a slow/dead
-	// secondary never stalls the primary for long per operation.
-	// Errors are logged but do NOT fail the primary write (best-effort HA).
 	m.replicateWALToSecondary(entryCopy, seq)
 
 	return nil

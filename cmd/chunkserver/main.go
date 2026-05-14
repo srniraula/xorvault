@@ -18,7 +18,7 @@ func main() {
 	storage := flag.String("storage", "chunks", "storage directory")
 	master := flag.String("master", "", "primary master server address (host:port)")
 	secondaryMaster := flag.String("secondary-master", "", "secondary master address for automatic failover (host:port, optional)")
-	myAddrFlag := flag.String("addr", "", "this chunkserver's own IP:port as seen by clients and master (e.g. 192.168.128.1:9001). If empty, auto-detected via config.GetMyAddr — set this explicitly when running on a machine with multiple network interfaces.")
+	myAddrFlag := flag.String("addr", "", "this chunkserver's own IP:port as seen by clients and master. If empty, auto-detected via config.GetMyAddr.")
 	flag.Parse()
 
 	// Setup logging
@@ -31,10 +31,8 @@ func main() {
 	chunkLogger := log.New(logFile, "CHUNKSERVER: ", log.LstdFlags|log.Lshortfile)
 	log.SetOutput(logFile)
 
-	// Create storage directory
 	os.MkdirAll(*storage, 0755)
 
-	// Determine primary master address.
 	// Prefer the explicit -master flag; fall back to config/env (MASTER_ADDR).
 	primaryAddr := *master
 	if primaryAddr == "" {
@@ -56,9 +54,9 @@ func main() {
 	standbyAtStart := ""
 	if *secondaryMaster != "" {
 		if activeAtStart == *secondaryMaster {
-			standbyAtStart = primaryAddr // secondary is active, so original primary is standby
+			standbyAtStart = primaryAddr
 		} else {
-			standbyAtStart = *secondaryMaster // normal case: primary is active, secondary is standby
+			standbyAtStart = *secondaryMaster
 		}
 	}
 	fmt.Fprintf(os.Stderr, "\n╔══════════════════════════════════════════════════════════╗\n")
@@ -71,7 +69,6 @@ func main() {
 	}
 	fmt.Fprintf(os.Stderr, "╚══════════════════════════════════════════════════════════╝\n\n")
 
-	// Start gRPC server
 	lis, err := net.Listen("tcp", "0.0.0.0:"+*port)
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)

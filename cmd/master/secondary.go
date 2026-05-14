@@ -871,7 +871,7 @@ type SecondaryMaster struct {
 func NewSecondaryMaster(master *MasterServer) *SecondaryMaster {
 	return &SecondaryMaster{
 		master:        master,
-		lastHeartbeat: time.Now(), // grace period on startup
+		lastHeartbeat: time.Now(),
 	}
 }
 
@@ -880,13 +880,11 @@ func NewSecondaryMaster(master *MasterServer) *SecondaryMaster {
 func (s *SecondaryMaster) ReplicateWAL(ctx context.Context, req *dfspb.ReplicateWALRequest) (*dfspb.ReplicateWALResponse, error) {
 	entry := req.Entry
 
-	// Decode the JSON WAL entry the primary serialised into payload
 	var walEntry WALEntry
 	if err := json.Unmarshal(entry.Payload, &walEntry); err != nil {
 		return nil, fmt.Errorf("failed to decode WAL payload: %v", err)
 	}
 
-	// Replay into master state (same functions used during crash recovery)
 	s.master.walMu.Lock()
 	s.master.walSeq = entry.SequenceNumber
 	s.master.walMu.Unlock()
@@ -905,8 +903,6 @@ func (s *SecondaryMaster) ReplicateWAL(ctx context.Context, req *dfspb.Replicate
 
 	s.mu.Lock()
 	s.lastSeqReceived = entry.SequenceNumber
-	// WAL traffic itself proves the primary is alive. Updating lastHeartbeat here
-	// prevents false promotion when heartbeat RPCs are delayed under heavy upload load.
 	s.lastHeartbeat = time.Now()
 	s.mu.Unlock()
 
@@ -950,7 +946,6 @@ func (s *SecondaryMaster) ApplyCheckpoint(ctx context.Context, req *dfspb.Checkp
 	s.master.mu.Lock()
 	defer s.master.mu.Unlock()
 
-	// Restore all maps (same logic as LoadCheckpoint)
 	s.master.clientIDs = checkpoint.ClientIDs
 	s.master.fileSizes = checkpoint.FileSizes
 	s.master.chunkStatus = checkpoint.ChunkStatus
@@ -994,10 +989,8 @@ func (s *SecondaryMaster) RequestStateSync(ctx context.Context, req *dfspb.GetAc
 	s.master.logger.Printf("Secondary: RequestStateSync called — serialising full state (gen=%d, wal_seq=%d)",
 		s.master.generation, s.master.walSeq)
 
-	// Produce a fresh checkpoint bytes
 	s.master.mu.Lock()
 
-	// Build fileInfoJSON (same as CreateCheckpoint)
 	fileInfoJSON := make(map[int64]map[string]map[int32]*StripeMetadataJSON)
 	for clientID := range s.master.fileInfo {
 		fileInfoJSON[clientID] = make(map[string]map[int32]*StripeMetadataJSON)
@@ -1045,8 +1038,6 @@ func (s *SecondaryMaster) RequestStateSync(ctx context.Context, req *dfspb.GetAc
 // primaryIsReachable dials the primary with a short timeout and returns true if
 // it responds to a real gRPC call.  Used by the watchdog to distinguish a
 // genuine primary failure from a transient cross-machine packet loss.
-// primaryIsReachable dials the primary with a 1s timeout — fast enough for
-// host-only networking where a dead process answers within milliseconds.
 func (s *SecondaryMaster) primaryIsReachable(addr string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -1058,7 +1049,6 @@ func (s *SecondaryMaster) primaryIsReachable(addr string) bool {
 	defer conn.Close()
 
 	client := dfspb.NewMasterServerClient(conn)
-	// Use GetActiveMaster as a lightweight ping — every master implements it.
 	_, err = client.GetActiveMaster(ctx, &dfspb.GetActiveMasterRequest{}, grpc.WaitForReady(true))
 	return err == nil
 }
@@ -1088,9 +1078,6 @@ func (s *SecondaryMaster) WatchdogLoop(timeoutSeconds int) {
 			continue
 		}
 
-		// Timeout exceeded — run 3 confirmation probes spaced 1s apart.
-		// On host-only networking a dead process fails within milliseconds,
-		// so 3 probes is enough to be certain without being slow.
 		s.master.logger.Printf("Watchdog: heartbeat silent for %.1fs — running 3 confirmation probes on %s",
 			elapsed.Seconds(), primaryAddr)
 
@@ -1127,11 +1114,8 @@ func (s *SecondaryMaster) WatchdogLoop(timeoutSeconds int) {
 func (s *SecondaryMaster) promote() {
 	s.master.mu.Lock()
 	s.master.isPrimary = true
-	s.master.generation++ // New epoch: every promotion increments generation
+	s.master.generation++
 
-	// Set secondaryAddr to the peer so WAL replication targets the correct node.
-	// Use peerAddr (always set from -secondary flag); fall back to the address
-	// we received in heartbeats from the old primary.
 	peerAddr := s.master.peerAddr
 	if peerAddr == "" {
 		peerAddr = s.primaryAddr
@@ -1139,13 +1123,10 @@ func (s *SecondaryMaster) promote() {
 	s.master.secondaryAddr = peerAddr
 	s.master.mu.Unlock()
 
-	// Persist our current state as a checkpoint so we can recover if WE crash
 	if err := s.master.CreateCheckpoint("master.checkpoint"); err != nil {
 		s.master.logger.Printf("FAILOVER: checkpoint on promotion failed: %v", err)
 	}
 
-	// Start sending heartbeats to the peer (old primary) so it can sync when
-	// it comes back online and remain as standby.
 	if peerAddr != "" {
 		go s.master.SendHeartbeatsToSecondary(peerAddr)
 		s.master.logger.Printf("FAILOVER: started sending heartbeats to peer %s", peerAddr)

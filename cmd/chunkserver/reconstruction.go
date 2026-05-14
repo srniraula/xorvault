@@ -9,8 +9,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// reconstructChunks processes reconstruction tasks from master
-// Downloads chunks from peers, XORs them, and stores reconstructed chunks
+// reconstructChunks processes reconstruction tasks from master.
+// Downloads chunks from peers, XORs them, and stores reconstructed chunks.
 func (c *ChunkServer) reconstructChunks(tasks []*dfspb.ReconstructionTask) error {
 	if len(tasks) == 0 {
 		return nil
@@ -37,8 +37,7 @@ func (c *ChunkServer) reconstructChunks(tasks []*dfspb.ReconstructionTask) error
 	return nil
 }
 
-// reconstructSingleChunk handles reconstruction of one chunk
-// Downloads 2 chunks from peers in parallel, XORs them, stores result
+// reconstructSingleChunk handles reconstruction of one chunk.
 func (c *ChunkServer) reconstructSingleChunk(task *dfspb.ReconstructionTask) error {
 	c.logger.Printf("Reconstructing %s (stripe %d)", task.ChunkId, task.StripeNum)
 
@@ -52,25 +51,21 @@ func (c *ChunkServer) reconstructSingleChunk(task *dfspb.ReconstructionTask) err
 	results := make([]downloadResult, 2)
 	done := make(chan int, 2)
 
-	// Goroutine 1: Download first chunk
 	go func() {
 		data, checksum, err := c.downloadChunkFromPeer(task.OtherServers[0], task.OtherChunkIds[0], task.ClientId, task.Username)
 		results[0] = downloadResult{data: data, checksum: checksum, err: err}
 		done <- 0
 	}()
 
-	// Goroutine 2: Download second chunk
 	go func() {
 		data, checksum, err := c.downloadChunkFromPeer(task.OtherServers[1], task.OtherChunkIds[1], task.ClientId, task.Username)
 		results[1] = downloadResult{data: data, checksum: checksum, err: err}
 		done <- 1
 	}()
 
-	// Wait for both downloads to complete
 	<-done
 	<-done
 
-	// Check for download errors
 	if results[0].err != nil {
 		return fmt.Errorf("failed to download %s from %s: %v", task.OtherChunkIds[0], task.OtherServers[0], results[0].err)
 	}
@@ -101,7 +96,6 @@ func (c *ChunkServer) reconstructSingleChunk(task *dfspb.ReconstructionTask) err
 		checksumDone <- checksumResult{index: 1, err: err}
 	}()
 
-	// Wait for both checksum verifications
 	for i := 0; i < 2; i++ {
 		result := <-checksumDone
 		if result.err != nil {
@@ -112,10 +106,7 @@ func (c *ChunkServer) reconstructSingleChunk(task *dfspb.ReconstructionTask) err
 	chunk1 := results[0].data
 	chunk2 := results[1].data
 
-	// XOR to reconstruct missing chunk
 	reconstructed := xorBytes(chunk1, chunk2)
-
-	// Calculate checksum for reconstructed chunk
 	reconstructedChecksum := calculateChecksum(reconstructed)
 
 	// Store reconstructed chunk (reuse WriteChunk)
@@ -136,10 +127,8 @@ func (c *ChunkServer) reconstructSingleChunk(task *dfspb.ReconstructionTask) err
 	return nil
 }
 
-// downloadChunkFromPeer downloads a chunk from another chunk server
-// Reuses the ReadChunk RPC that already exists
+// downloadChunkFromPeer downloads a chunk from another chunk server.
 func (c *ChunkServer) downloadChunkFromPeer(serverAddr string, chunkID string, clientID int64, username string) ([]byte, string, error) {
-	// Connect to peer chunk server
 	conn, err := grpc.NewClient(serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to connect to %s: %v", serverAddr, err)
@@ -163,8 +152,8 @@ func (c *ChunkServer) downloadChunkFromPeer(serverAddr string, chunkID string, c
 	return resp.Data, resp.Checksum, nil
 }
 
-// xorBytes performs XOR operation on two byte slices
-// Reuses parity calculation logic from client
+// xorBytes performs XOR operation on two byte slices.
+// Reuses parity calculation logic from client.
 func xorBytes(a, b []byte) []byte {
 	maxLen := len(a)
 	if len(b) > maxLen {
